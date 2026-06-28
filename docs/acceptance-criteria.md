@@ -90,7 +90,7 @@ documented).
 |---|---|---|---|
 | I1 | Business failures are `ErrorCode` values on the row, never thrown | `TaskMachine.fail`/`retryOrFail` | ✅ |
 | I2 | External-call failures are exceptions caught at exactly one boundary and translated to `ErrorCode` | `TaskMachine` dispatch/poll catches | ✅ |
-| I3 | Interruption is a fail-fast runtime signal, NOT mapped to a business `ErrorCode` | `ImCall` throws a distinct interruption type; `TaskMachine` rethrows it | ✅ |
+| I3 | Interruption is a fail-fast runtime signal, NOT mapped to a business `ErrorCode` | `ImCall.CallInterruptedException`; `TaskMachine` + `Reconciler.tick` rethrow; `ImCallTest` | ✅ |
 | I4 | The duplicate-create catch is targeted (constraint-checked) and rethrows other violations | see D3 | ✅ |
 | I5 | Strategy is documented | `docs/exception-strategy.md` | ✅ |
 
@@ -137,8 +137,11 @@ same-tx model documented [C4]; TTL-per-attempt comment. Suite green (23 tests).
 **Round-2 fixes applied** (commit `fix:` …): `Reconciler.tick` now rethrows `CallInterruptedException`
 before the per-pipeline `RuntimeException` catch, so a shutdown interrupt truly aborts the tick [I3];
 `PipelineControl.cancel` made the `finish()` CAS its **sole** guard (dropped the early terminal return),
-so `cancelDoesNotResurrect…` now deterministically exercises the `finish()==0` branch [G4]. Suite green
-(23 tests).
+so `cancelDoesNotResurrect…` now deterministically exercises the `finish()==0` branch [G4]. Added
+`ImCallTest` (timeout / interrupt / success boundary). Suite green (26 tests).
 
-_Done criteria: codex round 2 returned merge-ready (no P0/P1); round-2 P2s fixed; round 3 confirms. Every
-criterion above is ✅ or a documented 📦._
+| 3 | codex (gpt-5.5 xhigh) | **Yes** | 0 | 0 | 0 | both round-2 fixes VERIFIED; **no remaining findings** |
+
+**Status: DONE.** Both round-2 fixes verified, codex round 3 found no P0/P1/P2, the suite is green (26
+tests), and every criterion above is ✅ or a documented 📦. The implementation meets the ADR-016
+acceptance criteria.
