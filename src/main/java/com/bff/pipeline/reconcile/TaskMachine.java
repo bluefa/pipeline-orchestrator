@@ -39,13 +39,16 @@ public class TaskMachine {
     private final ImClient im;
     private final ImCall imCall;
     private final TaskRepository tasks;
+    private final Observations observations;
     private final PipelineSettings settings;
     private final Clock clock;
 
-    public TaskMachine(ImClient im, ImCall imCall, TaskRepository tasks, PipelineSettings settings, Clock clock) {
+    public TaskMachine(ImClient im, ImCall imCall, TaskRepository tasks, Observations observations,
+            PipelineSettings settings, Clock clock) {
         this.im = im;
         this.imCall = imCall;
         this.tasks = tasks;
+        this.observations = observations;
         this.settings = settings;
         this.clock = clock;
     }
@@ -67,6 +70,7 @@ public class TaskMachine {
     }
 
     private void dispatch(String target, Task task) {
+        observations.beginAttempt(task);
         if (task.getKind() == TaskKind.TERRAFORM_JOB) {
             String jobId;
             try {
@@ -80,6 +84,7 @@ public class TaskMachine {
             }
             // Idempotent (ADR-016 §5): a crash before this save is healed by re-dispatch next tick.
             task.setJobId(jobId);
+            observations.recordJobId(task, jobId);
         }
         task.setStatus(TaskStatus.IN_PROGRESS);
         task.setStartedAt(clock.instant());
@@ -100,9 +105,11 @@ public class TaskMachine {
         try {
             result = imCall.withTimeout(() -> im.terraformJobStatus(task.getJobId()));
         } catch (ImCall.CallTimeoutException e) {
+            observations.recordCheck(task, Observations.CheckSignal.CALL_TIMEOUT);
             retryOrFail(task, ErrorCode.CALL_TIMEOUT);
             return;
         } catch (RuntimeException e) {
+            observations.recordCheck(task, Observations.CheckSignal.API_ERROR);
             retryOrFail(task, ErrorCode.CHECK_ERROR);
             return;
         }
@@ -114,6 +121,7 @@ public class TaskMachine {
             }
             return;
         }
+        observations.recordCheck(task, Observations.CheckSignal.RUNNING);
         if (TaskKnobs.pastDeadline(task, TaskKnobs.executionTimeout(task, settings), clock)) {
             retryOrFail(task, ErrorCode.EXECUTION_TIMEOUT);
             return;
@@ -126,9 +134,11 @@ public class TaskMachine {
         try {
             met = imCall.withTimeout(() -> im.checkCondition(target, task.getOperation()));
         } catch (ImCall.CallTimeoutException e) {
+            observations.recordCheck(task, Observations.CheckSignal.CALL_TIMEOUT);
             retryOrFail(task, ErrorCode.CALL_TIMEOUT);
             return;
         } catch (RuntimeException e) {
+            observations.recordCheck(task, Observations.CheckSignal.API_ERROR);
             retryOrFail(task, ErrorCode.CHECK_ERROR);
             return;
         }
@@ -136,15 +146,19 @@ public class TaskMachine {
             complete(task);
             return;
         }
+        observations.recordCheck(task, Observations.CheckSignal.NOT_MET);
         if (TaskKnobs.pastDeadline(task, TaskKnobs.ttl(task, settings), clock)) {
+            observations.endAttempt(task, TaskStatus.FAILED, ErrorCode.TTL_EXPIRED);
             fail(task, ErrorCode.TTL_EXPIRED); // an expired condition does not retry
             return;
         }
         reschedule(task, TaskKnobs.pollingInterval(task, settings));
     }
 
-    /** A failed dispatch/poll: count it, then re-run fresh (READY) if under the cap, else FAIL. */
+    /** A failed dispatch/poll: end this attempt, count it, then re-run fresh (READY) if under the cap, else FAIL. */
     private void retryOrFail(Task task, ErrorCode reason) {
+        // End the attempt BEFORE incrementing failCount, so it lands on the right attempt_no.
+        observations.endAttempt(task, TaskStatus.FAILED, reason);
         task.setFailCount(task.getFailCount() + 1);
         if (task.getFailCount() >= TaskKnobs.maxFailCount(task, settings)) {
             fail(task, reason);
@@ -161,6 +175,7 @@ public class TaskMachine {
         task.setStatus(TaskStatus.DONE);
         task.setFinishedAt(clock.instant());
         tasks.save(task);
+        observations.endAttempt(task, TaskStatus.DONE, null);
     }
 
     private void fail(Task task, ErrorCode reason) {

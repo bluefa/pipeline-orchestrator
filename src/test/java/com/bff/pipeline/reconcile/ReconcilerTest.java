@@ -45,8 +45,8 @@ import org.springframework.context.annotation.Import;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({Reconciler.class, PipelineReconciliation.class, TaskMachine.class, PipelineCreator.class,
-        PipelineInserter.class, PipelineControl.class, Recipes.class, ImCall.class,
+@Import({Reconciler.class, PipelineReconciliation.class, TaskMachine.class, Observations.class,
+        PipelineCreator.class, PipelineInserter.class, PipelineControl.class, Recipes.class, ImCall.class,
         ReconcilerTest.Wiring.class})
 class ReconcilerTest {
 
