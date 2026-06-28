@@ -35,14 +35,13 @@ public class PipelineControl {
 
     @Transactional
     public Pipeline cancel(Long pipelineId) {
-        Pipeline pipeline = pipelines.findById(pipelineId)
-                .orElseThrow(() -> new IllegalArgumentException("no pipeline " + pipelineId));
-        if (pipeline.getStatus().isTerminal()) {
-            return pipeline; // idempotent
+        if (!pipelines.existsById(pipelineId)) {
+            throw new IllegalArgumentException("no pipeline " + pipelineId);
         }
 
-        // RUNNING-guarded CAS, like converge's finish(): if a converge terminalized this pipeline
-        // first, the update touches 0 rows and we return that terminal run rather than resurrecting it.
+        // The RUNNING-guarded finish() CAS is the SOLE guard. An already-terminal pipeline
+        // (idempotent re-cancel) and a converge that won the race both touch 0 rows, so we return that
+        // terminal run rather than resurrecting it. Only the winning cancel terminalizes the tasks.
         Instant now = clock.instant();
         if (pipelines.finish(pipelineId, PipelineStatus.CANCELLED, now) == 0) {
             return pipelines.findById(pipelineId).orElseThrow();

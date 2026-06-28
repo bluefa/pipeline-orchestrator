@@ -132,5 +132,13 @@ dup-create catch [D3/I4]; `NOT_SUPPORTED` on the state-machine tests [test integ
 rethrown as fail-fast [I3]; exhaustive `advance` switch [J2]; cancel-no-clobber test added; observation
 same-tx model documented [C4]; TTL-per-attempt comment. Suite green (23 tests).
 
-_Target to declare done: codex returns no P0/P1 across ≥2 rounds, every criterion above is ✅ or a
-documented 📦._
+| 2 | codex (gpt-5.5 xhigh) | **Yes** | 0 | 0 | 2 | all 5 round-1 fixes VERIFIED; 2 new P2s: interrupt still caught by the tick loop, and the cancel test hit the early guard not the CAS 0-row branch |
+
+**Round-2 fixes applied** (commit `fix:` …): `Reconciler.tick` now rethrows `CallInterruptedException`
+before the per-pipeline `RuntimeException` catch, so a shutdown interrupt truly aborts the tick [I3];
+`PipelineControl.cancel` made the `finish()` CAS its **sole** guard (dropped the early terminal return),
+so `cancelDoesNotResurrect…` now deterministically exercises the `finish()==0` branch [G4]. Suite green
+(23 tests).
+
+_Done criteria: codex round 2 returned merge-ready (no P0/P1); round-2 P2s fixed; round 3 confirms. Every
+criterion above is ✅ or a documented 📦._

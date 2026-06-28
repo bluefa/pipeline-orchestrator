@@ -2,6 +2,7 @@ package com.bff.pipeline.reconcile;
 
 import com.bff.pipeline.domain.Pipeline;
 import com.bff.pipeline.domain.PipelineStatus;
+import com.bff.pipeline.im.ImCall;
 import com.bff.pipeline.repository.PipelineRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +31,8 @@ public class Reconciler {
         for (Pipeline scanned : pipelines.findByStatusOrderByIdAsc(PipelineStatus.RUNNING)) {
             try {
                 reconciliation.reconcile(scanned.getId());
+            } catch (ImCall.CallInterruptedException e) {
+                throw e; // shutdown interrupt: abort the whole tick, not just this pipeline
             } catch (RuntimeException e) {
                 log.warn("reconcile failed for pipeline {} — skipping this tick", scanned.getId(), e);
             }
