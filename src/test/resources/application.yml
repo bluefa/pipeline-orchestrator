@@ -1,0 +1,25 @@
+# Tests run against H2 in MySQL-compatibility mode so the suite needs no running
+# MySQL or Docker. H2 reproduces what these tests assert: JPA-generated schema, the
+# active_target unique constraint (multiple NULLs allowed, one non-NULL per target),
+# and @Version optimistic locking. True MySQL row-level concurrency (a real INSERT
+# race) should still be exercised against MySQL in CI.
+spring:
+  datasource:
+    url: jdbc:h2:mem:pipeline;MODE=MySQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate.jdbc.time_zone: UTC
+
+pipeline:
+  tick-interval: PT15S
+  per-call-timeout: PT30S
+  execution-timeout: PT30M
+  ttl: P7D
+  polling-interval: PT10M
+  max-fail-count: 3
+  worker-pool-size: 8

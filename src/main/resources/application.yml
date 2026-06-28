@@ -1,0 +1,26 @@
+# Production target: MySQL 8. The schema (tables, indexes, unique constraints) is
+# generated from the JPA entity annotations by Hibernate — there are no hand-written
+# SQL migrations (no Flyway). See docs/exception-strategy.md and the @Table/@Index
+# annotations on the domain entities.
+spring:
+  datasource:
+    url: ${PIPELINE_DB_URL:jdbc:mysql://localhost:3306/pipeline}
+    username: ${PIPELINE_DB_USER:pipeline}
+    password: ${PIPELINE_DB_PASSWORD:pipeline}
+  jpa:
+    open-in-view: false
+    hibernate:
+      # 'update' lets Hibernate create/extend the schema from the entities for the demo.
+      # A production deployment would switch this to 'validate' once the schema is frozen.
+      ddl-auto: update
+    properties:
+      hibernate.jdbc.time_zone: UTC
+
+pipeline:
+  tick-interval: PT15S        # reconciler scan cadence
+  per-call-timeout: PT30S     # deadline for a single InfraManager call
+  execution-timeout: PT30M    # TERRAFORM_JOB per-task deadline
+  ttl: P7D                    # CONDITION_CHECK per-task deadline
+  polling-interval: PT10M     # CONDITION_CHECK re-poll cadence
+  max-fail-count: 3           # attempts before a task is FAILED
+  worker-pool-size: 8         # bounded pool sizing concurrent InfraManager calls
