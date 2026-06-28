@@ -4,6 +4,7 @@ import com.bff.pipeline.domain.Pipeline;
 import com.bff.pipeline.domain.PipelineStatus;
 import com.bff.pipeline.domain.PipelineType;
 import com.bff.pipeline.repository.PipelineRepository;
+import java.util.Locale;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
@@ -28,12 +29,32 @@ public class PipelineCreator {
         this.pipelines = pipelines;
     }
 
+    private static final String ACTIVE_TARGET_CONSTRAINT = "uq_pipeline_active_target";
+
     public Pipeline create(String target, PipelineType type) {
         try {
             return inserter.insert(target, type);
         } catch (DataIntegrityViolationException duplicate) {
+            // Only the active-target uniqueness violation means "a run already exists"; any other
+            // integrity violation is a real bug and must surface, not be masked as a duplicate.
+            if (!isActiveTargetViolation(duplicate)) {
+                throw duplicate;
+            }
             return pipelines.findFirstByTargetAndStatus(target, PipelineStatus.RUNNING)
                     .orElseThrow(() -> duplicate);
         }
+    }
+
+    private static boolean isActiveTargetViolation(DataIntegrityViolationException e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof org.hibernate.exception.ConstraintViolationException cve
+                    && cve.getConstraintName() != null
+                    && cve.getConstraintName().toLowerCase(Locale.ROOT).contains(ACTIVE_TARGET_CONSTRAINT)) {
+                return true;
+            }
+        }
+        // Fallback for drivers that do not populate the constraint name on the exception.
+        String message = e.getMessage();
+        return message != null && message.toLowerCase(Locale.ROOT).contains(ACTIVE_TARGET_CONSTRAINT);
     }
 }

@@ -38,10 +38,15 @@ public class PipelineControl {
         Pipeline pipeline = pipelines.findById(pipelineId)
                 .orElseThrow(() -> new IllegalArgumentException("no pipeline " + pipelineId));
         if (pipeline.getStatus().isTerminal()) {
-            return pipeline;
+            return pipeline; // idempotent
         }
 
+        // RUNNING-guarded CAS, like converge's finish(): if a converge terminalized this pipeline
+        // first, the update touches 0 rows and we return that terminal run rather than resurrecting it.
         Instant now = clock.instant();
+        if (pipelines.finish(pipelineId, PipelineStatus.CANCELLED, now) == 0) {
+            return pipelines.findById(pipelineId).orElseThrow();
+        }
         for (Task task : tasks.findByPipelineIdOrderBySeqAsc(pipelineId)) {
             if (!task.getStatus().isTerminal()) {
                 task.setStatus(TaskStatus.CANCELLED);
@@ -49,9 +54,6 @@ public class PipelineControl {
                 tasks.save(task);
             }
         }
-        pipeline.setStatus(PipelineStatus.CANCELLED);
-        pipeline.setActiveTarget(null);
-        pipeline.setLastActivityAt(now);
-        return pipelines.save(pipeline);
+        return pipelines.findById(pipelineId).orElseThrow();
     }
 }

@@ -108,8 +108,11 @@ Three exception types survive, each for a precise reason. None is a business out
    absorbed by `Reconciler.tick`'s per-pipeline `catch (RuntimeException)`, which logs and skips that
    pipeline for the tick. The terminal `CANCELLED` state is preserved; nothing is corrupted.
 
-Programmer-error guards (`IllegalArgumentException` for an unknown recipe or a missing pipeline id,
-`IllegalStateException` for an interrupted call) fail fast and are intentionally never caught.
+Programmer-error / runtime guards fail fast and are intentionally never caught as business outcomes:
+`IllegalArgumentException` for an unknown recipe or a missing pipeline id, and
+`ImCall.CallInterruptedException` for an interrupted call — the latter is **rethrown** by `TaskMachine`
+(it precedes the broad `RuntimeException` catch) so a shutdown interrupt aborts the tick instead of
+being recorded as a business `CHECK_ERROR`.
 
 ## Why this shape
 
@@ -123,7 +126,13 @@ Programmer-error guards (`IllegalArgumentException` for an unknown recipe or a m
 - **Observation is separate.** What happened on each attempt (which job, how many polls, the last
   response) is recorded in the write-only `task_attempt` / `task_check` tables (ADR-016 §3). These are
   for diagnosis only; the reconciler never reads them, and losing them costs debuggability, never
-  correctness.
+  correctness. They **ride the reconcile transaction** rather than a separate `REQUIRES_NEW` tx — the
+  maximal async-observation split was rejected (ADR-016 Option B), and at this scale only a handful of
+  tasks are due per tick. A failed observation write rolls back and **retries the whole tick**, which
+  cannot corrupt state (the task row is atomic), so the simplification keeps the ADR's correctness-only
+  guarantee. `Observations` is resilient to the common case (a missing attempt row is a no-op). If
+  durable-under-failure observation is ever required, moving the writes to a `REQUIRES_NEW` boundary is
+  the documented upgrade.
 
 ## How future features fit without changing the rule
 

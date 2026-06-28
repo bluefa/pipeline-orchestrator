@@ -37,7 +37,7 @@ public class ImCall {
         } catch (InterruptedException e) {
             future.cancel(true);
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("InfraManager call interrupted", e);
+            throw new CallInterruptedException(e);
         } catch (ExecutionException e) {
             // Unwrap the failure thrown by the call itself so the caller sees the real cause.
             throw e.getCause() instanceof RuntimeException cause ? cause : new IllegalStateException(e.getCause());
@@ -48,6 +48,16 @@ public class ImCall {
     public static final class CallTimeoutException extends RuntimeException {
         public CallTimeoutException() {
             super("InfraManager call exceeded the per-call timeout");
+        }
+    }
+
+    /**
+     * The calling thread was interrupted (e.g. shutdown). This is a fail-fast runtime signal, NOT a
+     * business outcome — the reconciler rethrows it rather than recording an {@code ErrorCode}.
+     */
+    public static final class CallInterruptedException extends RuntimeException {
+        public CallInterruptedException(InterruptedException cause) {
+            super("InfraManager call interrupted", cause);
         }
     }
 }

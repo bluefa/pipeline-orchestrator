@@ -58,7 +58,7 @@ public class TaskMachine {
             case BLOCKED -> unblock(task);
             case READY -> dispatch(target, task);
             case IN_PROGRESS -> poll(target, task);
-            default -> { /* terminal — not serviced */ }
+            case DONE, FAILED, CANCELLED -> { /* terminal — not serviced */ }
         }
     }
 
@@ -75,6 +75,8 @@ public class TaskMachine {
             String jobId;
             try {
                 jobId = imCall.withTimeout(() -> im.runTerraform(target, task.getOperation()));
+            } catch (ImCall.CallInterruptedException e) {
+                throw e; // fail-fast: an interrupt aborts the tick, it is not a business failure
             } catch (ImCall.CallTimeoutException e) {
                 retryOrFail(task, ErrorCode.CALL_TIMEOUT);
                 return;
@@ -104,6 +106,8 @@ public class TaskMachine {
         TerraformPoll result;
         try {
             result = imCall.withTimeout(() -> im.terraformJobStatus(task.getJobId()));
+        } catch (ImCall.CallInterruptedException e) {
+            throw e; // fail-fast: an interrupt aborts the tick, it is not a business failure
         } catch (ImCall.CallTimeoutException e) {
             observations.recordCheck(task, Observations.CheckSignal.CALL_TIMEOUT);
             retryOrFail(task, ErrorCode.CALL_TIMEOUT);
@@ -133,6 +137,8 @@ public class TaskMachine {
         boolean met;
         try {
             met = imCall.withTimeout(() -> im.checkCondition(target, task.getOperation()));
+        } catch (ImCall.CallInterruptedException e) {
+            throw e; // fail-fast: an interrupt aborts the tick, it is not a business failure
         } catch (ImCall.CallTimeoutException e) {
             observations.recordCheck(task, Observations.CheckSignal.CALL_TIMEOUT);
             retryOrFail(task, ErrorCode.CALL_TIMEOUT);

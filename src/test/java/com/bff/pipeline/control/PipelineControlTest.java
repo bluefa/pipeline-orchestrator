@@ -77,6 +77,22 @@ class PipelineControlTest {
         assertThat(second.getId()).isNotEqualTo(first.getId());
     }
 
+    @Test
+    void cancelDoesNotResurrectAPipelineThatAlreadyConvergedToTerminal() {
+        Pipeline pipeline = creator.create("c-4", PipelineType.DELETE);
+        // A converge committed DONE first (same effect as finish(): terminal + active_target cleared).
+        Pipeline converged = pipelines.findById(pipeline.getId()).orElseThrow();
+        converged.setStatus(PipelineStatus.DONE);
+        converged.setActiveTarget(null);
+        pipelines.save(converged);
+
+        Pipeline result = control.cancel(pipeline.getId());
+
+        assertThat(result.getStatus()).isEqualTo(PipelineStatus.DONE); // RUNNING-guarded CAS: no clobber
+        assertThat(tasks.findByPipelineIdOrderBySeqAsc(pipeline.getId()))
+                .noneMatch(task -> task.getStatus() == TaskStatus.CANCELLED);
+    }
+
     @TestConfiguration
     static class Wiring {
         @Bean

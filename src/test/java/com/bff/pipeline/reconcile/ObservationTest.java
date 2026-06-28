@@ -7,24 +7,29 @@ import com.bff.pipeline.create.PipelineInserter;
 import com.bff.pipeline.create.Recipes;
 import com.bff.pipeline.domain.ErrorCode;
 import com.bff.pipeline.domain.Pipeline;
+import com.bff.pipeline.domain.PipelineStatus;
 import com.bff.pipeline.domain.PipelineType;
 import com.bff.pipeline.domain.TaskAttempt;
 import com.bff.pipeline.domain.TaskStatus;
 import com.bff.pipeline.im.FakeImClient;
 import com.bff.pipeline.im.ImCall;
 import com.bff.pipeline.im.TerraformPoll;
+import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * The write-only observation tables: one {@code task_attempt} per attempt with the right
@@ -35,6 +40,7 @@ import org.springframework.context.annotation.Import;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({Reconciler.class, PipelineReconciliation.class, TaskMachine.class, Observations.class,
         PipelineCreator.class, PipelineInserter.class, Recipes.class, ImCall.class, ReconcilerTest.Wiring.class})
+@Transactional(propagation = Propagation.NOT_SUPPORTED) // observation rows must survive the per-tick commit
 class ObservationTest {
 
     private static final Instant START = Instant.parse("2026-06-23T00:00:00Z");
@@ -42,6 +48,7 @@ class ObservationTest {
     @Autowired private Reconciler reconciler;
     @Autowired private PipelineCreator creator;
     @Autowired private TaskRepository tasks;
+    @Autowired private PipelineRepository pipelines;
     @Autowired private TaskAttemptRepository attempts;
     @Autowired private TaskCheckRepository checks;
     @Autowired private ReconcilerTest.MutableClock clock;
@@ -53,6 +60,14 @@ class ObservationTest {
         im.onDispatch(() -> "job-1");
         im.onPoll(TerraformPoll::running);
         im.onCheck(() -> false);
+    }
+
+    @AfterEach
+    void clean() {
+        checks.deleteAll();
+        attempts.deleteAll();
+        tasks.deleteAll();
+        pipelines.deleteAll();
     }
 
     @Test
@@ -120,6 +135,9 @@ class ObservationTest {
         for (int i = 0; i < 20; i++) {
             reconciler.tick();
             clock.advance(Duration.ofHours(1));
+            if (pipelines.findById(pipeline.getId()).orElseThrow().getStatus() != PipelineStatus.RUNNING) {
+                return;
+            }
         }
     }
 

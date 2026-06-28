@@ -18,6 +18,8 @@ import com.bff.pipeline.im.ImCall;
 import com.bff.pipeline.im.ImClient;
 import com.bff.pipeline.im.TerraformPoll;
 import com.bff.pipeline.repository.PipelineRepository;
+import com.bff.pipeline.repository.TaskAttemptRepository;
+import com.bff.pipeline.repository.TaskCheckRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import java.time.Clock;
 import java.time.Duration;
@@ -27,6 +29,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +38,8 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * End-to-end state-machine tests: the reconciler drives a pipeline through its task chain.
@@ -48,6 +53,7 @@ import org.springframework.context.annotation.Import;
 @Import({Reconciler.class, PipelineReconciliation.class, TaskMachine.class, Observations.class,
         PipelineCreator.class, PipelineInserter.class, PipelineControl.class, Recipes.class, ImCall.class,
         ReconcilerTest.Wiring.class})
+@Transactional(propagation = Propagation.NOT_SUPPORTED) // each tick commits independently, like production
 class ReconcilerTest {
 
     private static final Instant START = Instant.parse("2026-06-23T00:00:00Z");
@@ -57,6 +63,8 @@ class ReconcilerTest {
     @Autowired private PipelineControl control;
     @Autowired private TaskRepository tasks;
     @Autowired private PipelineRepository pipelines;
+    @Autowired private TaskAttemptRepository attempts;
+    @Autowired private TaskCheckRepository checks;
     @Autowired private MutableClock clock;
     @Autowired private FakeImClient im;
 
@@ -66,6 +74,14 @@ class ReconcilerTest {
         im.onDispatch(() -> "job-1");
         im.onPoll(TerraformPoll::running);
         im.onCheck(() -> false);
+    }
+
+    @AfterEach
+    void clean() {
+        checks.deleteAll();
+        attempts.deleteAll();
+        tasks.deleteAll();
+        pipelines.deleteAll();
     }
 
     @Test

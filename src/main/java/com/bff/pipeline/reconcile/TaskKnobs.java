@@ -31,7 +31,11 @@ final class TaskKnobs {
         return task.getMaxFailCount() != null ? task.getMaxFailCount() : settings.maxFailCount();
     }
 
-    /** True once the task has run past {@code deadline} measured from {@code startedAt}. */
+    /**
+     * True once the task has run past {@code deadline}, measured from the current attempt's
+     * {@code startedAt}. A retry is a fresh run that resets {@code startedAt} (ADR-016 §6), so the
+     * executionTimeout/ttl bound each attempt, not the task's whole lifetime.
+     */
     static boolean pastDeadline(Task task, Duration deadline, Clock clock) {
         return task.getStartedAt() != null && !clock.instant().isBefore(task.getStartedAt().plus(deadline));
     }

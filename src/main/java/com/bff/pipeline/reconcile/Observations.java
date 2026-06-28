@@ -13,8 +13,10 @@ import org.springframework.stereotype.Component;
 
 /**
  * The single writer of the write-only observation tables ({@code task_attempt}, {@code task_check};
- * ADR-016 §3). It is debuggability only: it never throws into the reconcile path (a missing attempt
- * row is a no-op), and the reconciler never reads what it writes.
+ * ADR-016 §3). It is debuggability only: the reconciler never reads what it writes, and it is
+ * resilient to the common case (a missing attempt row is a no-op). It rides the reconcile transaction
+ * (not a separate {@code REQUIRES_NEW} tx — the async-observation split was rejected); a write failure
+ * rolls back and retries the whole tick, never corrupting state. See {@code docs/exception-strategy.md}.
  *
  * <p>The current attempt is identified by {@code (task.id, attemptNo = task.failCount + 1)} — stable
  * for the whole attempt because {@code failCount} only changes when an attempt ends.
