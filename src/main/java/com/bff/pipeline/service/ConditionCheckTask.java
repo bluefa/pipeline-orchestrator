@@ -1,19 +1,23 @@
 package com.bff.pipeline.service;
 
 import com.bff.pipeline.PipelineSettings;
-import com.bff.pipeline.enums.ErrorCode;
-import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.client.InfraManagerClient;
-import com.bff.pipeline.utils.TaskKnobs;
+import com.bff.pipeline.entity.Task;
+import com.bff.pipeline.enums.CheckSignal;
+import com.bff.pipeline.enums.ErrorCode;
+import com.bff.pipeline.model.TaskProgress;
+import com.bff.pipeline.model.TaskType;
+import com.bff.pipeline.utils.TaskSettings;
 import java.time.Clock;
 import org.springframework.stereotype.Component;
 
 /**
- * A task that polls an external condition until it holds. There is nothing to dispatch — the work is
- * the polling — so {@code attempt} is a no-op; {@code check} probes the condition, bounded by the
- * per-task TTL. An expired TTL does <em>not</em> retry (ADR-016 §6): the wait window is gone, not the
- * call. The type name {@link #NAME} is stored on every condition task row (referenced by recipes,
- * resolved by the registry).
+ * 외부 조건이 충족될 때까지 폴링하는 {@link TaskType} 구현체이다.
+ * 디스패치할 대상이 없고 — 작업 자체가 폴링이므로 — {@code execute}는 no-op이다.
+ * {@code check}는 조건을 탐색하며, task별 TTL(Time-to-Live)의 제약을 받는다.
+ * TTL이 만료되면 재시도하지 <em>않는다</em>(ADR-016 §6): 대기 창(wait window)이 소진된 것이지
+ * 호출이 실패한 것이 아니기 때문이다. 타입 이름 {@link #NAME}은 모든 condition task 행에
+ * 저장되며, recipe에서 참조되고 registry에 의해 해석된다.
  */
 @Component
 public class ConditionCheckTask implements TaskType {
@@ -36,7 +40,7 @@ public class ConditionCheckTask implements TaskType {
     }
 
     @Override
-    public void attempt(String target, Task task) {
+    public void execute(String target, Task task) {
     }
 
     @Override
@@ -44,8 +48,8 @@ public class ConditionCheckTask implements TaskType {
         if (infraManager.checkCondition(target, task.getOperation())) {
             return TaskProgress.SUCCEEDED;
         }
-        if (TaskKnobs.pastDeadline(task, TaskKnobs.timeToLive(task, settings), clock)) {
-            return TaskProgress.failed(ErrorCode.TIME_TO_LIVE_EXPIRED, false);
+        if (TaskSettings.isPastDeadline(task, TaskSettings.resolveTimeToLive(task, settings), clock)) {
+            return TaskProgress.failedTerminal(ErrorCode.TIME_TO_LIVE_EXPIRED);
         }
         return TaskProgress.pending(CheckSignal.NOT_MET);
     }

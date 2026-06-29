@@ -15,6 +15,7 @@ import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
 import java.time.Duration;
 import java.time.Instant;
+import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -24,21 +25,22 @@ import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 /**
- * One step in a pipeline's ordered chain (ADR-016 §2). The task row <em>is</em> the state machine
- * state — there is no separate progress ledger. {@code (pipelineId, sequence)} is unique; the engine
- * picks the lowest-sequence non-terminal task as the current one.
+ * pipeline 순서 체인(ordered chain)의 한 단계(step)를 나타내는 행(row)이다(ADR-016 §2). task 행 자체가
+ * 상태 머신의 상태(state machine state)이며, 별도의 진행 원장(progress ledger)은 존재하지 않는다.
+ * {@code (pipelineId, sequence)} 조합은 유일(unique)하며, 엔진은 sequence 값이 가장 낮은 비종료(non-terminal) task를
+ * 현재 task로 선택한다.
  *
- * <p>The per-task knob fields ({@code timeToLive}, {@code pollingInterval}, {@code executionTimeout},
- * {@code maxFailCount}) are nullable overrides; when null the global {@code PipelineSettings}
- * default applies. They are stored as BIGINT (millis) via {@link JdbcTypeCode}.
+ * <p>task별 설정 필드({@code timeToLive}, {@code pollingInterval}, {@code executionTimeout},
+ * {@code maxFailCount})는 nullable 오버라이드 값이다. null인 경우 전역 {@code PipelineSettings} 기본값이 적용된다.
+ * 이 값들은 {@link JdbcTypeCode}를 통해 BIGINT(나노초 단위, Hibernate의 Duration 매핑 방식)로 저장된다.
  *
- * <p>{@code sequence} is the position in the chain. {@code taskName} is the task type's name, which the
- * engine resolves to a {@code TaskType} to drive this task. {@code jobId} is the InfraManager-issued
- * handle for a TERRAFORM_JOB, stored on dispatch and re-polled after a crash. {@code errorCode} is set
- * only when {@code status == FAILED}. {@code nextCheckAt} is when a polling task is next due, with null
- * meaning due now. {@code version} is an optimistic lock: a cancel that commits CANCELLED during a slow
- * InfraManager call bumps it, so the in-flight advance's stale save is rejected rather than clobbering
- * the terminal state.
+ * <p>{@code sequence}는 체인 내 위치를 나타낸다. {@code taskName}은 task 타입의 이름으로, 엔진이 이를
+ * {@code TaskType}으로 해석하여 해당 task를 구동한다. {@code jobId}는 TERRAFORM_JOB에 대해 InfraManager가
+ * 발급한 핸들로, 디스패치(dispatch) 시 저장되고 크래시(crash) 이후 재폴링(re-poll)에 사용된다.
+ * {@code errorCode}는 {@code status == FAILED}인 경우에만 설정된다. {@code nextCheckAt}은 폴링 task가 다음에
+ * 실행될 시각이며, null은 즉시 실행 대상임을 의미한다. {@code version}은 낙관적 락(optimistic lock)이다:
+ * InfraManager 호출이 느린 도중 cancel이 CANCELLED를 커밋하면 이 값이 증가하므로, 진행 중(in-flight)인 advance의
+ * 낡은(stale) 저장이 종료 상태를 덮어쓰지 않고 거부된다.
  */
 @Entity
 @Table(
@@ -47,7 +49,7 @@ import org.hibernate.type.SqlTypes;
 @Getter
 @Setter
 @NoArgsConstructor
-@AllArgsConstructor
+@AllArgsConstructor(access = AccessLevel.PRIVATE)
 @Builder
 public class Task {
 

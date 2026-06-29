@@ -1,9 +1,10 @@
 package com.bff.pipeline.service;
 
-import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.entity.TaskCheck;
+import com.bff.pipeline.enums.CheckSignal;
+import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
@@ -12,21 +13,21 @@ import java.util.Optional;
 import org.springframework.stereotype.Component;
 
 /**
- * The single writer of the write-only observation tables ({@code task_attempt}, {@code task_check};
- * ADR-016 §3). It is debuggability only: the engine never reads what it writes, and it is
- * resilient to the common case (a missing attempt row is a no-op). It rides the engine's {@code advance}
- * transaction (not a separate {@code REQUIRES_NEW} transaction — the async-observation split was rejected); a
- * write failure rolls back and retries the whole advance, never corrupting state. See
- * {@code docs/exception-strategy.md}.
+ * 쓰기 전용 관찰 테이블({@code task_attempt}, {@code task_check}; ADR-016 §3)의 단일 기록자(writer)이다.
+ * 디버깅 가능성(debuggability) 전용이며, 엔진은 자신이 쓴 내용을 읽지 않는다. 일반적인 경우
+ * (attempt 행이 없는 경우)에는 no-op으로 처리되어 복원력을 갖는다. 엔진의 {@code advance}
+ * 트랜잭션을 함께 사용한다 — 별도의 {@code REQUIRES_NEW} 트랜잭션이 아니다(비동기 관찰 분리
+ * 방안은 기각됨). 쓰기 실패 시 전체 advance가 롤백되고 재시도되며, 상태가 손상되는 경우는 없다.
+ * {@code docs/exception-strategy.md} 참조.
  *
- * <p>The current attempt is identified by {@code (task.id, attemptNo = task.failCount + 1)} — stable
- * for the whole attempt because {@code failCount} only changes when an attempt ends.
+ * <p>현재 시도(attempt)는 {@code (task.id, attemptNumber = task.failCount + 1)}으로 식별된다 —
+ * {@code failCount}는 시도가 종료될 때만 변경되므로 시도 전체에 걸쳐 안정적이다.
  *
- * <p>{@code beginAttempt} opens a new attempt as a task enters dispatch; {@code recordJobId} stores the
- * job id once a TERRAFORM dispatch returns it; {@code recordCheck} summarizes one poll into the
- * attempt's single check row (created on first use, then updated in place — a RUNNING signal bumps only
- * the call count, the others their own sub-counter); {@code endAttempt} records the attempt's terminal
- * outcome.
+ * <p>{@code beginAttempt}는 task가 디스패치 단계에 진입할 때 새 시도를 개시한다.
+ * {@code recordJobId}는 TERRAFORM 디스패치가 반환한 job id를 저장한다.
+ * {@code recordCheck}는 폴 한 번의 결과를 시도의 단일 check 행에 요약한다 — 최초 사용 시
+ * 생성되고 이후에는 제자리 갱신된다(RUNNING 신호는 호출 횟수만 증가시키고, 나머지 신호는
+ * 각자의 서브 카운터를 증가시킨다). {@code endAttempt}는 시도의 최종 결과를 기록한다.
  */
 @Component
 public class Observations {
@@ -44,7 +45,7 @@ public class Observations {
     public void beginAttempt(Task task) {
         attempts.save(TaskAttempt.builder()
                 .taskId(task.getId())
-                .attemptNo(attemptNo(task))
+                .attemptNumber(attemptNumber(task))
                 .jobId(task.getJobId())
                 .status(TaskStatus.IN_PROGRESS)
                 .startedAt(clock.instant())
@@ -63,8 +64,8 @@ public class Observations {
         if (attempt.isEmpty()) {
             return;
         }
-        TaskCheck check = checks.findByTaskAttemptId(attempt.get().getId())
-                .orElseGet(() -> TaskCheck.builder().taskAttemptId(attempt.get().getId()).build());
+        TaskAttempt current = attempt.get();
+        TaskCheck check = currentCheck(current);
         check.setCallCount(check.getCallCount() + 1);
         switch (signal) {
             case NOT_MET -> check.setNotMetCount(check.getNotMetCount() + 1);
@@ -87,10 +88,15 @@ public class Observations {
     }
 
     private Optional<TaskAttempt> currentAttempt(Task task) {
-        return attempts.findByTaskIdAndAttemptNo(task.getId(), attemptNo(task));
+        return attempts.findByTaskIdAndAttemptNumber(task.getId(), attemptNumber(task));
     }
 
-    private static int attemptNo(Task task) {
+    private TaskCheck currentCheck(TaskAttempt attempt) {
+        return checks.findByTaskAttemptId(attempt.getId())
+                .orElseGet(() -> TaskCheck.builder().taskAttemptId(attempt.getId()).build());
+    }
+
+    private static int attemptNumber(Task task) {
         return task.getFailCount() + 1;
     }
 }

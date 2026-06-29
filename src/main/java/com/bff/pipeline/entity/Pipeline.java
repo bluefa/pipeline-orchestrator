@@ -12,6 +12,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.Instant;
+import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -19,27 +20,27 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
- * One run for one target (ADR-016 §2, §4). The row is the state.
+ * 하나의 target에 대한 하나의 실행(run)을 나타내는 행(row)이다(ADR-016 §2, §4). 이 행 자체가 상태(state)이다.
  *
- * <p><b>One active pipeline per target</b> is enforced by a single unique constraint on
- * {@code active_target}. MySQL has no partial (filtered) unique index, so instead of a
- * {@code WHERE status non-terminal} index this column carries the invariant directly:
- * {@code active_target = target} while the pipeline is non-terminal, and {@code NULL} once it
- * terminates. MySQL admits multiple NULLs in a unique index, so terminal rows never collide,
- * while at most one non-terminal row can hold a given target. The column is maintained by the
- * application in the same transaction as the status change (create sets it; cancel and converge
- * clear it).
+ * <p><b>target당 하나의 활성 pipeline</b> 불변식은 {@code active_target} 컬럼의 단일 유일 제약(unique constraint)으로
+ * 강제된다. MySQL은 부분(filtered) 유일 인덱스를 지원하지 않으므로, {@code WHERE status non-terminal} 형식의 인덱스 대신
+ * 이 컬럼이 불변식을 직접 담는다: pipeline이 비종료(non-terminal) 상태인 동안에는 {@code active_target = target}이며,
+ * 종료(terminates) 시에는 {@code NULL}로 설정된다. MySQL은 유일 인덱스에서 다수의 NULL을 허용하므로 종료된 행들은
+ * 서로 충돌하지 않으며, 주어진 target에 대해 비종료 행은 최대 하나만 존재할 수 있다. 이 컬럼은 상태 변경과 동일한
+ * 트랜잭션 내에서 애플리케이션이 유지 관리한다(생성 시 설정, cancel 및 converge 시 초기화).
  */
 @Entity
 @Table(
         name = "pipeline",
-        uniqueConstraints = @UniqueConstraint(name = "uq_pipeline_active_target", columnNames = "active_target"))
+        uniqueConstraints = @UniqueConstraint(name = Pipeline.ACTIVE_TARGET_CONSTRAINT, columnNames = "active_target"))
 @Getter
 @Setter
 @NoArgsConstructor
-@AllArgsConstructor
+@AllArgsConstructor(access = AccessLevel.PRIVATE)
 @Builder
 public class Pipeline {
+
+    public static final String ACTIVE_TARGET_CONSTRAINT = "uq_pipeline_active_target";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

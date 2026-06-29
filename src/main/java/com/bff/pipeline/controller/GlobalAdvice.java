@@ -9,10 +9,10 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 /**
- * Translates uncaught exceptions from the REST layer into a small JSON error body. There are no
- * controllers yet (this module is the ADR-016 domain model); this is the seam the REST layer added
- * later plugs into. The catch-all handler never swallows the cause — it logs the exception (the trace)
- * while returning a generic body.
+ * REST 레이어에서 발생한 미처리 예외를 소형 JSON 오류 본문으로 변환하는 {@code @RestControllerAdvice}이다.
+ * 현재 이 모듈에는 컨트롤러가 없으며(이 모듈은 ADR-016 도메인 모델이다), 추후 REST 레이어가 추가될 때
+ * 연결될 이음새(seam) 역할을 한다. catch-all 핸들러는 원인을 절대 무시하지 않으며,
+ * 예외(스택 트레이스 포함)를 로깅한 후 제네릭 응답 본문을 반환한다.
  */
 @RestControllerAdvice
 public class GlobalAdvice {
