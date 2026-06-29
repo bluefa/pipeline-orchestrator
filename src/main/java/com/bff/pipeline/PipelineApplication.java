@@ -2,17 +2,17 @@ package com.bff.pipeline;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
- * Install/Delete pipeline orchestrator (ADR-016 domain model).
+ * Install/Delete pipeline durable state-machine (ADR-016 / PR #511 domain model).
  *
- * <p>A durable, 6-state task machine driven by a periodic reconciler tick. The database row
- * <em>is</em> the state; a restart resumes from it. See {@code docs/adr/016-...} for the
- * domain model and {@code docs/exception-strategy.md} for how failures are handled.
+ * <p>The database row <em>is</em> the state. The domain exposes one forward-progress operation,
+ * {@code PipelineEngine.advance(pipelineId)}, which moves a pipeline's state machine one step. An
+ * ADR-021 runner decides when, how often, and with what concurrency to call it — that execution model
+ * is out of scope here (there is no scheduler or reconciler loop in this module). See
+ * {@code docs/adr/016-...} for the domain model and {@code docs/exception-strategy.md} for failures.
  */
 @SpringBootApplication
-@EnableScheduling
 public class PipelineApplication {
 
     public static void main(String[] args) {
