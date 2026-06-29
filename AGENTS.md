@@ -6,7 +6,10 @@ Shared rules for coding agents (Claude Code, Codex) in this repository.
 
 The backend implementation of the **ADR-016 install/delete pipeline domain model**
 (`docs/adr/016-install-delete-pipeline-domain-model.md`). A durable, DB-backed state
-machine driven by a reconciler tick. Spring Boot 3 / Java 21 / MySQL.
+machine whose one domain operation is `PipelineEngine.advance(pipelineId)`. The
+**execution model** that drives it (the runner, scheduling, worker pool, crash-recovery
+loop) is the separate **ADR-021** and is deliberately not in this repo. Spring Boot 3 /
+Java 21 / MySQL.
 
 ## Hard rules
 
@@ -20,12 +23,27 @@ machine driven by a reconciler tick. Spring Boot 3 / Java 21 / MySQL.
    or hand-written SQL migrations. If a constraint cannot be expressed in JPA, stop and
    raise it rather than reaching for raw SQL.
 4. **Separate the two failure kinds.** External-call failures are exceptions caught at the
-   reconcile boundary and translated to a persisted `ErrorCode`; business-rule outcomes are
-   values (`ErrorCode`, sealed result types), never thrown. See
+   one engine boundary (`TaskMachine`) and translated to a persisted `ErrorCode`;
+   business-rule outcomes are values (`ErrorCode`, sealed result types), never thrown. See
    `docs/exception-strategy.md`.
-5. **Keep the file count down.** No interface with a single implementation unless it is a
-   real boundary (the InfraManager client). Prefer a static utility to a one-method bean.
-6. **Surgical changes.** Touch only what the task needs; match the surrounding style.
+5. **Keep the file count down.** An `interface` is justified only by a real external boundary
+   (`InfraManagerClient`, prod + test fake) or genuine multi-implementation polymorphism
+   (`TaskType` → Terraform/Condition, resolved by `TaskTypeRegistry`) — never a single-impl
+   indirection. Prefer a static utility to a one-method bean.
+6. **Layered packages.** `entity / enums / dto / model / service / client / controller / repository / utils`
+   (app wiring — `PipelineApplication`/`PipelineConfig`/`PipelineSettings` — sits at the root package):
+   - `entity` — JPA entities · `enums` — all enums · `dto` — external transport values (TerraformPoll,
+     ErrorResponse) · `model` — domain value/contract types that are neither a bean nor transport
+     (TaskType, TaskProgress, Recipe) · `service` — **only** `@Component`/`@Service` beans (no enum,
+     record, or plain interface lives here) · `client` — the InfraManager boundary · `controller` — REST
+     advice · `repository` — Spring Data · `utils` — static helpers.
+   Names reveal purpose — **no abbreviations** anywhere (class, method, field, variable): e.g.
+   `InfraManagerClient` not `ImClient`, `sequence` not `seq`, `timeToLive` not `ttl`, `attemptNumber`
+   not `attemptNo`.
+7. **Comments in Korean, on the class header.** Avoid inline comments; put a **detailed Korean**
+   Javadoc on each major component's class declaration so its behavior and invariants are clear from the
+   header alone. Identifiers and code stay in English; only the prose comments are Korean.
+8. **Surgical changes.** Touch only what the task needs; match the surrounding style.
 
 ## Verify before finishing
 

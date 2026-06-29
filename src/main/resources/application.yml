@@ -16,11 +16,9 @@ spring:
     properties:
       hibernate.jdbc.time_zone: UTC
 
+# Per-task deadline defaults (the ADR-021 runner owns the tick cadence and per-call timeout).
 pipeline:
-  tick-interval: PT15S        # reconciler scan cadence
-  per-call-timeout: PT30S     # deadline for a single InfraManager call
-  execution-timeout: PT30M    # TERRAFORM_JOB per-task deadline
-  ttl: P7D                    # CONDITION_CHECK per-task deadline
-  polling-interval: PT10M     # CONDITION_CHECK re-poll cadence
-  max-fail-count: 3           # attempts before a task is FAILED
-  worker-pool-size: 8         # bounded pool sizing concurrent InfraManager calls
+  execution-timeout: PT50M    # TERRAFORM_JOB per-task deadline
+  time-to-live: P7D           # CONDITION_CHECK per-task deadline
+  polling-interval: PT10M     # poll re-check cadence
+  max-fail-count: 2           # attempts before a task is FAILED

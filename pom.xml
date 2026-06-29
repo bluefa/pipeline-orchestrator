@@ -29,6 +29,12 @@
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
 
+        <!-- REST layer (controllers added later); enables the @RestControllerAdvice error handler. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
         <!-- Production target DB. -->
         <dependency>
             <groupId>com.mysql</groupId>
