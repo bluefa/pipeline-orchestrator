@@ -4,22 +4,32 @@ This is a **v1** domain model. Three extensions are anticipated: more tasks, a T
 an Event Outbox. This document records **where each plugs in** so the v1 code stays minimal (none of
 them is built yet — YAGNI) while the seams are deliberate, not accidental.
 
-The guiding principle: the extension points are **concrete and few** — the recipe registry, the
-`switch` on `TaskKind`, and the single per-pipeline transaction boundary. There are no speculative
-plugin interfaces or strategy hierarchies; adding a feature edits a known place.
+The guiding principle: the extension points are **concrete and few** — the recipe catalog
+(`service/Recipes.java`), the **`TaskType` registry** (`service/TaskTypeRegistry.java`), and the single
+per-pipeline transaction boundary. Adding a feature is a new file or a new entry in a known place, not a
+re-wiring.
 
 ## 1. More tasks
 
-Two sub-cases, both already supported by the shape of the code:
+Two sub-cases:
 
-- **More tasks of existing kinds** (a longer or different chain) — add an entry to
-  `create/Recipes.java`. A pipeline's recipe is just an ordered list of `(kind, operation)` steps;
-  the state machine runs any length. No schema change, no new state. The `BLOCKED → READY` unblocking
-  already sequences an arbitrary chain.
-- **A new task kind** — add a value to `TaskKind` and one dispatch/poll branch in
-  `reconcile/TaskMachine.java` (`dispatch` and `poll` switch on the kind). Its failure modes are new
-  `ErrorCode` values, handled exactly like the existing ones (see
-  [exception-strategy.md](exception-strategy.md)). `TaskStatus` is unchanged.
+- **More tasks of existing types** (a longer or different chain) — add an entry to
+  `service/Recipes.java`. A recipe is just an ordered list of `(taskName, operation)` steps; the state
+  machine runs any length. No schema change, no new state. The `BLOCKED → READY` unblocking already
+  sequences an arbitrary chain.
+- **A new *kind* of task** — implement the **`TaskType`** interface
+  (`taskName()` / `attempt(target, task)` / `check(target, task) → TaskProgress`) as a `@Component` in
+  `service/`. It **registers itself** in `TaskTypeRegistry` (built from the injected `List<TaskType>`),
+  so there is **no enum to extend and no `switch` to edit** — `TaskMachine` resolves the row's
+  `taskName` to its type generically. Reference the new type's `taskName` from a recipe step. Its
+  failure modes are new `ErrorCode` values returned as `TaskProgress.failed(reason, retryable)` and
+  handled exactly like the existing ones (see [exception-strategy.md](exception-strategy.md)).
+  `TaskStatus` is unchanged.
+
+This is the seam the design deliberately opened: a third behaviour (alongside `TerraformTask` and
+`ConditionCheckTask`) is a new file that self-registers, never a change to a closed type. A task row
+whose stored `taskName` no longer resolves to a type fails with `ErrorCode.UNKNOWN_TASK`, so a
+removed/renamed type degrades to a clean failure rather than a crash.
 
 **Operations.** `TaskOperation` is a closed enum because the v1 set is closed (ADR-016 §2). When the
 operation set becomes open or configured, replace the enum with a small registry (operation key →
@@ -34,10 +44,11 @@ infrastructure actually answers).
 - **If the check is a distinct step**, it is already expressible today: add a `CONDITION_CHECK` step
   after the `TERRAFORM_JOB` step in the recipe. The `INSTALL` recipe already does exactly this
   (`apply-network` then `network-ready`). No new mechanism is needed for this common case.
-- **If the check must be bound to the task itself** (one row, "done *and* verified"), the seam is
-  `reconcile/TaskMachine.complete(Task)`: a post-check would run there before marking `DONE`, and a
-  failed post-check would be a new `ErrorCode` written to the row — a business outcome, never a thrown
-  exception. This keeps post-checks inside the same per-task transition and the same failure model.
+- **If the check must be bound to the task itself** (one row, "done *and* verified"), the seam is the
+  task's own `TaskType.check(...)`: a type can require its post-condition before returning
+  `TaskProgress.SUCCEEDED`, and a failed post-check is a new `ErrorCode` returned as
+  `TaskProgress.failed(...)` — a business value, never a thrown exception. This keeps post-checks inside
+  the same per-task transition and the same failure model.
 
 ## 3. Event Outbox
 
@@ -45,11 +56,12 @@ An outbox durably publishes domain events (pipeline `DONE`/`FAILED`/`CANCELLED`,
 downstream consumers with the same delivery guarantee as the state change.
 
 - **The seam is the single per-pipeline transaction.** Every terminal/transition write already happens
-  in one transaction: `PipelineReconciliation.converge` (via the guarded `finish()` CAS),
-  `PipelineControl.cancel`, and the `TaskMachine` transitions. An outbox row is inserted **in that same
-  transaction**, so the event is committed atomically with the state it describes — no dual-write gap.
+  in one transaction: `PipelineEngine.converge` (via the guarded `finish()` CAS),
+  `PipelineControl.cancel`, and the `TaskMachine` transitions (all in `service/`). An outbox row is
+  inserted **in that same transaction**, so the event is committed atomically with the state it
+  describes — no dual-write gap.
 - **What it adds:** a `pipeline_event` table (append-only) and a separate relay/poller that ships
-  rows to consumers and marks them sent. The relay is independent of the reconciler — the reconciler's
+  rows to consumers and marks them sent. The relay is independent of the engine — the engine's
   only job is the same-transaction insert.
 - **What it must not do:** an enqueue failure is an *infrastructure* failure that rolls the transaction
   back, never a business `ErrorCode`. Event delivery is at-least-once; consumers dedupe.
@@ -61,11 +73,20 @@ v1; this section only fixes the insertion point so adding it later is a localize
 
 To keep the file count and concept count low (a stated goal of the ADR and the owner):
 
-- No `TaskExecutor`/`TaskHandler` interface per kind — two kinds are a `switch`, not a hierarchy.
-  Introduce a strategy only if the kind count grows enough that the `switch` stops fitting on a screen.
 - No event/listener framework — the outbox is a table plus a relay, wired at the one transaction
   boundary above.
-- No generic "pipeline definition" engine — recipes are code defaults in a `Map`.
+- No generic "pipeline definition" engine — recipes are code defaults in a `Map` (`Recipes`).
+- `TaskOperation` stays a closed enum until the operation set actually opens.
 
-The boundary that *is* an interface — `ImClient` — earns it: it is a real external integration with a
-production (HTTP) and a test (fake) implementation.
+## The two interfaces that earn their place
+
+The file/concept budget is tight, so an `interface` must be justified — either a real external boundary
+or genuine multi-implementation polymorphism. Exactly two qualify:
+
+- **`InfraManagerClient`** (`client/`) — a real external integration, with a production (HTTP) and a
+  test (fake) implementation.
+- **`TaskType`** (`service/`) — a genuine strategy with two real implementations today
+  (`TerraformTask`, `ConditionCheckTask`) and an open set tomorrow, resolved by name through a registry.
+  A `switch` on a closed `kind` enum would force every new task type to edit `TaskMachine`; the
+  interface + registry makes a new type an additive, self-registering file. A single-implementation
+  interface would *not* earn its place — these two do.

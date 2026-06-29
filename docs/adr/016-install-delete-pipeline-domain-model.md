@@ -50,7 +50,7 @@ Task:      BLOCKED ──▶ READY ──▶ IN_PROGRESS ──▶ DONE | FAILED
 Pipeline:  RUNNING ─────────────────────────▶ DONE | FAILED | CANCELLED
 ```
 
-The **current task** is the lowest-`seq` `READY`/`IN_PROGRESS` task; tasks ahead of it are
+The **current task** is the lowest-`sequence` `READY`/`IN_PROGRESS` task; tasks ahead of it are
 explicitly `BLOCKED` until their predecessor reaches `DONE` (a task is created BLOCKED and
 flips to READY; the first task starts READY). Pipeline status is a stored projection, written
 in the same transaction as the task transition that changes it, so a scan can filter on it
@@ -60,6 +60,12 @@ Five core enums (`TaskStatus`, `PipelineStatus`, `TaskKind`, `PipelineType`, `Er
 a conditional `TaskOperation` when the operation set is closed (an open set is registry-validated).
 A task's `kind` selects the executor; its `operation` selects the domain action within it. A
 pipeline's recipe (its ordered task list) is a code default per `(type, provider)`.
+
+> **Implementation note (post-ADR).** The build replaced the `TaskKind` enum with a `TaskType`
+> interface: each task row stores a `task_name` String, resolved to a `TaskType` implementation
+> (`TerraformTask`, `ConditionCheckTask`, …) by `TaskTypeRegistry`, so a new kind of task is a new
+> self-registering class rather than an enum + `switch` edit. A row whose `task_name` resolves to no
+> registered type fails with the added `ErrorCode.UNKNOWN_TASK`. See `docs/extensibility.md`.
 
 ### 3. Observation is separate from state
 
@@ -92,7 +98,7 @@ attempt identity for our records, not an InfraManager key.
 - `fail_count` per task. A failed dispatch or poll increments it; below `maxFailCount` the task
   re-runs as a **fresh run** (completed work is a no-op — Terraform converges), at or above it
   the task is `FAILED`.
-- Two deadlines: a **per-call** timeout and a **per-task** `executionTimeout` (TF) / `ttl`
+- Two deadlines: a **per-call** timeout and a **per-task** `executionTimeout` (TF) / `timeToLive`
   (condition); both map to canonical `ErrorCode` values, not separate states.
 - No circuit breaker — a systemic failure is delay (timeout + retry + alert), not corruption.
 
@@ -134,9 +140,9 @@ cancel is applied against a live worker is an execution concern (ADR-021).
 
 - `pipeline(id, type, target, status, created_at, last_activity_at)` — execution adds
   `next_due_at, claimed_by, claimed_until, cancel_requested` (see ADR-021).
-- `task(id, pipeline_id, seq, kind, operation, status, job_id, fail_count, error_code,
-  started_at, ready_at, finished_at, next_check_at, ttl, polling_interval, execution_timeout,
-  max_fail_count)`
+- `task(id, pipeline_id, sequence, task_name, operation, status, job_id, fail_count, error_code,
+  started_at, ready_at, finished_at, next_check_at, time_to_live, polling_interval, execution_timeout,
+  max_fail_count)` — `task_name` resolves to a `TaskType` (see the §2 implementation note)
 
 **Observation tables** (write-only; the reconciler never reads them)
 
@@ -164,9 +170,9 @@ Relationships: `pipeline 1:N task 1:N task_attempt 1:0..1 task_check`.
 |---|---|
 | `TaskStatus` | BLOCKED, READY, IN_PROGRESS, DONE, FAILED, CANCELLED |
 | `PipelineStatus` | RUNNING, DONE, FAILED, CANCELLED |
-| `TaskKind` | TERRAFORM_JOB, CONDITION_CHECK |
+| task type | _(implemented as)_ a `task_name` String per row → `TaskType` impl via `TaskTypeRegistry` (TERRAFORM_JOB, CONDITION_CHECK today); replaced the `TaskKind` enum |
 | `PipelineType` | INSTALL, DELETE |
-| `ErrorCode` | JOB_FAILED, EXECUTION_TIMEOUT, TTL_EXPIRED, CHECK_ERROR, CALL_TIMEOUT |
+| `ErrorCode` | JOB_FAILED, EXECUTION_TIMEOUT, TIME_TO_LIVE_EXPIRED, CHECK_ERROR, CALL_TIMEOUT, UNKNOWN_TASK |
 
 `TaskOperation` is a conditional sixth enum, present only when the operation set is closed; an
 open/configured set uses a registry instead.
@@ -182,4 +188,4 @@ open/configured set uses a registry instead.
 - **InfraManager** — runs Terraform jobs (async; returns a job id; a worker pod runs the apply).
 - **BackendManager** — the integration/approval and target-source service.
 - **Terraform job** — one infrastructure apply; runs for minutes.
-- **Current task** — the lowest-`seq` `READY`/`IN_PROGRESS` task of a RUNNING pipeline.
+- **Current task** — the lowest-`sequence` `READY`/`IN_PROGRESS` task of a RUNNING pipeline.

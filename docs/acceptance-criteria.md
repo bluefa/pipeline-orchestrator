@@ -5,6 +5,13 @@ The **definition of done** for this module, derived from
 concrete, testable criteria, each tied to the code and the test that proves it. This is the
 self-review checklist; the review-round log at the bottom tracks the codex passes.
 
+> **Scope.** This module is the **domain model** (ADR-016): durable state, the data model, the
+> uniqueness rule, the failure semantics, and the lifecycle. The **execution model** — *when, how
+> often, with what concurrency* `PipelineEngine.advance(pipelineId)` is called (the runner, scheduling,
+> worker pool, crash-recovery loop) — is the separate **ADR-021** and is **deliberately not in this
+> repo**. The criteria below test the domain; tests drive `advance()` directly, standing in for the
+> runner.
+
 **Status legend:** ✅ met (code + test evidence) · ⚠️ gap (must fix) · 📦 deferred (out of v1 scope,
 documented).
 
@@ -12,21 +19,22 @@ documented).
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
-| A1 | Progress lives only in DB rows; the reconciler reads rows each tick and resumes — no in-memory authority | `PipelineReconciliation.reconcile` re-reads the pipeline + chain every tick | ✅ |
-| A2 | A restart re-polls an IN_PROGRESS terraform job by its stored `job_id` (crash recovery) | `ReconcilerTest.crashResumeRePollsAnInProgressTerraformJobByItsStoredJobId` | ✅ |
-| A3 | A committed reconcile is visible to a fresh read (own transaction) | `ReconciliationTransactionTest.reconcileCommitsInItsOwnTransactionVisibleToAFreshRead` | ✅ |
+| A1 | Progress lives only in DB rows; each `advance` re-reads the rows and resumes — no in-memory authority | `PipelineEngine.advance` re-reads the pipeline + chain on every call | ✅ |
+| A2 | A restart re-polls an IN_PROGRESS terraform job by its stored `job_id` (crash recovery) | `PipelineEngineTest.crashResumeRePollsAnInProgressTerraformJobByItsStoredJobId` | ✅ |
+| A3 | A committed `advance` is visible to a fresh read (own transaction) | `PipelineEngineTransactionTest.advanceCommitsInItsOwnTransactionVisibleToAFreshRead` | ✅ |
 
 ## B. Decision 2 — two domain tables, a small durable state machine
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
 | B1 | Task lifecycle is BLOCKED→READY→IN_PROGRESS→DONE\|FAILED\|CANCELLED | `TaskStatus`, `TaskMachine.advance` | ✅ |
-| B2 | Pipeline lifecycle is RUNNING→DONE\|FAILED\|CANCELLED | `PipelineStatus`, `PipelineReconciliation.converge` | ✅ |
-| B3 | First task starts READY; the rest start BLOCKED and flip to READY when the predecessor is DONE | `PipelineInserter.insert` + `ReconcilerTest.anInstallRunsBothTasksThroughBlockedAndUnblockToDone` | ✅ |
-| B4 | The current task is the lowest-seq non-terminal task | `PipelineReconciliation.currentTask` | ✅ |
-| B5 | Pipeline status is a stored projection, written in the same tx as the task transition that changes it | `PipelineRepository.finish` (CAS in the reconcile tx) | ✅ |
-| B6 | Five core enums + a closed `TaskOperation` (a task's kind selects the executor, operation the action) | `domain/*` enums; `TaskMachine` switches on kind | ✅ |
-| B7 | A recipe (ordered task list) is a code default per type | `create/Recipes` | ✅ |
+| B2 | Pipeline lifecycle is RUNNING→DONE\|FAILED\|CANCELLED | `PipelineStatus`, `PipelineEngine.converge` | ✅ |
+| B3 | First task starts READY; the rest start BLOCKED and flip to READY when the predecessor is DONE | `PipelineInserter.insert` + `PipelineEngineTest.anInstallRunsBothTasksThroughBlockedAndUnblockToDone` | ✅ |
+| B4 | The current task is the lowest-sequence non-terminal task | `PipelineEngine.currentTask` | ✅ |
+| B5 | Pipeline status is a stored projection, written in the same tx as the task transition that changes it | `PipelineRepository.finish` (CAS in the `advance` tx) | ✅ |
+| B6 | Five core enums + a closed `TaskOperation` (a task's type selects the executor, operation the action) | `entity/*` enums; the type is resolved by name (no `switch` on kind) | ✅ |
+| B7 | A recipe (ordered task list) is a code default per type | `Recipes` | ✅ |
+| B8 | A task's behaviour is a `TaskType` resolved **by name** through `TaskTypeRegistry`; a new kind self-registers (no enum/`switch` edit) | `TaskType`/`TaskTypeRegistry`; `TerraformTask`/`ConditionCheckTask` | ✅ |
 
 ## C. Decision 3 — observation is separate from state
 
@@ -34,8 +42,8 @@ documented).
 |---|---|---|---|
 | C1 | `task_attempt` = one row per attempt, `attempt_no = failCount + 1` | `Observations` + `ObservationTest.aRetryingTaskRecordsOneAttemptRowPerAttemptWithIncreasingAttemptNo` | ✅ |
 | C2 | `task_check` is UPDATE-in-place (one row per attempt; counters grow, not rows) | `ObservationTest.aConditionPolledNotMetUpdatesOneCheckRowInPlace` | ✅ |
-| C3 | The reconciler never **reads** the observation tables for correctness | `Observations` only writes; `PipelineReconciliation`/`TaskMachine` never query them | ✅ |
-| C4 | Losing observations degrades debuggability only, never correctness — an observation write can never roll back task progress | observation writes isolated on a `REQUIRES_NEW`, best-effort boundary | ✅ |
+| C3 | The engine never **reads** the observation tables for correctness | `Observations` only writes; `PipelineEngine`/`TaskMachine` never query them | ✅ |
+| C4 | Losing observations degrades debuggability only, never correctness — they can never roll back task progress | observations ride the `advance` tx (ADR Option B); a failed write retries the whole `advance`, which cannot corrupt the atomic task row — see Deferred | ✅ |
 
 ## D. Decision 4 — one active pipeline per target
 
@@ -58,22 +66,23 @@ documented).
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
-| F1 | `fail_count` per task; below `maxFailCount` → fresh re-run, at/above → FAILED | `TaskMachine.retryOrFail` + `ReconcilerTest.terraformJobFailureRetriesThenFailsAtMax...` | ✅ |
-| F2 | Per-call timeout → `CALL_TIMEOUT` | `ImCall.withTimeout` + `ReconcilerTest.aSlowDispatchTimesOutAsCallTimeout...` | ✅ |
-| F3 | Per-task `executionTimeout` (TF) → `EXECUTION_TIMEOUT` | `ReconcilerTest.terraformJobRunningPastExecutionTimeout...` | ✅ |
-| F4 | Per-task `ttl` (condition) → `TTL_EXPIRED` (no retry) | `ReconcilerTest.conditionPastTtlExpires...` | ✅ |
+| F1 | `fail_count` per task; below `maxFailCount` → fresh re-run, at/above → FAILED | `TaskMachine.retryOrFail` + `PipelineEngineTest.terraformJobFailureRetriesThenFailsAtMaxAndFailsThePipeline` | ✅ |
+| F2 | Per-call timeout → `CALL_TIMEOUT` (the ADR-021 runner owns the timeout; `TaskMachine` maps `InfraManagerClient.CallTimeoutException`) | `PipelineEngineTest.aCallTimeoutFromTheInfraManagerClientIsCallTimeoutAndRetries` | ✅ |
+| F3 | Per-task `executionTimeout` (TF) → `EXECUTION_TIMEOUT` | `PipelineEngineTest.terraformJobRunningPastExecutionTimeoutFailsWithExecutionTimeout` | ✅ |
+| F4 | Per-task `timeToLive` (condition) → `TIME_TO_LIVE_EXPIRED` (no retry) | `PipelineEngineTest.conditionPastTimeToLiveExpiresToFailedWithTimeToLiveExpired` | ✅ |
 | F5 | Both deadlines map to canonical `ErrorCode` values, not separate states | `ErrorCode`; no extra `TaskStatus` | ✅ |
 
 ## G. Decision 7 — minimal lifecycle
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
-| G1 | Exactly two task kinds (TERRAFORM_JOB, CONDITION_CHECK) | `TaskKind` | ✅ |
+| G1 | Two task kinds today (TERRAFORM_JOB, CONDITION_CHECK); the set is open via new `TaskType` impls | `TerraformTask`/`ConditionCheckTask` (a third kind is a new file, not an enum edit) | ✅ |
 | G2 | Retry is a fresh run (no terminal resurrection) | `TaskMachine.retryOrFail` resets to READY | ✅ |
 | G3 | Cancel converges directly to CANCELLED (no CANCELLING) and terminalizes every non-terminal task | `PipelineControl.cancel` + `PipelineControlTest` | ✅ |
 | G4 | Cancel is a RUNNING-guarded transition — it can never resurrect a pipeline a converge already terminalized | `PipelineControl.cancel` uses the guarded `finish(..., CANCELLED, ...)` CAS, 0-row = no-op | ✅ |
-| G5 | A FAILED pipeline marks the failing task FAILED and CANCELS the rest | `PipelineReconciliation.cancelRemaining` + `ReconcilerTest.aFailedPipelineCancelsItsRemainingBlockedTasks` | ✅ |
+| G5 | A FAILED pipeline marks the failing task FAILED and CANCELS the rest | `PipelineEngine.cancelRemaining` + `PipelineEngineTest.aFailedPipelineCancelsItsRemainingBlockedTasks` | ✅ |
 | G6 | A terminal state is never resurrected | guarded CAS on every pipeline terminalization (finish/cancel); `Task.@Version` on the task race | ✅ |
+| G7 | A task whose stored `taskName` resolves to no `TaskType` fails with `UNKNOWN_TASK` (a value, no NPE) | `TaskMachine` resolve→`fail(UNKNOWN_TASK)` + `PipelineEngineTest.aTaskWhoseStoredNameHasNoRegisteredTypeFailsAsUnknownTask` | ✅ |
 
 ## H. Schema & persistence (JPA-generated, MySQL)
 
@@ -82,17 +91,19 @@ documented).
 | H1 | Tables, indexes, unique constraints are generated from JPA annotations — no Flyway / hand-written SQL | `@Table`/`@Index`/`@UniqueConstraint`; Hibernate DDL log | ✅ |
 | H2 | MySQL target; tests run on H2 MySQL-mode without Docker | `application.yml` (MySQL) + test `application.yml` (H2 `MODE=MySQL`) | ✅ |
 | H3 | "One active per target" works on MySQL despite no partial unique index (nullable `active_target` + unique; multiple NULLs allowed) | `Pipeline.activeTarget`; uniqueness tests | ✅ |
-| H4 | `@Version` optimistic lock guards the cancel/reconcile task race | `Task.version` + `ReconciliationTransactionTest.aCancelThatCommitsDuringTheImCall...` | ✅ |
+| H4 | `@Version` optimistic lock guards the cancel/advance task race | `Task.version` + `PipelineEngineTransactionTest.aCancelThatCommitsDuringTheInfraManagerClientCallDoesNotClobberCancelled` | ✅ |
+| H5 | Indexes are JPA-declared and cover the actual queries; no orphan index (the status-scan index was dropped with the reconciler scan) | unique constraints `uq_task_pipeline_sequence`/`uq_task_attempt`/`uq_task_check_attempt`/`uq_pipeline_active_target` back every repository query | ✅ |
 
 ## I. Exception strategy (external vs business)
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
 | I1 | Business failures are `ErrorCode` values on the row, never thrown | `TaskMachine.fail`/`retryOrFail` | ✅ |
-| I2 | External-call failures are exceptions caught at exactly one boundary and translated to `ErrorCode` | `TaskMachine` dispatch/poll catches | ✅ |
-| I3 | Interruption is a fail-fast runtime signal, NOT mapped to a business `ErrorCode` | `ImCall.CallInterruptedException`; `TaskMachine` + `Reconciler.tick` rethrow; `ImCallTest` | ✅ |
+| I2 | External-call failures are exceptions caught at exactly one boundary and translated to `ErrorCode` | `TaskMachine` dispatch/poll catches + `PipelineEngineTest.aThrowingDispatchIsTreatedAsCheckErrorAndRetriedThenFailed` (+ F2 for CALL_TIMEOUT) | ✅ |
+| I3 | Interruption is a fail-fast runtime signal, NOT mapped to a business `ErrorCode` | `InfraManagerClient.CallInterruptedException`; `TaskMachine` rethrows it ahead of the broad `RuntimeException` catch (the ADR-021 runner re-rethrows before its per-pipeline catch) | ✅ |
 | I4 | The duplicate-create catch is targeted (constraint-checked) and rethrows other violations | see D3 | ✅ |
 | I5 | Strategy is documented | `docs/exception-strategy.md` | ✅ |
+| I6 | A null/blank job id or null poll from the boundary is guarded → `CHECK_ERROR` retry, never an NPE or a persisted null handle | `TerraformTask` guards + `PipelineEngineTest.aDispatchReturningNoJobIdIsTreatedAsCheckErrorAndRetried` | ✅ |
 
 ## J. Code quality (spring-java21 skill §6) & extensibility
 
@@ -100,25 +111,37 @@ documented).
 |---|---|---|---|
 | J1 | Constructor injection only; `Clock` injected; no direct `now()` in logic | all beans | ✅ |
 | J2 | Closed-set switches are exhaustive, no `default` swallow | `TaskMachine.advance` enumerates terminal states | ✅ |
-| J3 | Only `ImClient` is an interface (a real boundary); static utility (`TaskKnobs`) over a one-method bean | package scan | ✅ |
+| J3 | Interfaces are justified — `InfraManagerClient` (external boundary, prod + fake) and `TaskType` (genuine N-impl polymorphism, registry-resolved); static utility (`TaskKnobs`) over a one-method bean | package scan | ✅ |
 | J4 | Tests behavior-named, fixed `Clock`, fakes not mocks | test suite | ✅ |
 | J5 | Extension seams (more task kinds / post-check / outbox) documented, not pre-built | `docs/extensibility.md` | ✅ |
 
 ## Deferred / accepted limitations (📦)
 
-- **Observations ride the reconcile transaction** (no `REQUIRES_NEW` / separate bean). The async
-  observation split was rejected (ADR Option B); a failed observation write rolls back and retries the
-  whole tick, which cannot corrupt state, so this honors the ADR's correctness-only guarantee. The
-  `REQUIRES_NEW` boundary is the documented upgrade. 📦
+- **Observations ride the engine's `advance` transaction** (no `REQUIRES_NEW` / separate bean). The
+  async observation split was rejected (ADR Option B); a failed observation write rolls back and
+  retries the whole `advance`, which cannot corrupt state, so this honors the ADR's correctness-only
+  guarantee. The `REQUIRES_NEW` boundary is the documented upgrade. 📦
 - **Cancelled in-flight attempts** keep `task_attempt.status = IN_PROGRESS` (the authoritative `task`
   row shows CANCELLED). Observation-only; the tables are explicitly best-effort. 📦
 - **State-machine tests run inside the `@DataJpaTest` transaction** (fast, deterministic); the real
-  commit-boundary and cancel-race behavior is proven separately in `ReconciliationTransactionTest`
+  commit-boundary and cancel-race behavior is proven separately in `PipelineEngineTransactionTest`
   (`@SpringBootTest`, no test transaction). 📦
 - **Concurrent duplicate-create race** is verified sequentially (H2); the true row-level INSERT race
   is a MySQL/CI concern (the constraint itself is enforced by H2). 📦
 - **HTTP InfraManager adapter** and the response-code/summary observation fields are out of v1 scope
-  (the host wires the `ImClient`). 📦
+  (the host wires the `InfraManagerClient`). 📦
+- **Execution model (ADR-021) is out of this repo** — the runner, scheduling, per-call timeout, worker
+  pool, and the crash-recovery loop that decides *when/how* `advance()` runs. This module is the pure
+  domain; tests drive `advance()` directly in place of the runner. 📦
+- **Cancel vs terminal-advance lock order** (codex R4 P1). A cancel locks the pipeline row first
+  (`finish()` CAS) then its tasks; a converging `advance` locks the current task first then the pipeline
+  (`finish()`). Under a *concurrent* cancel + advance on the **same** pipeline, MySQL/InnoDB may pick a
+  deadlock victim and abort it. **Correctness is unaffected** — the RUNNING-guarded CAS + `Task.@Version`
+  guarantee no resurrection and no `active_target` leak whichever way it resolves; the victim's caller
+  simply retries. The safe code fix (reordering cancel to task-first) would introduce a *new* `@Version`
+  race on cancel, so it is **not** taken here. Serializing concurrent drivers per pipeline (or retrying a
+  deadlock victim) is an **ADR-021 execution-layer** concern. opus and sonnet reviews did not consider it
+  merge-blocking. 📦
 
 ## Review-round log
 
@@ -142,6 +165,48 @@ so `cancelDoesNotResurrect…` now deterministically exercises the `finish()==0`
 
 | 3 | codex (gpt-5.5 xhigh) | **Yes** | 0 | 0 | 0 | both round-2 fixes VERIFIED; **no remaining findings** |
 
-**Status: DONE.** Both round-2 fixes verified, codex round 3 found no P0/P1/P2, the suite is green (26
-tests), and every criterion above is ✅ or a documented 📦. The implementation meets the ADR-016
-acceptance criteria.
+Rounds 1–3 reviewed the pre-refactor tree (26 tests), which still carried an ADR-021 **execution layer**
+(`Reconciler` tick loop, `ReconcileScheduler`/`@Scheduled`, the `ImCall` per-call-timeout wrapper, and
+the worker-pool settings).
+
+**Post-review refactor — pure domain (ADR-016 only).** The execution layer was stripped so this module
+is exactly PR #511's *domain half*: `Reconciler`, `ReconcileScheduler`, and `ImCall` deleted;
+`@Scheduled`/worker-pool settings removed; the boundary timeout exceptions moved into the InfraManager client
+(`CallTimeoutException`/`CallInterruptedException`); the `reconcile` package renamed to `engine` and
+`PipelineReconciliation.reconcile(id)` to `PipelineEngine.advance(id)`. Behaviour is unchanged — the
+state machine, creation/cancel, and observation are identical; only the *driver* (the ADR-021 runner)
+left the repo. Tests drive `advance()` directly. `ImCallTest` (3 tests for the deleted wrapper) was
+removed → **23 tests**. The criteria/evidence above are updated to the post-refactor names.
+
+| 4 | codex (gpt-5.5 xhigh) | **Yes** | 0 | 0 | 0 | re-review of the pure-domain tree: refactor preserved every invariant; no findings |
+
+**Post-review redesign — `TaskType` strategy + layered packages.** Per the owner: the `TaskKind` enum +
+`switch` became a **`TaskType` interface** (`taskName`/`attempt`/`check`→`TaskProgress`) with
+`TerraformTask`/`ConditionCheckTask` resolved by name via `TaskTypeRegistry`; an unknown name →
+`UNKNOWN_TASK` [B8/G7]. `Task.kind` → `Task.taskName`. Code repackaged into layers; `ImClient` →
+`InfraManagerClient`; `PipelineInserter` for-loop → `IntStream`; added `GlobalAdvice`. API-boundary null
+guards added [I6]. The orphan `ix_pipeline_status` index was dropped [H5]. Suite **25 tests**.
+
+| 5 | codex (gpt-5.5 xhigh) | No | 0 | 1 | 4 | lock-order deadlock (P1); dup-create recovery race + unindexed query; registry null/dup names; failUndefined attempt not ended |
+| 5 | opus (code-reviewer) | **Yes** | 0 | 0 | 4 | APPROVE — concurrency/exception/NPE all sound; P2 docs: ADR enum drift, registry guard, chain re-read, lastActivityAt |
+| 5 | sonnet (code-reviewer) | No | 0 | 3 | 5 | unindexed recovery query, ADR enum drift, GlobalAdvice swallows the cause; suggestions: Recipes switch, converge re-read, test try-finally |
+
+**Round-5 fixes applied:** recovery now queries the indexed `findByActiveTarget` with a bounded retry on
+the terminalize-between race [D2/D3]; `TaskTypeRegistry` rejects null/blank/duplicate names at boot;
+`failUndefined` ends the in-flight attempt; `GlobalAdvice` logs the cause; `Recipes.forType` is a
+compile-exhaustive `switch`; `converge` reuses the loaded chain (no re-read); cancel/cascade loops →
+streams; the transaction test releases the gated poll in `finally`; the ADR enum table notes
+TaskType/`UNKNOWN_TASK`. The lone P1 (lock-order deadlock) is **non-corrupting** and dispositioned as an
+ADR-021 concern (see Deferred) — opus and sonnet did not consider it merge-blocking. Suite green (25 tests).
+
+**Post-review structure pass (owner-directed).** Consolidated to
+`entity / service / client / controller / dto / repository / utils` (domain enums folded into `entity`;
+`advice` → `controller`; transport values grouped in `dto`; app wiring `PipelineConfig`/`PipelineSettings`
+to the root package). Removed every identifier abbreviation: `seq` → `sequence`, `ttl` → `timeToLive`
+(`ErrorCode.TTL_EXPIRED` → `TIME_TO_LIVE_EXPIRED`, yml `pipeline.time-to-live`), `cve` →
+`constraintViolation`, catch `e` → `exception`, `Throwable t` → `cause`. Suite green (25 tests).
+
+**Status: DONE.** Across three independent reviewers the implementation is merge-ready: opus APPROVE with
+no P0/P1; codex and sonnet's actionable findings all fixed; the single P1 (concurrent-driver lock-order)
+is a documented, non-corrupting ADR-021 liveness concern. Suite green (25 tests); every criterion above is
+✅ or a documented 📦. The module is the ADR-016 domain half; execution (ADR-021) is out of scope.
