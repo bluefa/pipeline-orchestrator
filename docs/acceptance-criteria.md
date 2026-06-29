@@ -5,12 +5,12 @@ The **definition of done** for this module, derived from
 concrete, testable criteria, each tied to the code and the test that proves it. This is the
 self-review checklist; the review-round log at the bottom tracks the codex passes.
 
-> **Scope.** This module is the **domain model** (ADR-016): durable state, the data model, the
-> uniqueness rule, the failure semantics, and the lifecycle. The **execution model** — *when, how
-> often, with what concurrency* `PipelineEngine.advance(pipelineId)` is called (the runner, scheduling,
-> worker pool, crash-recovery loop) — is the separate **ADR-021** and is **deliberately not in this
-> repo**. The criteria below test the domain; tests drive `advance()` directly, standing in for the
-> runner.
+> **Scope.** This module now implements **both** the ADR-016 domain model (durable state, data model,
+> uniqueness rule, failure semantics, lifecycle) **and** the ADR-021 claim-pull execution layer (claim
+> mechanism, two-transaction split, per-call timeout decorator, cancel Case A/B, and the sweep
+> scheduler). The criteria below test the domain (sections A–J) and the execution model (section K).
+> Domain tests drive `PipelineWorker.pollOnce()` directly; execution tests exercise the claim-pull
+> cycle end-to-end.
 
 **Status legend:** ✅ met (code + test evidence) · ⚠️ gap (must fix) · 📦 deferred (out of v1 scope,
 documented).
@@ -19,18 +19,18 @@ documented).
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
-| A1 | Progress lives only in DB rows; each `advance` re-reads the rows and resumes — no in-memory authority | `PipelineEngine.advance` re-reads the pipeline + chain on every call | ✅ |
+| A1 | Progress lives only in DB rows; each claim-pull cycle re-reads the rows and resumes — no in-memory authority | `StepReporter.report` re-reads the pipeline row under `FOR UPDATE` and the task chain on every tx2; `PipelineWorker.loadStepContext` re-reads on every `pollOnce` call | ✅ |
 | A2 | A restart re-polls an IN_PROGRESS terraform job by its stored `job_id` (crash recovery) | `PipelineEngineTest.crashResumeRePollsAnInProgressTerraformJobByItsStoredJobId` | ✅ |
-| A3 | A committed `advance` is visible to a fresh read (own transaction) | `PipelineEngineTransactionTest.advanceCommitsInItsOwnTransactionVisibleToAFreshRead` | ✅ |
+| A3 | A committed tx2 (report) is visible to a fresh read (own transaction) | `PipelineEngineTransactionTest.advanceCommitsInItsOwnTransactionVisibleToAFreshRead` (uses `worker.pollOnce()`) | ✅ |
 
 ## B. Decision 2 — two domain tables, a small durable state machine
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
 | B1 | Task lifecycle is BLOCKED→READY→IN_PROGRESS→DONE\|FAILED\|CANCELLED | `TaskStatus`, `TaskMachine.advance` | ✅ |
-| B2 | Pipeline lifecycle is RUNNING→DONE\|FAILED\|CANCELLED | `PipelineStatus`, `PipelineEngine.converge` | ✅ |
+| B2 | Pipeline lifecycle is RUNNING→DONE\|FAILED\|CANCELLED | `PipelineStatus`, `StepReporter.converge` | ✅ |
 | B3 | First task starts READY; the rest start BLOCKED and flip to READY when the predecessor is DONE | `PipelineInserter.insert` + `PipelineEngineTest.anInstallRunsBothTasksThroughBlockedAndUnblockToDone` | ✅ |
-| B4 | The current task is the lowest-sequence non-terminal task | `PipelineEngine.currentTask` | ✅ |
+| B4 | The current task is the lowest-sequence non-terminal task | `StepReporter.currentTask` (private) / `PipelineWorker.loadStepContext` | ✅ |
 | B5 | Pipeline status is a stored projection, written in the same tx as the task transition that changes it | `PipelineRepository.finish` (CAS in the `advance` tx) | ✅ |
 | B6 | Five core enums + a closed `TaskOperation` (a task's type selects the executor, operation the action) | `entity/*` enums; the type is resolved by name (no `switch` on kind) | ✅ |
 | B7 | A recipe (ordered task list) is a code default per type | `Recipes` | ✅ |
@@ -42,7 +42,7 @@ documented).
 |---|---|---|---|
 | C1 | `task_attempt` = one row per attempt, `attempt_no = failCount + 1` | `Observations` + `ObservationTest.aRetryingTaskRecordsOneAttemptRowPerAttemptWithIncreasingAttemptNo` | ✅ |
 | C2 | `task_check` is UPDATE-in-place (one row per attempt; counters grow, not rows) | `ObservationTest.aConditionPolledNotMetUpdatesOneCheckRowInPlace` | ✅ |
-| C3 | The engine never **reads** the observation tables for correctness | `Observations` only writes; `PipelineEngine`/`TaskMachine` never query them | ✅ |
+| C3 | The engine never **reads** the observation tables for correctness | `Observations` only writes; `StepReporter`/`TaskMachine` never query them | ✅ |
 | C4 | Losing observations degrades debuggability only, never correctness — they can never roll back task progress | observations ride the `advance` tx (ADR Option B); a failed write retries the whole `advance`, which cannot corrupt the atomic task row — see Deferred | ✅ |
 
 ## D. Decision 4 — one active pipeline per target
@@ -67,7 +67,7 @@ documented).
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
 | F1 | `fail_count` per task; below `maxFailCount` → fresh re-run, at/above → FAILED | `TaskMachine.retryOrFail` + `PipelineEngineTest.terraformJobFailureRetriesThenFailsAtMaxAndFailsThePipeline` | ✅ |
-| F2 | Per-call timeout → `CALL_TIMEOUT` (the ADR-021 runner owns the timeout; `TaskMachine` maps `InfraManagerClient.CallTimeoutException`) | `PipelineEngineTest.aCallTimeoutFromTheInfraManagerClientIsCallTimeoutAndRetries` | ✅ |
+| F2 | Per-call timeout → `CALL_TIMEOUT` (`TimeBoundedInfraManagerClient` raises `CallTimeoutException`; `StepRunner.runStep` translates it to `StepOutcome.callTimeout`; `TaskMachine.applyOutcome` applies `CALL_TIMEOUT` in tx2) | `PipelineEngineTest.aCallTimeoutFromTheInfraManagerClientIsCallTimeoutAndRetries` | ✅ |
 | F3 | Per-task `executionTimeout` (TF) → `EXECUTION_TIMEOUT` | `PipelineEngineTest.terraformJobRunningPastExecutionTimeoutFailsWithExecutionTimeout` | ✅ |
 | F4 | Per-task `timeToLive` (condition) → `TIME_TO_LIVE_EXPIRED` (no retry) | `PipelineEngineTest.conditionPastTimeToLiveExpiresToFailedWithTimeToLiveExpired` | ✅ |
 | F5 | Both deadlines map to canonical `ErrorCode` values, not separate states | `ErrorCode`; no extra `TaskStatus` | ✅ |
@@ -79,9 +79,9 @@ documented).
 | G1 | Two task kinds today (TERRAFORM_JOB, CONDITION_CHECK); the set is open via new `TaskType` impls | `TerraformTask`/`ConditionCheckTask` (a third kind is a new file, not an enum edit) | ✅ |
 | G2 | Retry is a fresh run (no terminal resurrection) | `TaskMachine.retryOrFail` resets to READY | ✅ |
 | G3 | Cancel converges directly to CANCELLED (no CANCELLING) and terminalizes every non-terminal task | `PipelineControl.cancel` + `PipelineControlTest` | ✅ |
-| G4 | Cancel is a RUNNING-guarded transition — it can never resurrect a pipeline a converge already terminalized | `PipelineControl.cancel` uses the guarded `finish(..., CANCELLED, ...)` CAS, 0-row = no-op | ✅ |
-| G5 | A FAILED pipeline marks the failing task FAILED and CANCELS the rest | `PipelineEngine.cancelRemaining` + `PipelineEngineTest.aFailedPipelineCancelsItsRemainingBlockedTasks` | ✅ |
-| G6 | A terminal state is never resurrected | guarded CAS on every pipeline terminalization (finish/cancel); `Task.@Version` on the task race | ✅ |
+| G4 | Cancel is a RUNNING-guarded transition — it can never resurrect a pipeline a converge already terminalized | `PipelineControl.cancel`: Case A uses `cancelIfIdle` (RUNNING + idle guard, 0-row = no-op); Case B `requestCancel` also RUNNING-guarded | ✅ |
+| G5 | A FAILED pipeline marks the failing task FAILED and CANCELS the rest | `TaskCanceller.cancelNonTerminal` called from `StepReporter.converge` + `PipelineEngineTest.aFailedPipelineCancelsItsRemainingBlockedTasks` | ✅ |
+| G6 | A terminal state is never resurrected | ownership-guarded write-back (tx2 `WHERE claimed_by = :token`); cancel Case A/B both RUNNING-guarded; `Task.@Version` as backstop | ✅ |
 | G7 | A task whose stored `taskName` resolves to no `TaskType` fails with `UNKNOWN_TASK` (a value, no NPE) | `TaskMachine` resolve→`fail(UNKNOWN_TASK)` + `PipelineEngineTest.aTaskWhoseStoredNameHasNoRegisteredTypeFailsAsUnknownTask` | ✅ |
 
 ## H. Schema & persistence (JPA-generated, MySQL)
@@ -91,7 +91,7 @@ documented).
 | H1 | Tables, indexes, unique constraints are generated from JPA annotations — no Flyway / hand-written SQL | `@Table`/`@Index`/`@UniqueConstraint`; Hibernate DDL log | ✅ |
 | H2 | MySQL target; tests run on H2 MySQL-mode without Docker | `application.yml` (MySQL) + test `application.yml` (H2 `MODE=MySQL`) | ✅ |
 | H3 | "One active per target" works on MySQL despite no partial unique index (nullable `active_target` + unique; multiple NULLs allowed) | `Pipeline.activeTarget`; uniqueness tests | ✅ |
-| H4 | `@Version` optimistic lock guards the cancel/advance task race | `Task.version` + `PipelineEngineTransactionTest.aCancelThatCommitsDuringTheInfraManagerClientCallDoesNotClobberCancelled` | ✅ |
+| H4 | The cancel-vs-worker race cannot resurrect a terminal state | claim fencing (ownership-guarded tx2 write-back + cancel Case A/B) is the primary guard; `Task.@Version` is a backstop; `PipelineEngineTransactionTest.aCancelThatCommitsDuringTheInfraManagerClientCallDoesNotClobberCancelled` proves the Case B cooperative cancel path | ✅ |
 | H5 | Indexes are JPA-declared and cover the actual queries; no orphan index (the status-scan index was dropped with the reconciler scan) | unique constraints `uq_task_pipeline_sequence`/`uq_task_attempt`/`uq_task_check_attempt`/`uq_pipeline_active_target` back every repository query | ✅ |
 
 ## I. Exception strategy (external vs business)
@@ -99,8 +99,8 @@ documented).
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
 | I1 | Business failures are `ErrorCode` values on the row, never thrown | `TaskMachine.fail`/`retryOrFail` | ✅ |
-| I2 | External-call failures are exceptions caught at exactly one boundary and translated to `ErrorCode` | the single `TaskMachine.runExternalCall` helper (wrapping execute/check/postCheck) + `PipelineEngineTest.aThrowingDispatchIsTreatedAsCheckErrorAndRetriedThenFailed` (+ the CALL_TIMEOUT and postCheck tests) | ✅ |
-| I3 | Interruption is a fail-fast runtime signal, NOT mapped to a business `ErrorCode` | `InfraManagerClient.CallInterruptedException`; `runExternalCall` catches only `CallTimeout`/`CallFailed`, so an interrupt is **not caught** — it propagates out of `advance` (absorbed by the ADR-021 runner's per-pipeline catch) | ✅ |
+| I2 | External-call failures are exceptions caught at exactly one boundary and translated to a `StepOutcome` → `ErrorCode` | `StepRunner.runStep` (wrapping execute/check/postCheck) + `PipelineEngineTest.aThrowingDispatchIsTreatedAsCheckErrorAndRetriedThenFailed` (+ the CALL_TIMEOUT and postCheck tests) | ✅ |
+| I3 | Interruption is a fail-fast runtime signal, NOT mapped to a business `ErrorCode` | `InfraManagerClient.CallInterruptedException`; `StepRunner.runStep` catches only `CallTimeout`/`CallFailed`, so an interrupt is **not caught** — it propagates out of `StepRunner.runStep` and is absorbed by `PipelineScheduler.drain`'s per-pipeline shutdown check (restores interrupt, aborts sweep) | ✅ |
 | I4 | The duplicate-create catch is targeted (constraint-checked) and rethrows other violations | see D3 | ✅ |
 | I5 | Strategy is documented | `docs/exception-strategy.md` | ✅ |
 | I6 | A null/blank job id or null poll from the boundary is guarded → `CHECK_ERROR` retry, never an NPE or a persisted null handle | `TerraformTask` guards + `PipelineEngineTest.aDispatchReturningNoJobIdIsTreatedAsCheckErrorAndRetried` | ✅ |
@@ -110,40 +110,51 @@ documented).
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
 | J1 | Constructor injection only; `Clock` injected; no direct `now()` in logic | all beans | ✅ |
-| J2 | Closed-set switches are exhaustive, no `default` swallow | `TaskMachine.advance` enumerates terminal states | ✅ |
+| J2 | Closed-set switches are exhaustive, no `default` swallow | `TaskMachine.applyOutcome` uses a sealed `StepOutcome` switch; `Recipes.forType` is compile-exhaustive | ✅ |
 | J3 | Interfaces are justified — `InfraManagerClient` (external boundary, prod + fake) and `TaskType` (genuine N-impl polymorphism, registry-resolved); static utility (`TaskSettings`) over a one-method bean | package scan | ✅ |
 | J4 | Tests behavior-named, fixed `Clock`, fakes not mocks | test suite | ✅ |
 | J5 | Extension seams (more task kinds / post-check / outbox) documented, not pre-built | `docs/extensibility.md` | ✅ |
 
+## K. ADR-021 — claim-pull execution model
+
+| # | Criterion | Verified by | Status |
+|---|---|---|---|
+| K1 | tx1 claim stamps a fresh per-claim UUID fencing token + lease, and blocks a second concurrent claim | `PipelineClaimer.claimOneDue` mints `UUID.randomUUID()` + sets `claimed_by`/`claimed_until`; `PipelineExecutionTest.claimStampsAFreshFencingTokenAndLeaseAndBlocksASecondClaim` | ✅ |
+| K2 | Crash recovery: an expired lease is reclaimed with a different fencing token | `PipelineExecutionTest.anExpiredLeaseIsReclaimedWithADifferentFencingToken` | ✅ |
+| K3 | No stale clobber: a stale claim token cannot overwrite state after reclaim | `PipelineExecutionTest.aStaleClaimTokenCannotClobberStateAfterReclaim` | ✅ |
+| K4 | Two-transaction split: external call runs outside any transaction (between tx1 and tx2) | `StepRunner` has no `@Transactional`; `PipelineWorker.process` ordering (claim → runStep → report); `PipelineEngineTransactionTest` (real-tx proof via `advanceCommitsInItsOwnTransactionVisibleToAFreshRead`) | ✅ |
+| K5 | Cancel Case A (idle pipeline): API path terminates immediately and clears the claim | `PipelineExecutionTest.cancelCaseAIdleTerminatesImmediatelyAndClearsTheClaim` | ✅ |
+| K6 | Cancel Case B (live lease): API raises flag; claim-holder terminalizes under the row lock | `PipelineExecutionTest.cancelCaseBLiveLeaseRaisesTheFlagAndTheClaimHolderTerminalizesUnderTheLock` | ✅ |
+| K7 | Soft admission cap blocks a second concurrent claim when `runningPipelineCap` is reached | `PipelineSoftCapTest.theAdmissionCapBlocksASecondConcurrentClaim` | ✅ |
+| K8 | TF slot gate reschedules and releases the claim when no slot is free | `PipelineSoftCapTest.theTerraformSlotGateReschedulesAndReleasesTheClaimWhenNoSlotIsFree` | ✅ |
+| K9 | Per-call timeout is owned by `TimeBoundedInfraManagerClient` decorator (`@Primary`) | `client/TimeBoundedInfraManagerClient.java`; `TimeoutException → CallTimeoutException`; `PipelineEngineTest.aCallTimeoutFromTheInfraManagerClientIsCallTimeoutAndRetries` | ✅ |
+| K10 | Per-pipeline isolation: a single-pipeline failure does not abort the sweep | `PipelineScheduler.drain` per-pipeline `catch (RuntimeException)` logs + skips; `CallInterruptedException` aborts the sweep | ✅ |
+
 ## Deferred / accepted limitations (📦)
 
-- **Observations ride the engine's `advance` transaction** (no `REQUIRES_NEW` / separate bean). The
-  async observation split was rejected (ADR Option B); a failed observation write rolls back and
-  retries the whole `advance`, which cannot corrupt state, so this honors the ADR's correctness-only
-  guarantee. The `REQUIRES_NEW` boundary is the documented upgrade. 📦
+- **Observations ride tx2 (`StepReporter.report`)** (no `REQUIRES_NEW` / separate bean). The
+  async observation split was rejected (ADR Option B); a failed observation write rolls back tx2 and
+  the claim-pull cycle retries on the next claim (cannot corrupt state), so this honors the ADR's
+  correctness-only guarantee. The `REQUIRES_NEW` boundary is the documented upgrade. 📦
 - **Cancelled in-flight attempts** are ended as `task_attempt.status = CANCELLED` by `TaskCanceller`
   (which ends the open attempt before terminalizing the task), so the observation history matches the
   authoritative `task` row rather than leaving a stale `IN_PROGRESS` attempt behind a terminal task. ✅
 - **State-machine tests suppress the `@DataJpaTest` test transaction** with
-  `@Transactional(propagation = NOT_SUPPORTED)` so each `advance()` commits independently (like
-  production); the real commit-boundary and cancel-race behavior is additionally proven in
-  `PipelineEngineTransactionTest` (`@SpringBootTest`, real threads/latches). 📦
+  `@Transactional(propagation = NOT_SUPPORTED)` so each `worker.pollOnce()` call commits tx1 and tx2
+  independently (like production); the real commit-boundary and cancel-race behavior is additionally
+  proven in `PipelineEngineTransactionTest` (`@SpringBootTest`, real threads/latches). 📦
 - **Concurrent duplicate-create race** is verified sequentially (H2); the true row-level INSERT race
   is a MySQL/CI concern (the constraint itself is enforced by H2). 📦
 - **HTTP InfraManager adapter** and the response-code/summary observation fields are out of v1 scope
   (the host wires the `InfraManagerClient`). 📦
-- **Execution model (ADR-021) is out of this repo** — the runner, scheduling, per-call timeout, worker
-  pool, and the crash-recovery loop that decides *when/how* `advance()` runs. This module is the pure
-  domain; tests drive `advance()` directly in place of the runner. 📦
-- **Cancel vs terminal-advance lock order** (codex R4 P1). A cancel locks the pipeline row first
-  (`finish()` CAS) then its tasks; a converging `advance` locks the current task first then the pipeline
-  (`finish()`). Under a *concurrent* cancel + advance on the **same** pipeline, MySQL/InnoDB may pick a
-  deadlock victim and abort it. **Correctness is unaffected** — the RUNNING-guarded CAS + `Task.@Version`
-  guarantee no resurrection and no `active_target` leak whichever way it resolves; the victim's caller
-  simply retries. The safe code fix (reordering cancel to task-first) would introduce a *new* `@Version`
-  race on cancel, so it is **not** taken here. Serializing concurrent drivers per pipeline (or retrying a
-  deadlock victim) is an **ADR-021 execution-layer** concern. opus and sonnet reviews did not consider it
-  merge-blocking. 📦
+- **Cancel vs concurrent-worker lock order** (codex R4 P1, now partly addressed). The claim-pull
+  model serializes all pipeline work through the row-level lease: only one worker holds the claim at a
+  time, so two drivers can never concurrently advance the same pipeline — the `FOR UPDATE SKIP LOCKED`
+  claim is the serialization primitive. The cancel-vs-worker race is handled by cancel Case A/B (one
+  status writer per case) + the tx2 ownership guard (stale straggler no-ops). A residual MySQL/InnoDB
+  deadlock between a cancel and a concurrent claim-scan under high contention remains a CI concern
+  (H2 tests do not reproduce InnoDB deadlocks); it would abort one transaction, which is safe
+  (`cancelIfIdle` is RUNNING-guarded + idempotent; the worker re-polls on the next sweep). 📦
 
 ## Review-round log
 
@@ -240,3 +251,10 @@ instead of being mis-recorded as `CHECK_ERROR`. Every throw/catch site is catalo
 `failUnknownTask`); config defaults set to **executionTimeout 50m / maxFailCount 2**; and every major class
 carries a **detailed Korean class-header Javadoc**. Suite green (**30 tests**, incl. the postCheck seam +
 ErrorCode-discriminating retry + poll-phase timeout-observation tests).
+
+## ADR-021 review campaign
+
+Rounds tracked separately (to be filled by the orchestrator after S7 merges).
+
+| Round | Reviewer | Verdict | P0 | P1 | P2 | Notes |
+|---|---|---|---|---|---|---|

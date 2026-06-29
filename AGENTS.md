@@ -5,11 +5,14 @@ Shared rules for coding agents (Claude Code, Codex) in this repository.
 ## What this repo is
 
 The backend implementation of the **ADR-016 install/delete pipeline domain model**
-(`docs/adr/016-install-delete-pipeline-domain-model.md`). A durable, DB-backed state
-machine whose one domain operation is `PipelineEngine.advance(pipelineId)`. The
-**execution model** that drives it (the runner, scheduling, worker pool, crash-recovery
-loop) is the separate **ADR-021** and is deliberately not in this repo. Spring Boot 3 /
-Java 21 / MySQL.
+(`docs/adr/016-install-delete-pipeline-domain-model.md`) **and the ADR-021 claim-pull
+execution layer** (`docs/adr/021-pipeline-execution-model.md`). A durable, DB-backed
+state machine driven by a **claim-pull two-transaction cycle**: tx1 claims one due
+pipeline (`PipelineClaimer`, `FOR UPDATE SKIP LOCKED` + UUID fencing token + lease),
+the external call runs outside any transaction (`StepRunner`), and tx2 reports the
+result under the verified ownership lock (`StepReporter`). `PipelineScheduler` sweeps
+due pipelines on a fixed cadence; `PipelineControl` handles cancel Case A (idle) / Case
+B (cooperative). Spring Boot 3 / Java 21 / MySQL.
 
 ## Hard rules
 
@@ -23,9 +26,10 @@ Java 21 / MySQL.
    or hand-written SQL migrations. If a constraint cannot be expressed in JPA, stop and
    raise it rather than reaching for raw SQL.
 4. **Separate the two failure kinds.** External-call failures are exceptions caught at the
-   one engine boundary (`TaskMachine`) and translated to a persisted `ErrorCode`;
-   business-rule outcomes are values (`ErrorCode`, sealed result types), never thrown. See
-   `docs/exception-strategy.md`.
+   one external-call boundary (`StepRunner.runStep`, phase A, outside any transaction) and
+   translated to a `StepOutcome` value; that outcome is applied in tx2 by `TaskMachine.applyOutcome`
+   with no try/catch. Business-rule outcomes are values (`ErrorCode`, sealed result types), never
+   thrown. See `docs/exception-strategy.md`.
 5. **Keep the file count down.** An `interface` is justified only by a real external boundary
    (`InfraManagerClient`, prod + test fake) or genuine multi-implementation polymorphism
    (`TaskType` → Terraform/Condition, resolved by `TaskTypeRegistry`) — never a single-impl
