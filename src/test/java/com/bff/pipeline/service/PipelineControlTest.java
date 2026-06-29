@@ -24,16 +24,17 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Admin-cancel behavior ({@link PipelineControl}): a cancel terminalizes every non-terminal task and
- * frees the target, is idempotent on an already-terminal run, lets a fresh run start for the target once
- * a prior run is terminal, and — via the RUNNING-guarded CAS — does not resurrect a pipeline that
- * already converged to a terminal state. {@code NOT_SUPPORTED} suppresses the test-wrapping transaction
- * so create commits and cancel reads committed state.
+ * {@link PipelineControl}의 어드민 취소(cancel) 동작을 검증한다. cancel은 비종료 상태인 모든 태스크를
+ * 종료 상태로 전환하고 target을 해제한다. 이미 종료된 실행에 대해서는 멱등성(idempotent)을 보장하며,
+ * 이전 실행이 종료된 후에는 동일 target으로 새 실행을 시작할 수 있다. 또한 {@code RUNNING} 상태를
+ * 가드로 사용하는 CAS(Compare-And-Set)를 통해 이미 종료 상태로 수렴한 파이프라인이 부활하지 않음을
+ * 확인한다. {@code NOT_SUPPORTED}가 테스트 래핑 트랜잭션을 억제하여 생성 커밋과 cancel이 커밋된 상태를
+ * 읽도록 한다.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineControl.class, PipelineCreator.class, PipelineInserter.class, Recipes.class,
-        PipelineControlTest.Wiring.class})
+@Import({PipelineControl.class, TaskCanceller.class, Observations.class, PipelineCreator.class,
+        PipelineInserter.class, Recipes.class, PipelineControlTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineControlTest {
 

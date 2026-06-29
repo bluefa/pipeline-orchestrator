@@ -22,11 +22,12 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Per-target uniqueness via the {@code active_target} unique constraint.
+ * {@code active_target} unique constraint를 통한 target별 유일성(uniqueness)을 검증한다.
  *
- * <p>{@code NOT_SUPPORTED} suppresses the test-wrapping transaction so {@link PipelineInserter}
- * commits independently — only then does the second insert surface a real unique violation.
- * {@code replace = NONE} keeps the H2 MySQL-mode datasource from {@code application.yml}.
+ * <p>{@code NOT_SUPPORTED}가 테스트 래핑 트랜잭션을 억제하므로 {@link PipelineInserter}가 독립적으로
+ * 커밋한다. 두 번째 insert가 실제 unique 제약 위반을 발생시키는 것은 첫 번째 커밋이 완료된 이후에만
+ * 가능하다. {@code replace = NONE}은 {@code application.yml}에 정의된 H2 MySQL-mode 데이터소스를
+ * 유지한다.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)

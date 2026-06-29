@@ -4,8 +4,9 @@ import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.TaskOperation;
 
 /**
- * A scriptable {@link InfraManagerClient} for tests — set the behavior before a tick, then assert the
- * resulting state (the project uses fakes, not Mockito; see the spring-java21 skill §4).
+ * 테스트용 스크립터블(scriptable) {@link InfraManagerClient}이다. 각 tick 전에 동작을 설정하고 결과
+ * 상태를 검증하는 방식으로 사용한다. 이 프로젝트는 Mockito 대신 fake를 사용한다(spring-java21 skill §4
+ * 참조).
  */
 public final class FakeInfraManagerClient implements InfraManagerClient {
 

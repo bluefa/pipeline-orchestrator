@@ -27,16 +27,17 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * The write-only observation tables: one {@code task_attempt} per attempt with the right
- * {@code attempt_no}, and one {@code task_check} per attempt updated in place (not one row per poll).
- * Reuses {@link PipelineEngineTest}'s wiring (fake InfraManager, mutable clock). {@code NOT_SUPPORTED}
- * suppresses the test-wrapping transaction so the observation rows survive each step's commit.
+ * 관찰(observation) 전용 테이블의 쓰기 동작을 검증한다. 시도(attempt)마다 올바른 {@code attempt_no}를
+ * 가진 {@code task_attempt} 행이 하나씩 기록되며, {@code task_check}는 폴링마다 새 행을 추가하는 것이
+ * 아니라 attempt당 하나의 행을 제자리에서 갱신함을 확인한다. {@link PipelineEngineTest}의 Wiring
+ * (fake InfraManager, 가변 Clock)을 재사용한다. {@code NOT_SUPPORTED}가 테스트 래핑 트랜잭션을
+ * 억제하므로 관찰 행들이 각 단계의 커밋 후에도 유지된다.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineEngine.class, TaskMachine.class, TaskTypeRegistry.class, TerraformTask.class,
-        ConditionCheckTask.class, Observations.class, PipelineCreator.class, PipelineInserter.class,
-        Recipes.class, PipelineEngineTest.Wiring.class})
+        ConditionCheckTask.class, Observations.class, TaskCanceller.class, PipelineCreator.class,
+        PipelineInserter.class, Recipes.class, PipelineEngineTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class ObservationTest {
 
@@ -74,10 +75,10 @@ class ObservationTest {
         engine.advance(pipeline.getId());
         engine.advance(pipeline.getId());
 
-        var recorded = attempts.findByTaskIdOrderByAttemptNoAsc(taskId(pipeline, 0));
+        var recorded = attempts.findByTaskIdOrderByAttemptNumberAsc(taskId(pipeline, 0));
 
         assertThat(recorded).singleElement().satisfies(attempt -> {
-            assertThat(attempt.getAttemptNo()).isEqualTo(1);
+            assertThat(attempt.getAttemptNumber()).isEqualTo(1);
             assertThat(attempt.getStatus()).isEqualTo(TaskStatus.DONE);
             assertThat(attempt.getJobId()).isEqualTo("job-1");
         });
@@ -91,8 +92,8 @@ class ObservationTest {
 
         runUntilTerminal(pipeline);
 
-        var recorded = attempts.findByTaskIdOrderByAttemptNoAsc(taskId(pipeline, 0));
-        assertThat(recorded).extracting(TaskAttempt::getAttemptNo).containsExactly(1, 2, 3);
+        var recorded = attempts.findByTaskIdOrderByAttemptNumberAsc(taskId(pipeline, 0));
+        assertThat(recorded).extracting(TaskAttempt::getAttemptNumber).containsExactly(1, 2);
         assertThat(recorded).allSatisfy(attempt -> {
             assertThat(attempt.getStatus()).isEqualTo(TaskStatus.FAILED);
             assertThat(attempt.getErrorCode()).isEqualTo(ErrorCode.JOB_FAILED);
@@ -109,7 +110,7 @@ class ObservationTest {
             clock.advance(Duration.ofMinutes(11));
         }
 
-        TaskAttempt attempt = attempts.findByTaskIdAndAttemptNo(conditionTaskId, 1).orElseThrow();
+        TaskAttempt attempt = attempts.findByTaskIdAndAttemptNumber(conditionTaskId, 1).orElseThrow();
         assertThat(checks.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
             assertThat(check.getCallCount()).isEqualTo(3);
             assertThat(check.getNotMetCount()).isEqualTo(3);

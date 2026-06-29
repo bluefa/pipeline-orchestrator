@@ -16,7 +16,7 @@ spring:
       hibernate.jdbc.time_zone: UTC
 
 pipeline:
-  execution-timeout: PT30M
+  execution-timeout: PT50M
   time-to-live: P7D
   polling-interval: PT10M
-  max-fail-count: 3
+  max-fail-count: 2

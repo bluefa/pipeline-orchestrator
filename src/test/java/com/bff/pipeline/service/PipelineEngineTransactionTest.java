@@ -20,9 +20,10 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 
 /**
- * Real-transaction proofs (full context, no test-wrapping transaction): {@code advance} commits in its
- * own transaction, and a cancel that commits <em>during</em> an in-flight InfraManager call cannot be
- * clobbered by the stale engine step — the task's {@code @Version} optimistic lock rejects it.
+ * 실제 트랜잭션 동작을 검증한다(@SpringBootTest 전체 컨텍스트, 테스트 래핑 트랜잭션 없음). {@code advance}가
+ * 자체 트랜잭션 내에서 커밋함을 확인하며, InfraManager 호출이 진행 중인 <em>도중에</em> 커밋된 cancel이
+ * 낡은(stale) 엔진 단계에 의해 덮어쓰이지 않음을 검증한다 — 태스크의 {@code @Version} 낙관적 잠금
+ * (optimistic lock)이 이를 거부하기 때문이다.
  */
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:rtx;MODE=MySQL;DB_CLOSE_DELAY=-1",
@@ -76,7 +77,7 @@ class PipelineEngineTransactionTest {
                 .isEqualTo(PipelineStatus.CANCELLED);
     }
 
-    /** A gated {@link InfraManagerClient}: the poll blocks until the test lands a cancel and releases it. */
+    /** 게이트 제어 방식의 {@link InfraManagerClient} 구현체이다. poll은 테스트가 cancel을 완료하고 게이트를 해제할 때까지 블로킹된다. */
     static final class GatedInfraManagerClient implements InfraManagerClient {
         private volatile CountDownLatch callInFlight;
         private volatile CountDownLatch release;
