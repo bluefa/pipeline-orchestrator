@@ -30,12 +30,20 @@ Java 21 / MySQL.
    (`InfraManagerClient`, prod + test fake) or genuine multi-implementation polymorphism
    (`TaskType` → Terraform/Condition, resolved by `TaskTypeRegistry`) — never a single-impl
    indirection. Prefer a static utility to a one-method bean.
-6. **Layered packages.** `entity / service / client / controller / dto / repository / utils` (entity
-   holds the JPA entities + domain enums; `dto` holds transport values; app wiring —
-   `PipelineConfig`/`PipelineSettings` — sits at the root package). Names reveal purpose — **no
-   abbreviations** anywhere (class, method, field, variable): e.g. `InfraManagerClient` not `ImClient`,
-   `sequence` not `seq`, `timeToLive` not `ttl`.
-7. **Surgical changes.** Touch only what the task needs; match the surrounding style.
+6. **Layered packages.** `entity / enums / dto / model / service / client / controller / repository / utils`
+   (app wiring — `PipelineApplication`/`PipelineConfig`/`PipelineSettings` — sits at the root package):
+   - `entity` — JPA entities · `enums` — all enums · `dto` — external transport values (TerraformPoll,
+     ErrorResponse) · `model` — domain value/contract types that are neither a bean nor transport
+     (TaskType, TaskProgress, Recipe) · `service` — **only** `@Component`/`@Service` beans (no enum,
+     record, or plain interface lives here) · `client` — the InfraManager boundary · `controller` — REST
+     advice · `repository` — Spring Data · `utils` — static helpers.
+   Names reveal purpose — **no abbreviations** anywhere (class, method, field, variable): e.g.
+   `InfraManagerClient` not `ImClient`, `sequence` not `seq`, `timeToLive` not `ttl`, `attemptNumber`
+   not `attemptNo`.
+7. **Comments in Korean, on the class header.** Avoid inline comments; put a **detailed Korean**
+   Javadoc on each major component's class declaration so its behavior and invariants are clear from the
+   header alone. Identifiers and code stay in English; only the prose comments are Korean.
+8. **Surgical changes.** Touch only what the task needs; match the surrounding style.
 
 ## Verify before finishing
 

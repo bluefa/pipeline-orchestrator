@@ -99,8 +99,8 @@ documented).
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
 | I1 | Business failures are `ErrorCode` values on the row, never thrown | `TaskMachine.fail`/`retryOrFail` | ✅ |
-| I2 | External-call failures are exceptions caught at exactly one boundary and translated to `ErrorCode` | `TaskMachine` dispatch/poll catches + `PipelineEngineTest.aThrowingDispatchIsTreatedAsCheckErrorAndRetriedThenFailed` (+ F2 for CALL_TIMEOUT) | ✅ |
-| I3 | Interruption is a fail-fast runtime signal, NOT mapped to a business `ErrorCode` | `InfraManagerClient.CallInterruptedException`; `TaskMachine` rethrows it ahead of the broad `RuntimeException` catch (the ADR-021 runner re-rethrows before its per-pipeline catch) | ✅ |
+| I2 | External-call failures are exceptions caught at exactly one boundary and translated to `ErrorCode` | the single `TaskMachine.runExternalCall` helper (wrapping execute/check/postCheck) + `PipelineEngineTest.aThrowingDispatchIsTreatedAsCheckErrorAndRetriedThenFailed` (+ the CALL_TIMEOUT and postCheck tests) | ✅ |
+| I3 | Interruption is a fail-fast runtime signal, NOT mapped to a business `ErrorCode` | `InfraManagerClient.CallInterruptedException`; `runExternalCall` catches only `CallTimeout`/`CallFailed`, so an interrupt is **not caught** — it propagates out of `advance` (absorbed by the ADR-021 runner's per-pipeline catch) | ✅ |
 | I4 | The duplicate-create catch is targeted (constraint-checked) and rethrows other violations | see D3 | ✅ |
 | I5 | Strategy is documented | `docs/exception-strategy.md` | ✅ |
 | I6 | A null/blank job id or null poll from the boundary is guarded → `CHECK_ERROR` retry, never an NPE or a persisted null handle | `TerraformTask` guards + `PipelineEngineTest.aDispatchReturningNoJobIdIsTreatedAsCheckErrorAndRetried` | ✅ |
@@ -111,7 +111,7 @@ documented).
 |---|---|---|---|
 | J1 | Constructor injection only; `Clock` injected; no direct `now()` in logic | all beans | ✅ |
 | J2 | Closed-set switches are exhaustive, no `default` swallow | `TaskMachine.advance` enumerates terminal states | ✅ |
-| J3 | Interfaces are justified — `InfraManagerClient` (external boundary, prod + fake) and `TaskType` (genuine N-impl polymorphism, registry-resolved); static utility (`TaskKnobs`) over a one-method bean | package scan | ✅ |
+| J3 | Interfaces are justified — `InfraManagerClient` (external boundary, prod + fake) and `TaskType` (genuine N-impl polymorphism, registry-resolved); static utility (`TaskSettings`) over a one-method bean | package scan | ✅ |
 | J4 | Tests behavior-named, fixed `Clock`, fakes not mocks | test suite | ✅ |
 | J5 | Extension seams (more task kinds / post-check / outbox) documented, not pre-built | `docs/extensibility.md` | ✅ |
 
@@ -121,11 +121,13 @@ documented).
   async observation split was rejected (ADR Option B); a failed observation write rolls back and
   retries the whole `advance`, which cannot corrupt state, so this honors the ADR's correctness-only
   guarantee. The `REQUIRES_NEW` boundary is the documented upgrade. 📦
-- **Cancelled in-flight attempts** keep `task_attempt.status = IN_PROGRESS` (the authoritative `task`
-  row shows CANCELLED). Observation-only; the tables are explicitly best-effort. 📦
-- **State-machine tests run inside the `@DataJpaTest` transaction** (fast, deterministic); the real
-  commit-boundary and cancel-race behavior is proven separately in `PipelineEngineTransactionTest`
-  (`@SpringBootTest`, no test transaction). 📦
+- **Cancelled in-flight attempts** are ended as `task_attempt.status = CANCELLED` by `TaskCanceller`
+  (which ends the open attempt before terminalizing the task), so the observation history matches the
+  authoritative `task` row rather than leaving a stale `IN_PROGRESS` attempt behind a terminal task. ✅
+- **State-machine tests suppress the `@DataJpaTest` test transaction** with
+  `@Transactional(propagation = NOT_SUPPORTED)` so each `advance()` commits independently (like
+  production); the real commit-boundary and cancel-race behavior is additionally proven in
+  `PipelineEngineTransactionTest` (`@SpringBootTest`, real threads/latches). 📦
 - **Concurrent duplicate-create race** is verified sequentially (H2); the true row-level INSERT race
   is a MySQL/CI concern (the constraint itself is enforced by H2). 📦
 - **HTTP InfraManager adapter** and the response-code/summary observation fields are out of v1 scope
@@ -181,28 +183,30 @@ removed → **23 tests**. The criteria/evidence above are updated to the post-re
 | 4 | codex (gpt-5.5 xhigh) | **Yes** | 0 | 0 | 0 | re-review of the pure-domain tree: refactor preserved every invariant; no findings |
 
 **Post-review redesign — `TaskType` strategy + layered packages.** Per the owner: the `TaskKind` enum +
-`switch` became a **`TaskType` interface** (`taskName`/`attempt`/`check`→`TaskProgress`) with
+`switch` became a **`TaskType` interface** (`taskName`/`execute`/`check`(/`postCheck`)→`TaskProgress`) with
 `TerraformTask`/`ConditionCheckTask` resolved by name via `TaskTypeRegistry`; an unknown name →
 `UNKNOWN_TASK` [B8/G7]. `Task.kind` → `Task.taskName`. Code repackaged into layers; `ImClient` →
 `InfraManagerClient`; `PipelineInserter` for-loop → `IntStream`; added `GlobalAdvice`. API-boundary null
 guards added [I6]. The orphan `ix_pipeline_status` index was dropped [H5]. Suite **25 tests**.
 
-| 5 | codex (gpt-5.5 xhigh) | No | 0 | 1 | 4 | lock-order deadlock (P1); dup-create recovery race + unindexed query; registry null/dup names; failUndefined attempt not ended |
+| 5 | codex (gpt-5.5 xhigh) | No | 0 | 1 | 4 | lock-order deadlock (P1); dup-create recovery race + unindexed query; registry null/dup names; unknown-task fail did not end the in-flight attempt |
 | 5 | opus (code-reviewer) | **Yes** | 0 | 0 | 4 | APPROVE — concurrency/exception/NPE all sound; P2 docs: ADR enum drift, registry guard, chain re-read, lastActivityAt |
 | 5 | sonnet (code-reviewer) | No | 0 | 3 | 5 | unindexed recovery query, ADR enum drift, GlobalAdvice swallows the cause; suggestions: Recipes switch, converge re-read, test try-finally |
 
 **Round-5 fixes applied:** recovery now queries the indexed `findByActiveTarget` with a bounded retry on
 the terminalize-between race [D2/D3]; `TaskTypeRegistry` rejects null/blank/duplicate names at boot;
-`failUndefined` ends the in-flight attempt; `GlobalAdvice` logs the cause; `Recipes.forType` is a
+the unknown-task failure path (`failUnknownTask`) ends the in-flight attempt; `GlobalAdvice` logs the cause; `Recipes.forType` is a
 compile-exhaustive `switch`; `converge` reuses the loaded chain (no re-read); cancel/cascade loops →
 streams; the transaction test releases the gated poll in `finally`; the ADR enum table notes
 TaskType/`UNKNOWN_TASK`. The lone P1 (lock-order deadlock) is **non-corrupting** and dispositioned as an
 ADR-021 concern (see Deferred) — opus and sonnet did not consider it merge-blocking. Suite green (25 tests).
 
-**Post-review structure pass (owner-directed).** Consolidated to
-`entity / service / client / controller / dto / repository / utils` (domain enums folded into `entity`;
-`advice` → `controller`; transport values grouped in `dto`; app wiring `PipelineConfig`/`PipelineSettings`
-to the root package). Removed every identifier abbreviation: `seq` → `sequence`, `ttl` → `timeToLive`
+**Post-review structure pass (owner-directed).** The final layout is
+`entity / enums / dto / model / service / client / controller / repository / utils` (+ root app wiring
+`PipelineApplication`/`PipelineConfig`/`PipelineSettings`): all enums in `enums` (incl. `CheckSignal`);
+external transport values in `dto`; non-bean domain value/contract types (`TaskType`, `TaskProgress`,
+`Recipe`, `RecipeStep`) in `model`; `service` holds **only** `@Component`/`@Service` beans; `advice` →
+`controller`. Removed every identifier abbreviation: `seq` → `sequence`, `ttl` → `timeToLive`
 (`ErrorCode.TTL_EXPIRED` → `TIME_TO_LIVE_EXPIRED`, yml `pipeline.time-to-live`), `cve` →
 `constraintViolation`, catch `e` → `exception`, `Throwable t` → `cause`. Suite green (25 tests).
 
@@ -210,3 +214,29 @@ to the root package). Removed every identifier abbreviation: `seq` → `sequence
 no P0/P1; codex and sonnet's actionable findings all fixed; the single P1 (concurrent-driver lock-order)
 is a documented, non-corrupting ADR-021 liveness concern. Suite green (25 tests); every criterion above is
 ✅ or a documented 📦. The module is the ADR-016 domain half; execution (ADR-021) is out of scope.
+
+## Clean-code & exception-handling review campaign (owner-directed)
+
+A focused readability + exception campaign over the final code: **21 independent reviews across 4 rounds**
+(codex gpt-5.5 xhigh ×4 + opus ×17), fixing between rounds.
+
+| Round | Reviews | Lens | Outcome |
+|---|---|---|---|
+| 1 | 4 | broad readability + exception sweep | DRY/naming/magic-literal findings; exception-narrowing case raised |
+| 2 | 6 | exception/postCheck, service per-method, Korean-comment clarity, naming/structure/JPA, model/dto/enums, codex | **P1: postCheck sat outside the exception boundary** (codex+opus) → fixed |
+| 3 | 6 | TaskMachine correctness, service fixes, test quality, docs accuracy, holistic, codex | **P1: constraint-name literal duplicated** → single-sourced; under-asserting tests strengthened |
+| 4 | 5 | adversarial correctness, holistic readability, docs+Korean consistency, test suite, codex | **0 P0 / 0 P1 — MERGE-READY** (codex "yes"); only P2 polish |
+
+**What the campaign changed.** (1) The InfraManager boundary was **narrowed** to a closed vocabulary —
+`CallTimeoutException` / `CallFailedException` / `CallInterruptedException` — and unified into one
+`TaskMachine.runExternalCall` helper wrapping `execute`/`check`/`postCheck`; it catches only Timeout/Failed
+(logs, translates), while an interrupt and any other `RuntimeException` (a genuine bug) propagate fail-fast
+instead of being mis-recorded as `CHECK_ERROR`. Every throw/catch site is catalogued in
+[exception-cases.md](exception-cases.md). (2) Cancel now ends the open attempt as `CANCELLED` via the shared
+`TaskCanceller` (DRY); `advance` fails fast on a missing pipeline id. (3) The `TaskType` lifecycle gained the
+`postCheck` extension seam, inside the boundary and test-covered. (4) Packages were split to
+`entity/enums/dto/model/service/...` (`service` = beans only); identifiers de-abbreviated
+(`execute`, `attemptNumber`, `TaskSettings`, `RecipeStep`, `failedRetryable`/`failedTerminal`,
+`failUnknownTask`); config defaults set to **executionTimeout 50m / maxFailCount 2**; and every major class
+carries a **detailed Korean class-header Javadoc**. Suite green (**30 tests**, incl. the postCheck seam +
+ErrorCode-discriminating retry + poll-phase timeout-observation tests).

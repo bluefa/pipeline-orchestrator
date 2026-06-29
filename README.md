@@ -35,18 +35,20 @@ ADR-021 runner drives the engine. Tests drive `advance()` directly.
 ```
 com.bff.pipeline
 ├── (root)       App bootstrap + wiring: PipelineApplication, PipelineConfig, PipelineSettings
-├── entity/      JPA entities (Pipeline, Task, TaskAttempt, TaskCheck) + the domain enums
+├── entity/      JPA entities (Pipeline, Task, TaskAttempt, TaskCheck)
+├── enums/       Domain enums (PipelineStatus/Type, TaskStatus/Operation, ErrorCode, CheckSignal)
+├── dto/         External transport values (TerraformPoll, ErrorResponse)
+├── model/       Domain value/contract types (TaskType, TaskProgress, Recipe)
+├── service/     @Component/@Service beans only: creation, cancel, the engine + "advance one step"
 ├── client/      InfraManager boundary (InfraManagerClient) + its exception contract
-├── dto/         Transport values (TerraformPoll, ErrorResponse)
-├── service/     Creation, cancel, the engine + "advance one step", the TaskType strategy
 ├── repository/  Spring Data repositories (guarded-CAS transitions)
 ├── controller/  GlobalAdvice (REST exception handler) — the REST layer added later
-└── utils/       Static helpers (TaskKnobs — per-task knob resolution)
+└── utils/       Static helpers (TaskSettings — effective per-task setting resolution + deadlines)
 ```
 
-Each task's behaviour is a **`TaskType`** (`service/`): `TerraformTask` and `ConditionCheckTask`
-implement `attempt`/`check`, and `TaskMachine` resolves a task row to its type **by name** through
-`TaskTypeRegistry` — so a new kind of task is a new self-registering implementation, not an edit to a
+Each task's behaviour is a **`TaskType`** (`model/`): `TerraformTask` and `ConditionCheckTask` (in
+`service/`) implement the `execute` → `check` lifecycle (and may override the default no-op `postCheck`),
+and `TaskMachine` resolves a task row to its type **by name** through `TaskTypeRegistry` — so a new kind of task is a new self-registering implementation, not an edit to a
 `switch`. An unknown name fails the task with `ErrorCode.UNKNOWN_TASK`.
 
 ## Documentation

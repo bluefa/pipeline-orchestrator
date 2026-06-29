@@ -18,7 +18,7 @@ Two sub-cases:
   machine runs any length. No schema change, no new state. The `BLOCKED → READY` unblocking already
   sequences an arbitrary chain.
 - **A new *kind* of task** — implement the **`TaskType`** interface
-  (`taskName()` / `attempt(target, task)` / `check(target, task) → TaskProgress`) as a `@Component` in
+  (`taskName()` / `execute(target, task)` / `check(target, task) → TaskProgress`) as a `@Component` in
   `service/`. It **registers itself** in `TaskTypeRegistry` (built from the injected `List<TaskType>`),
   so there is **no enum to extend and no `switch` to edit** — `TaskMachine` resolves the row's
   `taskName` to its type generically. Reference the new type's `taskName` from a recipe step. Its
@@ -39,16 +39,19 @@ keeps it type-safe and is the cheaper choice.
 ## 2. Task Post-Check
 
 A post-check is a verification that runs *after* a task's main work succeeds (e.g. confirm the applied
-infrastructure actually answers).
+infrastructure actually answers). The lifecycle is: **`execute` → `check` → `postCheck`**.
 
 - **If the check is a distinct step**, it is already expressible today: add a `CONDITION_CHECK` step
   after the `TERRAFORM_JOB` step in the recipe. The `INSTALL` recipe already does exactly this
   (`apply-network` then `network-ready`). No new mechanism is needed for this common case.
-- **If the check must be bound to the task itself** (one row, "done *and* verified"), the seam is the
-  task's own `TaskType.check(...)`: a type can require its post-condition before returning
-  `TaskProgress.SUCCEEDED`, and a failed post-check is a new `ErrorCode` returned as
-  `TaskProgress.failed(...)` — a business value, never a thrown exception. This keeps post-checks inside
-  the same per-task transition and the same failure model.
+- **If the check must be bound to the task itself** (one row, "done *and* verified"), override
+  `TaskType.postCheck(target, task)`. This default-no-op method is already wired into `TaskMachine`:
+  when `check` returns `Succeeded`, the engine calls `postCheck` and acts on its `TaskProgress` result
+  before marking the task DONE. A `Succeeded` result completes the task; `Pending` reschedules it
+  (identical to a poll reschedule); `Failed` retries or fails the task (same failure model as `check`).
+  A failed post-check is returned as `TaskProgress.failed(...)` — a business value, never a thrown
+  exception. The default `postCheck` returns `SUCCEEDED`, so all existing task types complete exactly
+  as before: the seam is open but costs nothing until a type overrides it.
 
 ## 3. Event Outbox
 

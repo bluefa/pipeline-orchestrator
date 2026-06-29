@@ -43,6 +43,23 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 
 ## Changelog
 
+- **Clean-code & exception campaign (4 rounds, 21 reviews — codex×4 + opus×17).** New recurring rules:
+  - **closed-exception-vocabulary / single-translation-boundary** — the external boundary catches only a
+    closed exception family (`CallTimeout`/`CallFailed`) in ONE helper (`runExternalCall` over
+    execute/check/postCheck); never a broad `catch (RuntimeException)` (a bug must fail-fast, not become a
+    business `CHECK_ERROR`); an interrupt propagates naturally. Promote on the next hit.
+  - **constant-single-source** — an identifier/constraint literal used in two places (a JPA
+    `@UniqueConstraint(name=...)` AND the code that recognizes that violation) must be one
+    `public static final` (e.g. `Pipeline.ACTIVE_TARGET_CONSTRAINT`); a silent rename break is a P1.
+  - **discriminating-test-assert** — a test named for a specific outcome (`...IsCheckError`) must assert
+    the discriminating value (the `ErrorCode` on the attempt row), not just a shape shared with another
+    mapping (READY + failCount). Otherwise a mis-mapping regression passes.
+  - Owner structural rules recorded: `service` = `@Component`/`@Service` beans ONLY; non-bean domain
+    types in `model` (`TaskType`/`TaskProgress`/`Recipe`/`RecipeStep`), enums in `enums`, transport in `dto`.
+  - Owner: **class-header Javadoc in Korean** (detailed; identifiers stay English; no inline comments).
+  - Owner: config defaults `executionTimeout 50m`, `maxFailCount 2`; lifecycle `execute → check → postCheck`.
+  - Boolean-flag (§5.11) flagged on `runExternalCall(..., recordObservation)` twice but KEPT (private helper,
+    self-documenting param) — a deliberate, recorded exception.
 - Seeded from this session's codex (3 rounds) + opus review and the owner's stated preferences.
 - R5 (TaskType redesign + repackage): promoted **trust-boundary-null** and **index-coverage** to the
   agent (each seen twice); recorded the catch-all-logging preference; updated interface-justification to

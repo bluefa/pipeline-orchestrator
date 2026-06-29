@@ -20,9 +20,9 @@ An exception is reserved for two things only:
    own guard on a null response), **caught at exactly one boundary** (`TaskMachine`), and immediately
    translated into an `ErrorCode`. No external exception escapes the engine's `advance` transaction as
    an exception.
-2. **Programmer errors / broken invariants** (an unknown recipe, a missing pipeline id, an
-   interrupted thread). These fail fast and are not caught — they indicate a bug or an impossible
-   state, not a business outcome.
+2. **Programmer errors / broken invariants** (a missing pipeline id, an interrupted thread, a
+   misconfigured registry or settings). These fail fast and are not caught — they indicate a bug or an
+   impossible state, not a business outcome.
 
 The result: business logic in `TaskMachine`, `PipelineEngine`, and `PipelineControl` reads
 as a straight-line state machine. Failure handling is not scattered through it as `try/catch`; it is
@@ -33,9 +33,9 @@ concentrated at the one external boundary and expressed everywhere else as `Erro
 | | External-call failure | Business-rule failure |
 |---|---|---|
 | Examples | per-call timeout, HTTP 5xx/429, connection reset | job reported FAILED, condition time-to-live expired, execution timeout |
-| Representation | **exception** (`CallTimeoutException`, any `RuntimeException` from `InfraManagerClient`) | **value** (`ErrorCode` on the task row) |
+| Representation | **exception** (`CallTimeoutException` / `CallFailedException` — the client's closed failure vocabulary) | **value** (`ErrorCode` on the task row) |
 | Thrown? | yes — by the `client` package | no — never thrown |
-| Where handled | caught once in `TaskMachine` (dispatch/poll), translated to an `ErrorCode` | written directly to the row by `TaskMachine` |
+| Where handled | caught once in `TaskMachine.runExternalCall` (wrapping execute/check/postCheck), translated to an `ErrorCode` | written directly to the row by `TaskMachine` |
 | Lifetime | dies at the `TaskMachine` boundary | durable; part of run history; drives retry-or-fail |
 | Retryable? | yes (re-run is a fresh, idempotent attempt) | `JOB_FAILED`/`EXECUTION_TIMEOUT` retry; `TIME_TO_LIVE_EXPIRED` does not |
 
@@ -45,7 +45,13 @@ The translation is deliberately small and total. Every external exception maps t
 | Thrown at the boundary | Becomes |
 |---|---|
 | `InfraManagerClient.CallTimeoutException` (per-call timeout exceeded) | `ErrorCode.CALL_TIMEOUT` |
-| any other `RuntimeException` from `InfraManagerClient`, incl. a `TaskType` guard rejecting a null/blank job id or null status (HTTP error, connection failure, rejection, malformed response) | `ErrorCode.CHECK_ERROR` |
+| `InfraManagerClient.CallFailedException` — any other failed call (HTTP error, connection failure, rejection, malformed/empty response), incl. a `TaskType` guard rejecting a null/blank job id or null status | `ErrorCode.CHECK_ERROR` |
+
+The boundary (`TaskMachine.runExternalCall`, the one helper wrapping execute/check/postCheck) catches
+**only** `CallTimeoutException` and `CallFailedException`. `CallInterruptedException` (a shutdown
+interrupt) and any *other* `RuntimeException` (a genuine bug) are **not** caught — they propagate out of
+`advance` (fail-fast) rather than being mis-recorded as a business `CHECK_ERROR`. See
+[exception-cases.md](exception-cases.md) §1.
 
 Business outcomes never pass through that table — they are decided by the polling logic and written
 straight to the row:
@@ -68,9 +74,11 @@ straight to the row:
  service/    catches+translates
    TaskType impls            call the client; a TaskType also guards a null/malformed response by
                              throwing, so it surfaces as an external-call failure (never an NPE)
-   TaskMachine               the single translation point: rethrow CallInterruptedException (fail-fast),
-                             catch CallTimeoutException → CALL_TIMEOUT, catch RuntimeException →
-                             CHECK_ERROR; business outcomes (TaskProgress) → ErrorCode value
+   TaskMachine               the single translation point (one `runExternalCall` helper wrapping
+                             execute/check/postCheck): catch CallTimeoutException → CALL_TIMEOUT, catch
+                             CallFailedException → CHECK_ERROR. CallInterruptedException and any
+                             non-CallException RuntimeException (a bug) are NOT caught — they propagate
+                             (fail-fast); business outcomes (TaskProgress) → ErrorCode value
    PipelineEngine            no business try/catch — pure state transitions in one transaction
 
  (ADR-021 runner, out of this module) catches RuntimeException PER PIPELINE: an infrastructure
@@ -78,33 +86,43 @@ straight to the row:
                              skipped, never aborting the whole sweep
 ```
 
-`TaskMachine` wraps each `TaskType` call (dispatch via `attempt`, poll via `check`) in the same shape —
-the only `try/catch` in the business layer, and it does nothing but classify:
+`TaskMachine` wraps **every** `TaskType` call — `execute`, `check`, and `postCheck` — in one
+`runExternalCall` helper, the only `try/catch` in the business layer, and it does nothing but classify:
 
 ```java
-TaskProgress progress;
-try {
-    progress = type.check(target, task);          // the task type calls InfraManagerClient
-} catch (InfraManagerClient.CallInterruptedException e) {
-    throw e;                                       // interrupt → fail-fast, not a business outcome
-} catch (InfraManagerClient.CallTimeoutException e) {
-    retryOrFail(task, ErrorCode.CALL_TIMEOUT);     // external timeout → value
-    return;
-} catch (RuntimeException e) {
-    retryOrFail(task, ErrorCode.CHECK_ERROR);      // external error (incl. a null/malformed response) → value
-    return;
+private Optional<TaskProgress> runExternalCall(Task task, Supplier<TaskProgress> call, boolean recordObservation) {
+    try {
+        return Optional.of(call.get());           // the task type calls InfraManagerClient
+    } catch (InfraManagerClient.CallTimeoutException exception) {
+        log.warn(...);
+        if (recordObservation) observations.recordCheck(task, CheckSignal.CALL_TIMEOUT);
+        retryOrFail(task, ErrorCode.CALL_TIMEOUT); // external timeout → value
+        return Optional.empty();
+    } catch (InfraManagerClient.CallFailedException exception) {
+        log.warn(...);
+        if (recordObservation) observations.recordCheck(task, CheckSignal.API_ERROR);
+        retryOrFail(task, ErrorCode.CHECK_ERROR);  // external failure (incl. a null/malformed response) → value
+        return Optional.empty();
+    }
 }
-// progress is now a business value: Succeeded | Pending | Failed(ErrorCode, retryable)
+// CallInterruptedException and any non-CallException RuntimeException are NOT caught — a shutdown interrupt
+// and a genuine bug both propagate out of advance (fail-fast). A present result is the business value:
+// Succeeded | Pending | Failed(ErrorCode, retryable).
 ```
 
 ## The exceptions we *do* keep (and why)
 
 These exception types survive, each for a precise reason — none is a business outcome.
 
-1. **`InfraManagerClient.CallTimeoutException`** (nested in `client/InfraManagerClient.java`) — signals
-   that one InfraManager call exceeded the per-call timeout. The production adapter (driven by the
-   ADR-021 runner, which owns the timeout) raises it; it exists so the boundary can distinguish a timeout
-   (`CALL_TIMEOUT`) from any other call failure (`CHECK_ERROR`). It never travels past `TaskMachine`.
+1. **`InfraManagerClient.CallTimeoutException`** and **`InfraManagerClient.CallFailedException`** (nested
+   in `client/InfraManagerClient.java`) — the client's closed failure vocabulary. `CallTimeoutException`
+   signals that one InfraManager call exceeded the per-call timeout; `CallFailedException` signals any
+   other failed call (HTTP error, connection failure, rejection, malformed/empty response — including a
+   `TaskType` guard rejecting a null/blank job id or null status). The production adapter (driven by the
+   ADR-021 runner, which owns the timeout) raises them, translating its transport exceptions into these
+   types so it never leaks a raw `RuntimeException`. They exist so the boundary can distinguish a timeout
+   (`CALL_TIMEOUT`) from any other call failure (`CHECK_ERROR`), and so it can catch exactly the
+   external-call failures and let a genuine bug fail fast. Neither travels past `TaskMachine`.
 
 2. **`DataIntegrityViolationException`** (Spring, caught in `service/PipelineCreator.java`) — the
    `active_target` unique violation when two creates race for one target. This is the one place an
@@ -119,10 +137,11 @@ These exception types survive, each for a precise reason — none is a business 
    and skips that pipeline for the sweep. The terminal `CANCELLED` state is preserved; nothing is
    corrupted.
 
-A fourth, **`InfraManagerClient.CallInterruptedException`**, is the fail-fast guard: it is **rethrown**
-by `TaskMachine` (it precedes the broad `RuntimeException` catch) so a shutdown interrupt aborts the step
-instead of being recorded as a business `CHECK_ERROR`. Likewise `IllegalArgumentException` for an unknown
-recipe or a missing pipeline id fails fast. Neither is a business outcome.
+A fourth, **`InfraManagerClient.CallInterruptedException`**, is the fail-fast guard: `runExternalCall`
+catches only `CallTimeoutException`/`CallFailedException`, so an interrupt is **not caught** — it simply
+propagates out of `advance` (a shutdown interrupt aborts the step instead of being recorded as a business
+`CHECK_ERROR`). Likewise `IllegalArgumentException` for a missing pipeline id fails fast. Neither is a
+business outcome.
 
 Note the one boundary that is a **business value, not an exception**: a task whose stored `taskName`
 resolves to no registered `TaskType` is failed with `ErrorCode.UNKNOWN_TASK` — written to the row, never
@@ -152,7 +171,7 @@ thrown — so a removed/renamed task type degrades to a clean failure (ADR-016 �
 ## How future features fit without changing the rule
 
 - **More task kinds** — a new `TaskType` implementation (resolved by name, not a `switch`) brings its
-  own `attempt`/`check`. Its failure modes are new `ErrorCode` values returned as `TaskProgress.Failed`,
+  own `execute`/`check`/`postCheck`. Its failure modes are new `ErrorCode` values returned as `TaskProgress.Failed`,
   still written as data, still translated from external exceptions at the same one boundary.
 - **Task Post-Check** — a post-completion verification failure is another business outcome: a new
   `ErrorCode` written to the row, not a thrown exception.
