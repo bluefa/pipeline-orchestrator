@@ -6,16 +6,15 @@ import java.util.concurrent.Executors;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Spring 빈 구성 클래스이다. 테스트에서 시간을 제어할 수 있도록 주입 가능한 {@link Clock} 빈을 제공하고,
  * 타입화된 파이프라인 설정({@code PipelineSettings}, {@code ExecutionSettings})을
- * {@code @ConfigurationProperties}로 활성화한다. {@code @EnableScheduling}으로 ADR-021
- * 실행 스케줄러({@code PipelineScheduler})의 {@code @Scheduled} 메서드를 활성화한다.
+ * {@code @ConfigurationProperties}로 활성화한다. ADR-021 실행 스케줄러({@code PipelineScheduler})는
+ * {@code @PostConstruct}/{@code @PreDestroy}로 관리되는 자기-재조정 적응형 루프이므로
+ * {@code @EnableScheduling}이 불필요하다.
  */
 @Configuration
-@EnableScheduling
 @EnableConfigurationProperties({PipelineSettings.class, ExecutionSettings.class})
 public class PipelineConfig {
 

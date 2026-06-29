@@ -37,12 +37,17 @@ import lombok.Setter;
  * 이 컬럼들은 ADR-016 도메인 상태({@code status}, {@code active_target} 등)와 별개로 관리된다.
  * {@code idx_pipeline_claim} 인덱스({@code status, next_due_at})는 클레임 조건자
  * {@code status='RUNNING' AND next_due_at <= now}를 커버한다(MySQL은 부분 인덱스 미지원).
+ * {@code idx_pipeline_claimed_until} 인덱스({@code claimed_until})는 어드미션 카운트 쿼리
+ * ({@code PipelineClaimer.countByClaimedUntilAfter})를 지원한다(ADR-021 Decision 7).
  */
 @Entity
 @Table(
         name = "pipeline",
         uniqueConstraints = @UniqueConstraint(name = Pipeline.ACTIVE_TARGET_CONSTRAINT, columnNames = "active_target"),
-        indexes = @Index(name = "idx_pipeline_claim", columnList = "status, next_due_at"))
+        indexes = {
+                @Index(name = "idx_pipeline_claim", columnList = "status, next_due_at"),
+                @Index(name = "idx_pipeline_claimed_until", columnList = "claimed_until")
+        })
 @Getter
 @Setter
 @NoArgsConstructor

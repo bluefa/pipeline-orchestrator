@@ -34,7 +34,7 @@ public class TimeBoundedInfraManagerClient implements InfraManagerClient {
 
     public TimeBoundedInfraManagerClient(
             @Qualifier("infraManagerDelegate") InfraManagerClient delegate,
-            ExecutorService imCallPool,
+            @Qualifier("imCallPool") ExecutorService imCallPool,
             ExecutionSettings settings) {
         this.delegate = delegate;
         this.imCallPool = imCallPool;

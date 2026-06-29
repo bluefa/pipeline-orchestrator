@@ -113,14 +113,15 @@ class PipelineEngineTest {
 
         assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.BLOCKED);
 
+        // advance 1: dispatch seq0 → IN_PROGRESS
+        // advance 2: poll seq0 → DONE; same tx2 promotes seq1 BLOCKED→READY (ADR Decision 4 §152)
         advance(pipeline);
         advance(pipeline);
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);
-        assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.BLOCKED);
-
-        advance(pipeline);
         assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.READY);
 
+        // advance 3: dispatch seq1 → IN_PROGRESS
+        // advance 4: poll seq1 → DONE; pipeline → DONE
         advance(pipeline);
         advance(pipeline);
         assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.DONE);
@@ -361,7 +362,9 @@ class PipelineEngineTest {
     private Pipeline createInstallAtConditionInProgress(String target) {
         Pipeline pipeline = creator.create(target, PipelineType.INSTALL);
         infraManager.onPoll(TerraformPoll::success);
-        advance(pipeline);
+        // advance 1: dispatch seq0 (terraform) → IN_PROGRESS
+        // advance 2: poll seq0 → DONE; same tx2 promotes seq1 BLOCKED→READY (ADR Decision 4 §152)
+        // advance 3: dispatch seq1 (condition check) → IN_PROGRESS
         advance(pipeline);
         advance(pipeline);
         advance(pipeline);

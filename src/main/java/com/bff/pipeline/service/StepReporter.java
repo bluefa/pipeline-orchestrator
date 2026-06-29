@@ -22,8 +22,12 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>소유권 검증 실패(스테일 스트래글러)는 전체 report를 no-op으로 처리한다. {@code cancelRequested}는
  * 잠금을 획득한 직후 확인되므로 협력적 취소 플래그가 경합 없이 관찰된다(ADR Decision 6).
- * 관리 엔티티 필드 직접 설정 + dirty-check flush — {@code pipelines.finish()} CAS 없음
+ * 관리 엔티티 필드 직접 설정 + dirty-check flush — CAS 없음
  * (ADR Decision 4/6: FOR UPDATE + 검증된 단일 쓰기자이므로 별도 상태 가드 불필요).
+ *
+ * <p>현재 태스크가 DONE이 되면, {@code converge} 직후 같은 tx2 안에서 다음 BLOCKED 후속 태스크를
+ * READY로 승격한다(ADR Decision 4 §152: "same tx2 flips the next task BLOCKED → READY").
+ * 이로써 별도 클레임 사이클 없이 동일 트랜잭션에서 후속 태스크가 READY 상태로 커밋된다.
  *
  * <p>외부 호출(phase-A)은 이 클래스와 별개의 tx1~tx2 사이에서 실행된다.
  */
@@ -55,6 +59,7 @@ public class StepReporter {
             currentTask(chain).ifPresent(task -> machine.applyOutcome(task, outcome));
         }
         converge(pipeline, chain);
+        promoteBlockedSuccessor(pipeline, chain);
         releaseClaim(pipeline, chain);
     }
 
@@ -69,6 +74,10 @@ public class StepReporter {
     public void reschedule(long pipelineId, String claimToken, Duration delay) {
         Pipeline pipeline = pipelines.findByIdForUpdate(pipelineId).orElse(null);
         if (pipeline == null || !claimToken.equals(pipeline.getClaimedBy())) return;
+        if (pipeline.isCancelRequested()) {
+            cancel(pipeline, tasks.findByPipelineIdOrderBySequenceAsc(pipelineId));
+            return;
+        }
         pipeline.setNextDueAt(clock.instant().plus(delay));
         pipeline.setClaimedBy(null);
         pipeline.setClaimedUntil(null);
@@ -108,6 +117,26 @@ public class StepReporter {
                     .map(at -> at == null ? clock.instant() : at)
                     .orElse(clock.instant()));
         }
+    }
+
+    /**
+     * ADR-021 Decision 4 §152: 현재 태스크가 DONE으로 전환된 직후, 같은 tx2 안에서 다음 BLOCKED
+     * 후속 태스크를 READY로 승격한다. 파이프라인이 RUNNING 상태일 때만 동작하며, 후속 태스크가
+     * BLOCKED가 아니면(이미 READY/IN_PROGRESS이거나 FAILED/converge 경로) 아무것도 하지 않는다.
+     *
+     * <p>이 단계는 별도의 클레임 사이클을 없애 트랜잭션 중간 불변식 위반(RUNNING 파이프라인에
+     * READY/IN_PROGRESS 현재 태스크가 없는 상태)을 제거한다. {@link StepRunner}의
+     * {@code case BLOCKED -> StepOutcome.unblock()} 분기는 불변식 복구 안전망으로 유지된다.
+     */
+    private void promoteBlockedSuccessor(Pipeline pipeline, List<Task> chain) {
+        if (pipeline.getStatus() != PipelineStatus.RUNNING) return;
+        currentTask(chain).ifPresent(task -> {
+            if (task.getStatus() == TaskStatus.BLOCKED) {
+                task.setStatus(TaskStatus.READY);
+                task.setReadyAt(clock.instant());
+                tasks.save(task);
+            }
+        });
     }
 
     private Optional<Task> currentTask(List<Task> chain) {

@@ -106,7 +106,7 @@ public class TaskMachine {
         task.setStatus(TaskStatus.READY);
         task.setReadyAt(clock.instant());
         task.setJobId(null);
-        task.setNextCheckAt(null);
+        task.setNextCheckAt(clock.instant().plus(TaskSettings.resolvePollingInterval(task, settings)));
         tasks.save(task);
     }
 
