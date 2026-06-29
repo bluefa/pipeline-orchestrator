@@ -22,3 +22,18 @@ pipeline:
   time-to-live: P7D           # CONDITION_CHECK per-task deadline
   polling-interval: PT10M     # poll re-check cadence
   max-fail-count: 2           # attempts before a task is FAILED
+
+  # ADR-021 execution knobs — tune against observed InfraManager latency in operation.
+  # lease-duration must exceed api-call-timeout (ADR-021 Decision 5).
+  execution:
+    worker-per-pod: 4
+    lease-duration: PT2M
+    api-call-timeout: PT30S
+    running-pipeline-cap: 100
+    slot-cap: 20
+    slot-retry: PT30S
+    poll-interval: PT1S
+    max-idle-sleep: PT5S
+    backoff-base: PT0.2S
+    backoff-max: PT5S
+    jitter-ratio: 0.2

@@ -9,6 +9,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.Instant;
@@ -28,11 +29,20 @@ import lombok.Setter;
  * 종료(terminates) 시에는 {@code NULL}로 설정된다. MySQL은 유일 인덱스에서 다수의 NULL을 허용하므로 종료된 행들은
  * 서로 충돌하지 않으며, 주어진 target에 대해 비종료 행은 최대 하나만 존재할 수 있다. 이 컬럼은 상태 변경과 동일한
  * 트랜잭션 내에서 애플리케이션이 유지 관리한다(생성 시 설정, cancel 및 converge 시 초기화).
+ *
+ * <p><b>실행 조정 컬럼 (ADR-021, 도메인 상태 아님):</b> {@code next_due_at}, {@code claimed_by},
+ * {@code claimed_until}, {@code cancel_requested}는 ADR-021 실행 모델이 소유하는 메타데이터이다.
+ * {@code next_due_at}은 다음 워커 픽업 스케줄 시각, {@code claimed_by}/{@code claimed_until}은
+ * 파이프라인별 클레임/리스 펜싱 토큰이며, {@code cancel_requested}는 협력적 취소 신호이다.
+ * 이 컬럼들은 ADR-016 도메인 상태({@code status}, {@code active_target} 등)와 별개로 관리된다.
+ * {@code idx_pipeline_claim} 인덱스({@code status, next_due_at})는 클레임 조건자
+ * {@code status='RUNNING' AND next_due_at <= now}를 커버한다(MySQL은 부분 인덱스 미지원).
  */
 @Entity
 @Table(
         name = "pipeline",
-        uniqueConstraints = @UniqueConstraint(name = Pipeline.ACTIVE_TARGET_CONSTRAINT, columnNames = "active_target"))
+        uniqueConstraints = @UniqueConstraint(name = Pipeline.ACTIVE_TARGET_CONSTRAINT, columnNames = "active_target"),
+        indexes = @Index(name = "idx_pipeline_claim", columnList = "status, next_due_at"))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -65,4 +75,16 @@ public class Pipeline {
 
     @Column(name = "active_target")
     private String activeTarget;
+
+    @Column(name = "next_due_at")
+    private Instant nextDueAt;
+
+    @Column(name = "claimed_by")
+    private String claimedBy;
+
+    @Column(name = "claimed_until")
+    private Instant claimedUntil;
+
+    @Column(name = "cancel_requested", nullable = false)
+    private boolean cancelRequested;
 }

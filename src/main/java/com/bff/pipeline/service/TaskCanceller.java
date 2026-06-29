@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
 /**
  * 체인의 비종료 태스크들을 취소 처리하고, 열려 있는 시도 관찰(attempt observation)을 각각
  * CANCELLED로 종료하여 이력이 거짓말을 하지 않도록 한다. 관리자 취소({@link PipelineControl})와
- * 실패 연쇄({@link PipelineEngine})가 이 컴포넌트를 공유한다. 취소 로직을 여기에 집중하면
+ * 실패 연쇄({@link StepReporter})가 이 컴포넌트를 공유한다. 취소 로직을 여기에 집중하면
  * 두 호출 지점이 DRY를 유지하며, 태스크가 종료되기 전에 항상 관찰이 종료 처리됨을 보장한다.
  */
 @Component

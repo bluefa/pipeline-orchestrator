@@ -20,3 +20,17 @@ pipeline:
   time-to-live: P7D
   polling-interval: PT10M
   max-fail-count: 2
+
+  # ADR-021 execution knobs tuned for fast tests (high slot-cap so tests are not gated).
+  execution:
+    worker-per-pod: 2
+    lease-duration: PT30S
+    api-call-timeout: PT15S
+    running-pipeline-cap: 100
+    slot-cap: 100
+    slot-retry: PT1S
+    poll-interval: PT1S
+    max-idle-sleep: PT1S
+    backoff-base: PT0.1S
+    backoff-max: PT1S
+    jitter-ratio: 0.2

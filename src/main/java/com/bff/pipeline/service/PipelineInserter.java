@@ -49,6 +49,8 @@ public class PipelineInserter {
                 .activeTarget(target)
                 .createdAt(now)
                 .lastActivityAt(now)
+                .nextDueAt(now)
+                .cancelRequested(false)
                 .build());
         tasks.saveAll(buildChain(pipeline.getId(), recipes.forType(type).steps(), now));
         return pipeline;

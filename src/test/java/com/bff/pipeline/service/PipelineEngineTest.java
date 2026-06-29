@@ -2,8 +2,10 @@ package com.bff.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.bff.pipeline.ExecutionSettings;
 import com.bff.pipeline.client.FakeInfraManagerClient;
 import com.bff.pipeline.client.InfraManagerClient;
+import com.bff.pipeline.client.TimeBoundedInfraManagerClient;
 import com.bff.pipeline.PipelineSettings;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.entity.Pipeline;
@@ -25,6 +27,8 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,26 +42,28 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 엔드-투-엔드 상태 머신 테스트이다. {@link PipelineEngine#advance}가 파이프라인을 태스크 체인 상에서
- * 한 번에 한 단계씩 구동한다(별도의 러너/스케줄러 없이 — 이는 ADR-021에 명시된 방식이다). fake에 동작을
- * 스크립팅한 뒤 clock을 명시적으로 진행시키고 {@code advance()}를 실행한다. 각 {@code advance()}는
- * 독립적으로 커밋하며({@code NOT_SUPPORTED}가 테스트 래핑 트랜잭션을 억제하여 프로덕션과 동일하게 동작한다).
+ * 엔드-투-엔드 상태 머신 테스트이다. {@link PipelineWorker#pollOnce()}가 파이프라인을 태스크 체인 상에서
+ * 한 번에 한 단계씩 구동한다(별도의 스케줄러 없이). fake에 동작을 스크립팅한 뒤 clock을 명시적으로
+ * 진행시키고 {@code pollOnce()}를 실행한다. 각 {@code pollOnce()}는 tx1(claim) + tx2(report)를 독립적으로
+ * 커밋하며({@code NOT_SUPPORTED}가 테스트 래핑 트랜잭션을 억제하여 프로덕션과 동일하게 동작한다).
  *
  * <p>명시적인 {@code BLOCKED} 상태는 첫 번째 이후의 모든 태스크에서 한 단계를 추가로 소요한다
  * ({@code BLOCKED → READY}는 퍼시스턴트 단계이다). 각 테스트의 실행 추적은 이 점을 반영하고 있다.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineEngine.class, TaskMachine.class, TaskTypeRegistry.class, TerraformTask.class,
+@Import({TaskMachine.class, TaskTypeRegistry.class, TerraformTask.class,
         ConditionCheckTask.class, Observations.class, TaskCanceller.class, PipelineCreator.class,
-        PipelineInserter.class, PipelineControl.class, Recipes.class, PipelineEngineTest.Wiring.class,
-        PipelineEngineTest.PostCheckWiring.class})
+        PipelineInserter.class, PipelineControl.class, Recipes.class,
+        StepRunner.class, StepReporter.class, PipelineClaimer.class, PipelineWorker.class,
+        TimeBoundedInfraManagerClient.class,
+        PipelineEngineTest.Wiring.class, PipelineEngineTest.PostCheckWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineEngineTest {
 
     private static final Instant START = Instant.parse("2026-06-23T00:00:00Z");
 
-    @Autowired private PipelineEngine engine;
+    @Autowired private PipelineWorker worker;
     @Autowired private PipelineCreator creator;
     @Autowired private PipelineControl control;
     @Autowired private TaskRepository tasks;
@@ -152,7 +158,7 @@ class PipelineEngineTest {
     void aRawRuntimeExceptionFromTheClientPropagatesAndIsNotRecordedAsCheckError() {
         Pipeline pipeline = creator.create("t-bug", PipelineType.DELETE);
         infraManager.onDispatch(() -> { throw new IllegalStateException("a real bug"); });
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> engine.advance(pipeline.getId()))
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> worker.pollOnce())
             .isInstanceOf(RuntimeException.class);
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
         assertThat(task(pipeline, 0).getErrorCode()).isNull();
@@ -349,7 +355,7 @@ class PipelineEngineTest {
 
 
     private void advance(Pipeline pipeline) {
-        engine.advance(pipeline.getId());
+        worker.pollOnce();
     }
 
     private Pipeline createInstallAtConditionInProgress(String target) {
@@ -386,7 +392,7 @@ class PipelineEngineTest {
             return new MutableClock(START);
         }
 
-        @Bean
+        @Bean("infraManagerDelegate")
         FakeInfraManagerClient infraManager() {
             return new FakeInfraManagerClient();
         }
@@ -399,6 +405,28 @@ class PipelineEngineTest {
                     .pollingInterval(Duration.ofMinutes(10))
                     .maxFailCount(2)
                     .build();
+        }
+
+        @Bean
+        ExecutionSettings executionSettings() {
+            return ExecutionSettings.builder()
+                    .workerPerPod(2)
+                    .leaseDuration(Duration.ofSeconds(30))
+                    .apiCallTimeout(Duration.ofSeconds(15))
+                    .runningPipelineCap(1000)
+                    .slotCap(1000)
+                    .slotRetry(Duration.ofSeconds(1))
+                    .pollInterval(Duration.ofSeconds(1))
+                    .maxIdleSleep(Duration.ofSeconds(1))
+                    .backoffBase(Duration.ofMillis(100))
+                    .backoffMax(Duration.ofSeconds(1))
+                    .jitterRatio(0.2)
+                    .build();
+        }
+
+        @Bean(destroyMethod = "shutdown")
+        ExecutorService imCallPool() {
+            return Executors.newFixedThreadPool(2);
         }
     }
 

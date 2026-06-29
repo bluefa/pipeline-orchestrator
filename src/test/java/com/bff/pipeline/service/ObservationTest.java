@@ -3,6 +3,7 @@ package com.bff.pipeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.bff.pipeline.client.FakeInfraManagerClient;
+import com.bff.pipeline.client.TimeBoundedInfraManagerClient;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.TaskAttempt;
@@ -35,15 +36,18 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineEngine.class, TaskMachine.class, TaskTypeRegistry.class, TerraformTask.class,
+@Import({TaskMachine.class, TaskTypeRegistry.class, TerraformTask.class,
         ConditionCheckTask.class, Observations.class, TaskCanceller.class, PipelineCreator.class,
-        PipelineInserter.class, Recipes.class, PipelineEngineTest.Wiring.class})
+        PipelineInserter.class, Recipes.class,
+        StepRunner.class, StepReporter.class, PipelineClaimer.class, PipelineWorker.class,
+        TimeBoundedInfraManagerClient.class,
+        PipelineEngineTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class ObservationTest {
 
     private static final Instant START = Instant.parse("2026-06-23T00:00:00Z");
 
-    @Autowired private PipelineEngine engine;
+    @Autowired private PipelineWorker worker;
     @Autowired private PipelineCreator creator;
     @Autowired private TaskRepository tasks;
     @Autowired private PipelineRepository pipelines;
@@ -72,8 +76,8 @@ class ObservationTest {
     void aHappyTerraformTaskRecordsOneDoneAttemptWithItsJobId() {
         Pipeline pipeline = creator.create("obs-happy", PipelineType.DELETE);
         infraManager.onPoll(TerraformPoll::success);
-        engine.advance(pipeline.getId());
-        engine.advance(pipeline.getId());
+        worker.pollOnce();
+        worker.pollOnce();
 
         var recorded = attempts.findByTaskIdOrderByAttemptNumberAsc(taskId(pipeline, 0));
 
@@ -106,7 +110,7 @@ class ObservationTest {
         Long conditionTaskId = taskId(pipeline, 1);
 
         for (int i = 0; i < 3; i++) {
-            engine.advance(pipeline.getId());
+            worker.pollOnce();
             clock.advance(Duration.ofMinutes(11));
         }
 
@@ -121,16 +125,16 @@ class ObservationTest {
     private Pipeline createInstallAtConditionInProgress() {
         Pipeline pipeline = creator.create("obs-cond", PipelineType.INSTALL);
         infraManager.onPoll(TerraformPoll::success);
-        engine.advance(pipeline.getId());
-        engine.advance(pipeline.getId());
-        engine.advance(pipeline.getId());
-        engine.advance(pipeline.getId());
+        worker.pollOnce();
+        worker.pollOnce();
+        worker.pollOnce();
+        worker.pollOnce();
         return pipeline;
     }
 
     private void runUntilTerminal(Pipeline pipeline) {
         for (int i = 0; i < 20; i++) {
-            engine.advance(pipeline.getId());
+            worker.pollOnce();
             clock.advance(Duration.ofHours(1));
             if (pipelines.findById(pipeline.getId()).orElseThrow().getStatus() != PipelineStatus.RUNNING) {
                 return;
