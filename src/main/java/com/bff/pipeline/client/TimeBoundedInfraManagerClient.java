@@ -18,8 +18,9 @@ import org.springframework.stereotype.Component;
  * {@code imCallPool} 스레드에서 대리자(delegate) 호출을 실행하므로 느린 외부 호출이 워커 스레드를
  * 점유하지 않는다. {@code TimeoutException} → {@link InfraManagerClient.CallTimeoutException},
  * {@code InterruptedException} → {@link InfraManagerClient.CallInterruptedException}(fail-fast,
- * {@code Thread.interrupt} 복원), {@code ExecutionException} → 원인 {@code RuntimeException} 언래핑
- * (대리자의 닫힌 어휘 보존).
+ * {@code Thread.interrupt} 복원), {@code ExecutionException} → 원인 언래핑: {@link Error}(OOM,
+ * StackOverflow 등)는 그대로 재throw하고, {@code RuntimeException}은 언래핑하여 전파하며,
+ * 그 외는 {@code IllegalStateException}으로 감싼다(대리자의 닫힌 어휘 보존).
  *
  * <p>대리자는 {@code @Qualifier("infraManagerDelegate")}로 주입되어 {@code @Primary} 자기 참조를 방지한다.
  * 실제 어댑터(프로덕션) 또는 테스트 fake가 대리자로 등록된다.
@@ -69,6 +70,7 @@ public class TimeBoundedInfraManagerClient implements InfraManagerClient {
             throw new CallInterruptedException();
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
+            if (cause instanceof Error error) throw error;
             if (cause instanceof RuntimeException r) throw r;
             throw new IllegalStateException(cause);
         }

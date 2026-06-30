@@ -27,11 +27,11 @@ documented).
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
-| B1 | Task lifecycle is BLOCKED→READY→IN_PROGRESS→DONE\|FAILED\|CANCELLED | `TaskStatus`, `TaskMachine.advance` | ✅ |
+| B1 | Task lifecycle is BLOCKED→READY→IN_PROGRESS→DONE\|FAILED\|CANCELLED | `TaskStatus`; `TaskMachine.applyOutcome` (driven by `StepRunner.runStep` phase A) | ✅ |
 | B2 | Pipeline lifecycle is RUNNING→DONE\|FAILED\|CANCELLED | `PipelineStatus`, `StepReporter.converge` | ✅ |
 | B3 | First task starts READY; the rest start BLOCKED and flip to READY when the predecessor is DONE | `PipelineInserter.insert` + `PipelineEngineTest.anInstallRunsBothTasksThroughBlockedAndUnblockToDone` | ✅ |
 | B4 | The current task is the lowest-sequence non-terminal task | `StepReporter.currentTask` (private) / `PipelineWorker.loadStepContext` | ✅ |
-| B5 | Pipeline status is a stored projection, written in the same tx as the task transition that changes it | `PipelineRepository.finish` (CAS in the `advance` tx) | ✅ |
+| B5 | Pipeline status is a stored projection, written in the same tx as the task transition that changes it | `StepReporter.converge`/`terminalize` (tx2, dirty-check on the FOR-UPDATE-locked managed entity — no CAS) | ✅ |
 | B6 | Five core enums + a closed `TaskOperation` (a task's type selects the executor, operation the action) | `entity/*` enums; the type is resolved by name (no `switch` on kind) | ✅ |
 | B7 | A recipe (ordered task list) is a code default per type | `Recipes` | ✅ |
 | B8 | A task's behaviour is a `TaskType` resolved **by name** through `TaskTypeRegistry`; a new kind self-registers (no enum/`switch` edit) | `TaskType`/`TaskTypeRegistry`; `TerraformTask`/`ConditionCheckTask` | ✅ |
@@ -43,7 +43,7 @@ documented).
 | C1 | `task_attempt` = one row per attempt, `attempt_no = failCount + 1` | `Observations` + `ObservationTest.aRetryingTaskRecordsOneAttemptRowPerAttemptWithIncreasingAttemptNo` | ✅ |
 | C2 | `task_check` is UPDATE-in-place (one row per attempt; counters grow, not rows) | `ObservationTest.aConditionPolledNotMetUpdatesOneCheckRowInPlace` | ✅ |
 | C3 | The engine never **reads** the observation tables for correctness | `Observations` only writes; `StepReporter`/`TaskMachine` never query them | ✅ |
-| C4 | Losing observations degrades debuggability only, never correctness — they can never roll back task progress | observations ride the `advance` tx (ADR Option B); a failed write retries the whole `advance`, which cannot corrupt the atomic task row — see Deferred | ✅ |
+| C4 | Losing observations degrades debuggability only, never correctness — they can never roll back task progress | observations ride tx2 (`StepReporter.report`); a failed write rolls back tx2 and the claim-pull cycle retries on the next claim, which cannot corrupt the atomic task row — see Deferred | ✅ |
 
 ## D. Decision 4 — one active pipeline per target
 
@@ -58,7 +58,7 @@ documented).
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
-| E1 | Dispatch is idempotent / at-least-once safe; a crash before storing `job_id` heals by re-dispatch | `TaskMachine.dispatch` (re-dispatch on READY); A2 crash-resume test | ✅ |
+| E1 | Dispatch is idempotent / at-least-once safe; a crash before storing `job_id` heals by re-dispatch | `StepRunner.dispatch` (re-dispatch on READY); `TaskMachine.markInProgress` applies the `Dispatched` outcome in tx2; A2 crash-resume test | ✅ |
 | E2 | No `DISPATCHING` state; the latest `job_id` is recorded | `TaskStatus` has no DISPATCHING; `dispatch` sets `job_id` | ✅ |
 | E3 | `(task_id, attempt_no)` is our logical attempt identity, not an InfraManager key | `TaskAttempt` unique `(task_id, attempt_no)` | ✅ |
 
@@ -81,7 +81,7 @@ documented).
 | G3 | Cancel converges directly to CANCELLED (no CANCELLING) and terminalizes every non-terminal task | `PipelineControl.cancel` + `PipelineControlTest` | ✅ |
 | G4 | Cancel is a RUNNING-guarded transition — it can never resurrect a pipeline a converge already terminalized | `PipelineControl.cancel`: Case A uses `cancelIfIdle` (RUNNING + idle guard, 0-row = no-op); Case B `requestCancel` also RUNNING-guarded | ✅ |
 | G5 | A FAILED pipeline marks the failing task FAILED and CANCELS the rest | `TaskCanceller.cancelNonTerminal` called from `StepReporter.converge` + `PipelineEngineTest.aFailedPipelineCancelsItsRemainingBlockedTasks` | ✅ |
-| G6 | A terminal state is never resurrected | ownership-guarded write-back (tx2 `WHERE claimed_by = :token`); cancel Case A/B both RUNNING-guarded; `Task.@Version` as backstop | ✅ |
+| G6 | A terminal state is never resurrected | ownership-guarded write-back (tx2 `findByIdForUpdate` + Java `claimToken.equals(pipeline.getClaimedBy())` no-op guard); cancel Case A/B both RUNNING-guarded; `Task.@Version` as backstop | ✅ |
 | G7 | A task whose stored `taskName` resolves to no `TaskType` fails with `UNKNOWN_TASK` (a value, no NPE) | `TaskMachine` resolve→`fail(UNKNOWN_TASK)` + `PipelineEngineTest.aTaskWhoseStoredNameHasNoRegisteredTypeFailsAsUnknownTask` | ✅ |
 
 ## H. Schema & persistence (JPA-generated, MySQL)
@@ -92,7 +92,7 @@ documented).
 | H2 | MySQL target; tests run on H2 MySQL-mode without Docker | `application.yml` (MySQL) + test `application.yml` (H2 `MODE=MySQL`) | ✅ |
 | H3 | "One active per target" works on MySQL despite no partial unique index (nullable `active_target` + unique; multiple NULLs allowed) | `Pipeline.activeTarget`; uniqueness tests | ✅ |
 | H4 | The cancel-vs-worker race cannot resurrect a terminal state | claim fencing (ownership-guarded tx2 write-back + cancel Case A/B) is the primary guard; `Task.@Version` is a backstop; `PipelineEngineTransactionTest.aCancelThatCommitsDuringTheInfraManagerClientCallDoesNotClobberCancelled` proves the Case B cooperative cancel path | ✅ |
-| H5 | Indexes are JPA-declared and cover the actual queries; no orphan index (the status-scan index was dropped with the reconciler scan) | unique constraints `uq_task_pipeline_sequence`/`uq_task_attempt`/`uq_task_check_attempt`/`uq_pipeline_active_target` back every repository query | ✅ |
+| H5 | Indexes are JPA-declared and cover the actual queries; no orphan index (the status-scan index was dropped with the reconciler scan) | unique constraints `uq_task_pipeline_sequence`/`uq_task_attempt`/`uq_task_check_attempt`/`uq_pipeline_active_target` back uniqueness queries; non-unique indexes `idx_pipeline_claim (status, next_due_at)` (claim scan), `idx_pipeline_claimed_until (claimed_until)` (admission gate), and `idx_task_name_status (task_name, status)` (TF slot gate) cover the execution queries | ✅ |
 
 ## I. Exception strategy (external vs business)
 
@@ -224,7 +224,7 @@ external transport values in `dto`; non-bean domain value/contract types (`TaskT
 **Status: DONE.** Across three independent reviewers the implementation is merge-ready: opus APPROVE with
 no P0/P1; codex and sonnet's actionable findings all fixed; the single P1 (concurrent-driver lock-order)
 is a documented, non-corrupting ADR-021 liveness concern. Suite green (25 tests); every criterion above is
-✅ or a documented 📦. The module is the ADR-016 domain half; execution (ADR-021) is out of scope.
+✅ or a documented 📦. The module was the ADR-016 domain half at this review stage; execution (ADR-021) was out of scope here and was subsequently implemented (see Section K above).
 
 ## Clean-code & exception-handling review campaign (owner-directed)
 

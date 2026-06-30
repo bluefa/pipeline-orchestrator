@@ -5,6 +5,7 @@ import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.model.StepOutcome;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -19,6 +20,10 @@ import org.springframework.stereotype.Component;
  *
  * <p>이 클래스는 시스템에서 외부 InfraManager 호출이 발생하는 유일한 지점이다. phase-B인
  * {@link StepReporter}가 이 결과를 tx2에서 {@link TaskMachine}에 전달하여 적용한다.
+ *
+ * <p><b>BLOCKED 안전망:</b> {@code case BLOCKED → unblock()} 분기는 불변식 복구용 안전망이다.
+ * 정상 흐름에서는 tx2({@link StepReporter})가 BLOCKED 태스크를 READY로 승격하므로 phase-A가
+ * BLOCKED 태스크를 보는 경우는 드물다.
  */
 @Component
 public class StepRunner {
@@ -38,25 +43,19 @@ public class StepRunner {
             case BLOCKED -> StepOutcome.unblock();
             case READY -> dispatch(type, target, task);
             case IN_PROGRESS -> poll(type, target, task);
-            case DONE, FAILED, CANCELLED -> StepOutcome.unblock();
+            case DONE, FAILED, CANCELLED -> throw new IllegalStateException("runStep on a terminal task " + task.getId());
         };
     }
 
     private StepOutcome dispatch(TaskType type, String target, Task task) {
-        try {
+        return runExternalCall(task, true, () -> {
             type.execute(target, task);
             return StepOutcome.dispatched(task.getJobId());
-        } catch (InfraManagerClient.CallTimeoutException e) {
-            log.warn("InfraManager dispatch timed out for task {} ({})", task.getId(), task.getTaskName());
-            return StepOutcome.callTimeout(true);
-        } catch (InfraManagerClient.CallFailedException e) {
-            log.warn("InfraManager dispatch failed for task {} ({}): {}", task.getId(), task.getTaskName(), e.getMessage());
-            return StepOutcome.callFailed(true);
-        }
+        });
     }
 
     private StepOutcome poll(TaskType type, String target, Task task) {
-        try {
+        return runExternalCall(task, false, () -> {
             TaskProgress progress = type.check(target, task);
             TaskProgress resolved = (progress instanceof TaskProgress.Succeeded)
                     ? type.postCheck(target, task)
@@ -66,12 +65,18 @@ public class StepRunner {
                 case TaskProgress.Pending p -> StepOutcome.pending(p.observed());
                 case TaskProgress.Failed f -> StepOutcome.failed(f.reason(), f.retryable());
             };
+        });
+    }
+
+    private StepOutcome runExternalCall(Task task, boolean dispatch, Supplier<StepOutcome> body) {
+        try {
+            return body.get();
         } catch (InfraManagerClient.CallTimeoutException e) {
-            log.warn("InfraManager poll timed out for task {} ({})", task.getId(), task.getTaskName());
-            return StepOutcome.callTimeout(false);
+            log.warn("InfraManager call timed out for task {} ({})", task.getId(), task.getTaskName());
+            return StepOutcome.callTimeout(dispatch);
         } catch (InfraManagerClient.CallFailedException e) {
-            log.warn("InfraManager poll failed for task {} ({}): {}", task.getId(), task.getTaskName(), e.getMessage());
-            return StepOutcome.callFailed(false);
+            log.warn("InfraManager call failed for task {} ({}): {}", task.getId(), task.getTaskName(), e.getMessage());
+            return StepOutcome.callFailed(dispatch);
         }
     }
 }

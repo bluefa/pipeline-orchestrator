@@ -7,6 +7,7 @@ import jakarta.annotation.PreDestroy;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -33,12 +34,16 @@ import org.springframework.stereotype.Component;
  * 멀티-파드 안전성은 DB 클레임({@code FOR UPDATE SKIP LOCKED} + 리스 스탬프)에만 의존한다
  * (ADR-021 Decision 1/7).
  *
- * <p><b>파이프라인별 격리(per-pipeline isolation):</b> 한 파이프라인 처리 중 발생한
- * {@link RuntimeException}은 WARN 로그 후 건너뛰고 드레인을 계속한다 — 단일 실패가 스윕 전체를
- * 중단시켜 다른 파이프라인을 굶기지 않는다.
+ * <p><b>클레임 단계 실패:</b> {@link PipelineClaimer#claimOneDue()}에서 발생한
+ * {@link RuntimeException}은 드레인을 즉시 종료한다 — DB 장애 시 due 행을 지연 없이 재시도하는
+ * 해머 루프를 방지하고, 적응형 백오프가 재시도 속도를 제어한다.
+ *
+ * <p><b>처리 단계 실패(파이프라인별 격리):</b> {@link PipelineWorker#process}에서 발생한
+ * {@link RuntimeException}은 WARN 로그 후 건너뛰고 드레인을 계속한다 — 파이프라인이 리스를 유지하며
+ * 만료 시 자동 회수된다. 단일 실패가 스윕 전체를 중단시켜 다른 파이프라인을 굶기지 않는다.
  *
  * <p><b>{@link InfraManagerClient.CallInterruptedException}:</b> JVM 종료 신호로 간주하여
- * 스레드 인터럽트를 복원하고 드레인을 즉시 중단한다.
+ * 스레드 인터럽트를 복원하고 스윕 전체를 즉시 중단한다 — 재스케줄하지 않는다.
  */
 @Component
 public class PipelineScheduler {
@@ -46,6 +51,7 @@ public class PipelineScheduler {
     private static final Logger log = LoggerFactory.getLogger(PipelineScheduler.class);
 
     private final PipelineWorker worker;
+    private final PipelineClaimer claimer;
     private final ExecutorService pool;
     private final ExecutionSettings settings;
     private final Duration initialDelay;
@@ -54,10 +60,12 @@ public class PipelineScheduler {
 
     public PipelineScheduler(
             PipelineWorker worker,
+            PipelineClaimer claimer,
             @Qualifier("pipelineWorkerPool") ExecutorService pool,
             ExecutionSettings settings,
             @Value("${pipeline.execution.scheduler-initial-delay:PT5S}") Duration initialDelay) {
         this.worker = worker;
+        this.claimer = claimer;
         this.pool = pool;
         this.settings = settings;
         this.initialDelay = initialDelay;
@@ -103,6 +111,9 @@ public class PipelineScheduler {
     /**
      * {@code workerPerPod}개의 드레인 태스크를 병렬 제출하고 모든 완료를 기다린다.
      * 하나라도 파이프라인을 처리한 드레인이 있으면 {@code true}를 반환한다.
+     * 드레인에서 {@link InfraManagerClient.CallInterruptedException}이 발생하면
+     * 나머지 미완료 퓨처를 모두 취소하고, 인터럽트를 복원한 뒤 {@link InterruptedException}을 던져
+     * {@code runSweep}이 재스케줄하지 않도록 한다.
      */
     boolean sweepOnce() throws InterruptedException {
         List<Future<Boolean>> futures = new ArrayList<>();
@@ -119,6 +130,11 @@ public class PipelineScheduler {
                 Thread.currentThread().interrupt();
                 throw interruptedException;
             } catch (ExecutionException executionException) {
+                if (executionException.getCause() instanceof InfraManagerClient.CallInterruptedException) {
+                    futures.forEach(f -> f.cancel(true));
+                    Thread.currentThread().interrupt();
+                    throw new InterruptedException("shutdown interrupt during sweep");
+                }
                 log.warn("worker drain failed", executionException.getCause());
             }
         }
@@ -127,27 +143,42 @@ public class PipelineScheduler {
 
     /**
      * 작업이 없을 때까지 한 파이프라인씩 처리한다. 하나 이상의 파이프라인을 처리했으면 {@code true}를 반환한다.
-     * 파이프라인별 격리: 한 건의 {@link RuntimeException} 실패는 WARN 로그 후 건너뛰고 계속한다.
-     * {@link InfraManagerClient.CallInterruptedException}은 종료 신호이므로 인터럽트를 복원하고 즉시 반환한다.
+     *
+     * <p>클레임 단계({@link PipelineClaimer#claimOneDue()})에서 {@link RuntimeException}이 발생하면
+     * WARN 로그 후 드레인을 즉시 종료한다 — DB 장애 시 same due 행을 지연 없이 재시도하는 해머 루프를
+     * 방지하며, 적응형 백오프가 다음 재시도 속도를 제어한다.
+     *
+     * <p>처리 단계({@link PipelineWorker#process})에서 {@link RuntimeException}이 발생하면
+     * WARN 로그 후 건너뛰고 계속한다 — 파이프라인이 리스를 유지하며 만료 시 자동 회수된다(파이프라인별 격리).
+     *
+     * <p>{@link InfraManagerClient.CallInterruptedException}은 두 단계 모두에서 종료 신호이므로
+     * 인터럽트를 복원하고 즉시 re-throw하여 스윕 전체를 중단시킨다.
      */
     boolean drain() {
         boolean anyFound = false;
-        boolean workFound = true;
-        while (workFound) {
+        while (true) {
+            Optional<PipelineClaimer.Claim> claimed;
             try {
-                boolean found = worker.pollOnce().isPresent();
-                workFound = found;
-                if (found) anyFound = true;
+                claimed = claimer.claimOneDue();
             } catch (InfraManagerClient.CallInterruptedException callInterruptedException) {
                 Thread.currentThread().interrupt();
-                return anyFound;
+                throw callInterruptedException;
             } catch (RuntimeException runtimeException) {
-                log.warn("pipeline advance failed — skipping this pipeline for the sweep", runtimeException);
-                // 실패한 파이프라인은 tx1(claim)이 커밋되어 리스가 찍혀 있으므로 다음 클레임 스캔에서 제외된다.
-                // 드레인은 다음 클레임 가능한 파이프라인으로 계속 진행한다.
+                log.warn("claim failed — ending drain; next sweep retries with backoff", runtimeException);
+                return anyFound;
+            }
+            if (claimed.isEmpty()) return anyFound;
+            try {
+                worker.process(claimed.get());
+                anyFound = true;
+            } catch (InfraManagerClient.CallInterruptedException callInterruptedException) {
+                Thread.currentThread().interrupt();
+                throw callInterruptedException;
+            } catch (RuntimeException runtimeException) {
+                log.warn("pipeline advance failed — skipping (the pipeline keeps its lease and is reclaimed on expiry)", runtimeException);
+                anyFound = true;
             }
         }
-        return anyFound;
     }
 
     /**

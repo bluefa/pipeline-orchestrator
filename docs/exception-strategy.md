@@ -92,11 +92,19 @@ straight to the row:
                              → ErrorCode value written to the row
    TaskMachine.applyOutcome  pure state transitions in tx2 (no try/catch, no external call)
 
- PipelineScheduler.drain (IN this module) catches RuntimeException PER PIPELINE: a failed
-                             pipeline advance is logged (WARN) and that pipeline is skipped for
-                             the sweep; its stamped lease keeps it out of the next claim scan
-                             until expiry (crash-recovery semantics). CallInterruptedException
-                             aborts the sweep (JVM shutdown signal).
+ PipelineScheduler.drain (IN this module) — two failure phases:
+                             (a) claim phase (claimOneDue RuntimeException): logged (WARN),
+                             drain ends immediately — prevents a DB-outage hammer loop;
+                             adaptive backoff paces the next retry.
+                             (b) process phase (PipelineWorker.process RuntimeException):
+                             logged (WARN), that pipeline is skipped and the drain continues;
+                             its stamped lease keeps it out of the next claim scan until expiry
+                             (crash-recovery semantics). Single-pipeline failure does not starve
+                             other pipelines.
+                             CallInterruptedException (either phase): drain re-throws →
+                             sweepOnce cancels remaining outstanding drain futures, restores the
+                             interrupt, and throws InterruptedException → runSweep does not
+                             reschedule (JVM shutdown signal aborts the sweep).
 ```
 
 `StepRunner` wraps **every** `TaskType` call — `execute`, `check`, and `postCheck` — in the
@@ -166,8 +174,11 @@ These exception types survive, each for a precise reason — none is a business 
 A fourth, **`InfraManagerClient.CallInterruptedException`**, is the fail-fast guard: `StepRunner.runStep`
 catches only `CallTimeoutException`/`CallFailedException`, so an interrupt is **not caught** — it simply
 propagates out of `StepRunner.runStep` (a shutdown interrupt aborts the step instead of being recorded
-as a business `CHECK_ERROR`). `PipelineScheduler.drain` catches it specifically before the per-pipeline
-`RuntimeException` catch and restores the thread interrupt, aborting the sweep. Likewise
+as a business `CHECK_ERROR`). `PipelineScheduler.drain` catches it specifically before the general
+`RuntimeException` catch in both the claim phase and the process phase: it restores the thread interrupt
+and re-throws, which surfaces as `ExecutionException.getCause()` in `sweepOnce`; `sweepOnce` then
+cancels all remaining outstanding drain futures, restores the interrupt, and throws `InterruptedException`;
+`runSweep` catches that and does **not** reschedule — the loop stops cleanly. Likewise
 `IllegalArgumentException` for a missing pipeline id fails fast. Neither is a business outcome.
 
 Note the one boundary that is a **business value, not an exception**: a task whose stored `taskName`

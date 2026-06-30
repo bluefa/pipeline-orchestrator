@@ -41,12 +41,12 @@ class PipelineSchedulerBackoffTest {
                 .backoffMax(BACKOFF_MAX)
                 .jitterRatio(JITTER_RATIO)
                 .build();
-        // null worker and pool are safe here: start() is never called, so no tasks are submitted.
-        return new PipelineScheduler(null, null, settings, Duration.ofHours(1));
+        // null worker, claimer, and pool are safe here: start() is never called, so no tasks are submitted.
+        return new PipelineScheduler(null, null, null, settings, Duration.ofHours(1));
     }
 
     @Test
-    void emptySweeepsGrowDelayGeometricallyAndCapAtMinBackoffMaxMaxIdleSleep() {
+    void emptySweepsGrowTheDelayGeometricallyAndCapAtTheIdleSleepCeiling() {
         // idleBackoff starts at backoffBase (200ms).
         // Each empty sweep: idleBackoff = min(idleBackoff * 2, backoffMax); returned = min(idleBackoff, maxIdleSleep) ± jitter.
         // Progression (before jitter): 400ms → 800ms → 1600ms → 3000ms (capped) → 3000ms (stable).

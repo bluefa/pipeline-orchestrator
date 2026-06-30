@@ -11,8 +11,9 @@ state machine driven by a **claim-pull two-transaction cycle**: tx1 claims one d
 pipeline (`PipelineClaimer`, `FOR UPDATE SKIP LOCKED` + UUID fencing token + lease),
 the external call runs outside any transaction (`StepRunner`), and tx2 reports the
 result under the verified ownership lock (`StepReporter`). `PipelineScheduler` sweeps
-due pipelines on a fixed cadence; `PipelineControl` handles cancel Case A (idle) / Case
-B (cooperative). Spring Boot 3 / Java 21 / MySQL.
+due pipelines on an adaptive schedule — `pollInterval` cadence when work is found,
+jittered exponential backoff (capped by `backoffMax`/`maxIdleSleep`) when idle;
+`PipelineControl` handles cancel Case A (idle) / Case B (cooperative). Spring Boot 3 / Java 21 / MySQL.
 
 ## Hard rules
 

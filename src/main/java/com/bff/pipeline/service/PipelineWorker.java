@@ -60,7 +60,7 @@ public class PipelineWorker {
         return Optional.of(claim.pipelineId());
     }
 
-    private void process(PipelineClaimer.Claim claim) {
+    public void process(PipelineClaimer.Claim claim) {
         StepContext context = loadStepContext(claim.pipelineId());
         if (context == null) {
             reporter.report(claim.pipelineId(), claim.token(), null);

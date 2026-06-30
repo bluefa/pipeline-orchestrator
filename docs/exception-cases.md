@@ -69,8 +69,9 @@ operation (or application startup) immediately.
 | # | Exception | Thrown by | Condition | Reaches |
 |---|---|---|---|---|
 | 6 | any non-`CallException` `RuntimeException` (e.g. `NullPointerException`, `IllegalStateException`) | a bug in a `TaskType` / `StepRunner` / `StepReporter` / `Observations` while servicing an advance | a real defect, not an external failure | propagates out of `StepRunner.runStep` or `StepReporter.report` → case 7 (fail-fast, never `CHECK_ERROR`) |
-| 7 | _(any propagating `RuntimeException` from `PipelineWorker.pollOnce`)_ | propagates through `PipelineWorker.pollOnce()` | **`PipelineScheduler.drain`** per-pipeline `catch (RuntimeException)` (in this module) | logged (WARN), that pipeline skipped for the sweep; the failed pipeline keeps its tx1-stamped lease and is excluded from the next claim scan until lease expiry — same crash-recovery semantics as ADR-021 Decision 5 |
-| 7a | `InfraManagerClient.CallInterruptedException` (from case 1) | propagates through `PipelineWorker.pollOnce()` | **`PipelineScheduler.drain`** catches it before the general `RuntimeException` catch | thread interrupt restored, drain returns immediately — the JVM shutdown signal aborts the sweep; no pipeline is half-processed |
+| 7 | _(any propagating `RuntimeException` from `PipelineWorker.process` — process phase)_ | propagates through `PipelineWorker.process` after a claim has been stamped | **`PipelineScheduler.drain`** process-phase `catch (RuntimeException)` | logged (WARN), that pipeline is skipped and the drain continues; the failed pipeline keeps its stamped lease and is excluded from the next claim scan until expiry — crash-recovery semantics |
+| 7a | `InfraManagerClient.CallInterruptedException` (from case 1) | propagates from either the claim phase (`PipelineClaimer.claimOneDue`) or process phase (`PipelineWorker.process`) | **`PipelineScheduler.drain`** catches it before the general `RuntimeException` catch in both phases | thread interrupt restored, `drain` re-throws → `sweepOnce` catches via `ExecutionException.getCause`, cancels all remaining outstanding drain futures, restores the interrupt, and throws `InterruptedException` → `runSweep` does **not** reschedule — JVM shutdown signal aborts the sweep cleanly |
+| 7b | _(any propagating `RuntimeException` from `PipelineClaimer.claimOneDue` — claim phase)_ | propagates through `PipelineClaimer.claimOneDue` (before a claim is stamped) | **`PipelineScheduler.drain`** claim-phase `catch (RuntimeException)` | logged (WARN) and the drain ends immediately (returns early) — prevents a DB-outage hammer loop; the adaptive backoff in `PipelineScheduler.nextDelay` paces the retry interval for the next sweep |
 | 8 | `IllegalStateException` | `TaskTypeRegistry` constructor | a `TaskType` bean has a `null`/blank `taskName()`, or two beans claim the same name | **application startup fails** (a misconfiguration must not boot) |
 | 9 | `IllegalArgumentException` | `PipelineSettings` compact constructor | a required `pipeline.*` key is missing, or a duration is zero/negative, or `max-fail-count < 1` | **application startup fails** (incomplete/invalid config must not boot — pre-empts a later NPE/busy-loop in `TaskSettings`) |
 | 10 | `IllegalArgumentException` | `PipelineControl.cancel` | the pipeline id does not exist | propagates; for cancel via REST it becomes `400` (§5). (In the worker path, a pipeline not found in `loadStepContext` causes `StepReporter.report` to no-op gracefully — not an `IllegalArgumentException`.) |
@@ -136,9 +137,10 @@ translated they are ordinary business failures and drive the same retry-or-fail 
   and `TaskMachine.applyOutcome` (tx2) have **no** external-call try/catch — they only apply the
   precomputed `StepOutcome`. The only other `catch` in the service layer is `PipelineCreator`'s
   targeted `DataIntegrityViolationException` control-signal catch (§4, case 11), which *recovers*
-  rather than translates; `PipelineScheduler.drain` has two catches for per-pipeline isolation
-  (`CallInterruptedException` for shutdown abort, `RuntimeException` for skip-and-continue) — both
-  are deliberate isolation catches, not business-failure translators.
+  rather than translates; `PipelineScheduler.drain` has four deliberate isolation catches: in the
+  claim phase (`CallInterruptedException` re-throw, `RuntimeException` end-drain) and in the process
+  phase (`CallInterruptedException` re-throw, `RuntimeException` skip-and-continue) — none is a
+  business-failure translator.
 - No `catch` block is empty and none returns `null` on error. The two infrastructure catches that
   recover (`PipelineCreator`, `GlobalAdvice`) are type-targeted and either verified before acting
   (constraint name) or log the cause. The external-call catches log before translating.

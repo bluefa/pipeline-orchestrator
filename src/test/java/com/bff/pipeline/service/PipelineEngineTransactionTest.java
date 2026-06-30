@@ -26,8 +26,9 @@ import org.springframework.context.annotation.Bean;
  * 실제 트랜잭션 동작을 검증한다(@SpringBootTest 전체 컨텍스트, 테스트 래핑 트랜잭션 없음).
  * {@link PipelineWorker#pollOnce()}가 tx1(claim) + tx2(report)를 각각 독립적으로 커밋함을 확인하며,
  * InfraManager 호출이 진행 중인 <em>도중에</em> 커밋된 cancel이 낡은(stale) 워커 단계에 의해
- * 덮어쓰이지 않음을 검증한다 — tx2 소유권 가드(ownership guard)가 currentTask를 empty로 만들어
- * 결과 적용을 건너뛰고, 파이프라인 상태가 CANCELLED로 유지된다(ADR Decision 4).
+ * 덮어쓰이지 않음을 검증한다 — 워커가 리스를 보유한 상태(Case B)이므로 소유권 가드는 발동하지 않고,
+ * tx2가 {@code cancelRequested} 협력적 취소 플래그를 확인하여 직접 CANCELLED를 적용한다
+ * (ADR Decision 6 Case B).
  */
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:rtx;MODE=MySQL;DB_CLOSE_DELAY=-1",

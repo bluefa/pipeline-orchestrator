@@ -54,7 +54,7 @@ com.bff.pipeline
 
 Each task's behaviour is a **`TaskType`** (`model/`): `TerraformTask` and `ConditionCheckTask` (in
 `service/`) implement the `execute` → `check` lifecycle (and may override the default no-op `postCheck`),
-and `TaskMachine` resolves a task row to its type **by name** through `TaskTypeRegistry` — so a new kind of task is a new self-registering implementation, not an edit to a
+and `StepRunner` resolves a task row to its type **by name** through `TaskTypeRegistry` (an unknown name produces `StepOutcome.unknownTask()`, handled by `TaskMachine.failUnknownTask`) — so a new kind of task is a new self-registering implementation, not an edit to a
 `switch`. An unknown name fails the task with `ErrorCode.UNKNOWN_TASK`.
 
 ## Documentation
