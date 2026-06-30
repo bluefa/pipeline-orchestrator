@@ -65,3 +65,28 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
   agent (each seen twice); recorded the catch-all-logging preference; updated interface-justification to
   bless genuine N-impl polymorphism (`TaskType`). The cancel/advance lock-order P1 is dispositioned in
   `docs/acceptance-criteria.md` (Deferred) as an ADR-021 concern.
+- **ADR-021 execution-layer campaign (10 rounds, ~23 reviews — codex×10 + opus×13).** New recurring rules
+  (each surfaced ≥1×; promote on the next hit):
+  - **two-transaction-boundary** — a slow external call (InfraManager, 200ms–60s) must run OUTSIDE any DB
+    transaction, between a short claim tx (tx1) and a guarded report tx (tx2); holding a connection/row lock
+    across the call is a P0. `StepRunner.runStep` is non-`@Transactional` by construction.
+  - **live-lease fencing** — a fencing-token ownership guard in the report tx must check the token match AND
+    that the lease is still live (`claimed_until > now`), not the token alone; a token-only check lets an
+    expired-but-not-yet-reclaimed straggler win a write and lose a concurrent cancel (R3 P1).
+  - **guaranteed-reschedule best-effort read** — a DB read placed on a path that MUST run to preserve a
+    liveness guarantee (a self-rescheduling loop's `finally` before `schedule(...)`) must be wrapped
+    best-effort (catch + fallback); else a transient DB failure breaks the loop until restart (R8 P1).
+  - **single-step visible-transition** — when a step makes a state visible (a task → DONE), complete the
+    dependent transition (next `BLOCKED → READY`) in the SAME tx, so no committed pipeline is transiently in
+    an invalid current-task state and no extra cycle is spent (R1 P1).
+  - **loop-isolation must not swallow shutdown** — a per-pipeline `catch (RuntimeException)` in a worker
+    drain must NOT catch/normalize `CallInterruptedException` (shutdown must abort the sweep, not look like
+    idle), and a CLAIM-phase failure must end the drain + back off (not tight-loop on the same un-leased row)
+    while a PROCESS-phase failure skips+continues (the pipeline keeps its lease) (R2 2×P1).
+  - Owner structural rules reaffirmed: `service` = beans only; non-bean values (`StepOutcome`) in `model`;
+    new top-level packages stay within the layered set. Soft caps (count-read, accepted overshoot) over hard
+    counter-CAS; extensibility seams documented, not pre-built. The ADR doc is the spec — strengthen the
+    implementation (live-lease) but do not edit the decision text to match the code.
+  - Process: a multi-round campaign that re-reads AFTER each fix catches fix-introduced regressions — R1's
+    adaptive-loop rewrite caused two R2 P1s, R7's nextDueAt query caused an R8 P1; each was caught the next
+    round. Use file-based codex prompts (avoid shell-quoting on `§`/parens).
