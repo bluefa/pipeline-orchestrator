@@ -59,7 +59,7 @@ An outbox durably publishes domain events (pipeline `DONE`/`FAILED`/`CANCELLED`,
 downstream consumers with the same delivery guarantee as the state change.
 
 - **The seam is the single per-pipeline transaction.** Every terminal/transition write already happens
-  in one transaction: `PipelineEngine.converge` (via the guarded `finish()` CAS),
+  in one transaction: `StepReporter.converge` (via the tx2 guarded write-back),
   `PipelineControl.cancel`, and the `TaskMachine` transitions (all in `service/`). An outbox row is
   inserted **in that same transaction**, so the event is committed atomically with the state it
   describes — no dual-write gap.

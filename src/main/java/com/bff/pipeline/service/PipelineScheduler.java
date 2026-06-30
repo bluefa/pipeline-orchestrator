@@ -4,7 +4,9 @@ import com.bff.pipeline.ExecutionSettings;
 import com.bff.pipeline.client.InfraManagerClient;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -34,6 +36,11 @@ import org.springframework.stereotype.Component;
  * 멀티-파드 안전성은 DB 클레임({@code FOR UPDATE SKIP LOCKED} + 리스 스탬프)에만 의존한다
  * (ADR-021 Decision 1/7).
  *
+ * <p><b>nextDueAt-인식 유휴 슬립 (ADR-021 §280):</b> 유휴 스윕 후 가장 가까운 due 파이프라인 시각을
+ * DB에서 조회하여({@link PipelineClaimer#nearestClaimableDueAt()}) 유휴 슬립을
+ * {@code min(backoff, nextDueAt − now)}로 단축한다. 이로써 백오프 케이던스가 긴 상황에서도
+ * due 파이프라인이 생기는 즉시 깨어나며, 결과가 없거나 이미 만료된 경우에는 원래 백오프를 유지한다.
+ *
  * <p><b>클레임 단계 실패:</b> {@link PipelineClaimer#claimOneDue()}에서 발생한
  * {@link RuntimeException}은 드레인을 즉시 종료한다 — DB 장애 시 due 행을 지연 없이 재시도하는
  * 해머 루프를 방지하고, 적응형 백오프가 재시도 속도를 제어한다.
@@ -56,6 +63,7 @@ public class PipelineScheduler {
     private final ExecutionSettings settings;
     private final Duration initialDelay;
     private final ScheduledExecutorService scheduler;
+    private final Clock clock;
     private Duration idleBackoff;
 
     public PipelineScheduler(
@@ -63,12 +71,14 @@ public class PipelineScheduler {
             PipelineClaimer claimer,
             @Qualifier("pipelineWorkerPool") ExecutorService pool,
             ExecutionSettings settings,
-            @Value("${pipeline.execution.scheduler-initial-delay:PT5S}") Duration initialDelay) {
+            @Value("${pipeline.execution.scheduler-initial-delay:PT5S}") Duration initialDelay,
+            Clock clock) {
         this.worker = worker;
         this.claimer = claimer;
         this.pool = pool;
         this.settings = settings;
         this.initialDelay = initialDelay;
+        this.clock = clock;
         this.idleBackoff = settings.backoffBase();
         this.scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "pipeline-scheduler");
@@ -103,6 +113,9 @@ public class PipelineScheduler {
         } finally {
             if (!interrupted) {
                 Duration delay = nextDelay(workFound);
+                if (!workFound) {
+                    delay = capToNearestDue(delay, claimer.nearestClaimableDueAt(), clock.instant());
+                }
                 scheduler.schedule(this::runSweep, delay.toMillis(), TimeUnit.MILLISECONDS);
             }
         }
@@ -210,5 +223,19 @@ public class PipelineScheduler {
         long baseMillis = duration.toMillis();
         long jitteredMillis = Math.max(1L, Math.round(baseMillis * (1.0 + jitterFraction)));
         return Duration.ofMillis(jitteredMillis);
+    }
+
+    /**
+     * ADR-021 §280 nextDueAt-인식 유휴 슬립 단축 헬퍼이다. 순수 함수(pure)이므로 단위 테스트에서
+     * 직접 호출할 수 있다.
+     *
+     * <p>{@code nearestDueAt}이 비어 있거나 이미 만료된({@code now} 이전) 경우에는 {@code delay}를
+     * 그대로 반환한다. {@code nearestDueAt}이 {@code now} 이후이면 {@code delay}와
+     * {@code nearestDueAt − now} 중 작은 값을 반환한다.
+     */
+    Duration capToNearestDue(Duration delay, Optional<Instant> nearestDueAt, Instant now) {
+        if (nearestDueAt.isEmpty() || !nearestDueAt.get().isAfter(now)) return delay;
+        Duration untilDue = Duration.between(now, nearestDueAt.get());
+        return delay.compareTo(untilDue) <= 0 ? delay : untilDue;
     }
 }

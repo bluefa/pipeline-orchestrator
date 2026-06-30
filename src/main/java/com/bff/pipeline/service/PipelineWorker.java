@@ -71,11 +71,7 @@ public class PipelineWorker {
             reporter.report(claim.pipelineId(), claim.token(), null);
             return;
         }
-        if (context.cancelRequested()) {
-            reporter.reportCancel(claim.pipelineId(), claim.token());
-            return;
-        }
-        if (context.currentTask() == null) {
+        if (context.cancelRequested() || context.currentTask() == null) {
             reporter.report(claim.pipelineId(), claim.token(), null);
             return;
         }

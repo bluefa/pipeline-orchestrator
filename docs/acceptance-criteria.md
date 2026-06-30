@@ -20,8 +20,8 @@ documented).
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
 | A1 | Progress lives only in DB rows; each claim-pull cycle re-reads the rows and resumes — no in-memory authority | `StepReporter.report` re-reads the pipeline row under `FOR UPDATE` and the task chain on every tx2; `PipelineWorker.loadStepContext` re-reads on every `pollOnce` call | ✅ |
-| A2 | A restart re-polls an IN_PROGRESS terraform job by its stored `job_id` (crash recovery) | `PipelineEngineTest.crashResumeRePollsAnInProgressTerraformJobByItsStoredJobId` | ✅ |
-| A3 | A committed tx2 (report) is visible to a fresh read (own transaction) | `PipelineEngineTransactionTest.advanceCommitsInItsOwnTransactionVisibleToAFreshRead` (uses `worker.pollOnce()`) | ✅ |
+| A2 | A restart re-polls an IN_PROGRESS terraform job by its stored `job_id` (crash recovery) | `PipelineWorkerTest.crashResumeRePollsAnInProgressTerraformJobByItsStoredJobId` | ✅ |
+| A3 | A committed tx2 (report) is visible to a fresh read (own transaction) | `PipelineWorkerTransactionTest.advanceCommitsInItsOwnTransactionVisibleToAFreshRead` (uses `worker.pollOnce()`) | ✅ |
 
 ## B. Decision 2 — two domain tables, a small durable state machine
 
@@ -29,7 +29,7 @@ documented).
 |---|---|---|---|
 | B1 | Task lifecycle is BLOCKED→READY→IN_PROGRESS→DONE\|FAILED\|CANCELLED | `TaskStatus`; `TaskMachine.applyOutcome` (driven by `StepRunner.runStep` phase A) | ✅ |
 | B2 | Pipeline lifecycle is RUNNING→DONE\|FAILED\|CANCELLED | `PipelineStatus`, `StepReporter.converge` | ✅ |
-| B3 | First task starts READY; the rest start BLOCKED and flip to READY when the predecessor is DONE | `PipelineInserter.insert` + `PipelineEngineTest.anInstallRunsBothTasksThroughBlockedAndUnblockToDone` | ✅ |
+| B3 | First task starts READY; the rest start BLOCKED and flip to READY when the predecessor is DONE | `PipelineInserter.insert` + `PipelineWorkerTest.anInstallRunsBothTasksThroughBlockedAndUnblockToDone` | ✅ |
 | B4 | The current task is the lowest-sequence non-terminal task | `StepReporter.currentTask` (private) / `PipelineWorker.loadStepContext` | ✅ |
 | B5 | Pipeline status is a stored projection, written in the same tx as the task transition that changes it | `StepReporter.converge`/`terminalize` (tx2, dirty-check on the FOR-UPDATE-locked managed entity — no CAS) | ✅ |
 | B6 | Five core enums + a closed `TaskOperation` (a task's type selects the executor, operation the action) | `entity/*` enums; the type is resolved by name (no `switch` on kind) | ✅ |
@@ -66,10 +66,10 @@ documented).
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
-| F1 | `fail_count` per task; below `maxFailCount` → fresh re-run, at/above → FAILED | `TaskMachine.retryOrFail` + `PipelineEngineTest.terraformJobFailureRetriesThenFailsAtMaxAndFailsThePipeline` | ✅ |
-| F2 | Per-call timeout → `CALL_TIMEOUT` (`TimeBoundedInfraManagerClient` raises `CallTimeoutException`; `StepRunner.runStep` translates it to `StepOutcome.callTimeout`; `TaskMachine.applyOutcome` applies `CALL_TIMEOUT` in tx2) | `PipelineEngineTest.aCallTimeoutFromTheInfraManagerClientIsCallTimeoutAndRetries` | ✅ |
-| F3 | Per-task `executionTimeout` (TF) → `EXECUTION_TIMEOUT` | `PipelineEngineTest.terraformJobRunningPastExecutionTimeoutFailsWithExecutionTimeout` | ✅ |
-| F4 | Per-task `timeToLive` (condition) → `TIME_TO_LIVE_EXPIRED` (no retry) | `PipelineEngineTest.conditionPastTimeToLiveExpiresToFailedWithTimeToLiveExpired` | ✅ |
+| F1 | `fail_count` per task; below `maxFailCount` → fresh re-run, at/above → FAILED | `TaskMachine.retryOrFail` + `PipelineWorkerTest.terraformJobFailureRetriesThenFailsAtMaxAndFailsThePipeline` | ✅ |
+| F2 | Per-call timeout → `CALL_TIMEOUT` (`TimeBoundedInfraManagerClient` raises `CallTimeoutException`; `StepRunner.runStep` translates it to `StepOutcome.callTimeout`; `TaskMachine.applyOutcome` applies `CALL_TIMEOUT` in tx2) | `PipelineWorkerTest.aCallTimeoutFromTheInfraManagerClientIsCallTimeoutAndRetries` | ✅ |
+| F3 | Per-task `executionTimeout` (TF) → `EXECUTION_TIMEOUT` | `PipelineWorkerTest.terraformJobRunningPastExecutionTimeoutFailsWithExecutionTimeout` | ✅ |
+| F4 | Per-task `timeToLive` (condition) → `TIME_TO_LIVE_EXPIRED` (no retry) | `PipelineWorkerTest.conditionPastTimeToLiveExpiresToFailedWithTimeToLiveExpired` | ✅ |
 | F5 | Both deadlines map to canonical `ErrorCode` values, not separate states | `ErrorCode`; no extra `TaskStatus` | ✅ |
 
 ## G. Decision 7 — minimal lifecycle
@@ -80,9 +80,9 @@ documented).
 | G2 | Retry is a fresh run (no terminal resurrection) | `TaskMachine.retryOrFail` resets to READY | ✅ |
 | G3 | Cancel converges directly to CANCELLED (no CANCELLING) and terminalizes every non-terminal task | `PipelineControl.cancel` + `PipelineControlTest` | ✅ |
 | G4 | Cancel is a RUNNING-guarded transition — it can never resurrect a pipeline a converge already terminalized | `PipelineControl.cancel`: Case A uses `cancelIfIdle` (RUNNING + idle guard, 0-row = no-op); Case B `requestCancel` also RUNNING-guarded | ✅ |
-| G5 | A FAILED pipeline marks the failing task FAILED and CANCELS the rest | `TaskCanceller.cancelNonTerminal` called from `StepReporter.converge` + `PipelineEngineTest.aFailedPipelineCancelsItsRemainingBlockedTasks` | ✅ |
+| G5 | A FAILED pipeline marks the failing task FAILED and CANCELS the rest | `TaskCanceller.cancelNonTerminal` called from `StepReporter.converge` + `PipelineWorkerTest.aFailedPipelineCancelsItsRemainingBlockedTasks` | ✅ |
 | G6 | A terminal state is never resurrected | ownership-guarded write-back (tx2 `findByIdForUpdate` + Java `claimToken.equals(pipeline.getClaimedBy())` no-op guard); cancel Case A/B both RUNNING-guarded; `Task.@Version` as backstop | ✅ |
-| G7 | A task whose stored `taskName` resolves to no `TaskType` fails with `UNKNOWN_TASK` (a value, no NPE) | `TaskMachine` resolve→`fail(UNKNOWN_TASK)` + `PipelineEngineTest.aTaskWhoseStoredNameHasNoRegisteredTypeFailsAsUnknownTask` | ✅ |
+| G7 | A task whose stored `taskName` resolves to no `TaskType` fails with `UNKNOWN_TASK` (a value, no NPE) | `TaskMachine` resolve→`fail(UNKNOWN_TASK)` + `PipelineWorkerTest.aTaskWhoseStoredNameHasNoRegisteredTypeFailsAsUnknownTask` | ✅ |
 
 ## H. Schema & persistence (JPA-generated, MySQL)
 
@@ -91,7 +91,7 @@ documented).
 | H1 | Tables, indexes, unique constraints are generated from JPA annotations — no Flyway / hand-written SQL | `@Table`/`@Index`/`@UniqueConstraint`; Hibernate DDL log | ✅ |
 | H2 | MySQL target; tests run on H2 MySQL-mode without Docker | `application.yml` (MySQL) + test `application.yml` (H2 `MODE=MySQL`) | ✅ |
 | H3 | "One active per target" works on MySQL despite no partial unique index (nullable `active_target` + unique; multiple NULLs allowed) | `Pipeline.activeTarget`; uniqueness tests | ✅ |
-| H4 | The cancel-vs-worker race cannot resurrect a terminal state | claim fencing (ownership-guarded tx2 write-back + cancel Case A/B) is the primary guard; `Task.@Version` is a backstop; `PipelineEngineTransactionTest.aCancelThatCommitsDuringTheInfraManagerClientCallDoesNotClobberCancelled` proves the Case B cooperative cancel path | ✅ |
+| H4 | The cancel-vs-worker race cannot resurrect a terminal state | claim fencing (ownership-guarded tx2 write-back + cancel Case A/B) is the primary guard; `Task.@Version` is a backstop; `PipelineWorkerTransactionTest.aCancelThatCommitsDuringTheInfraManagerClientCallDoesNotClobberCancelled` proves the Case B cooperative cancel path | ✅ |
 | H5 | Indexes are JPA-declared and cover the actual queries; no orphan index (the status-scan index was dropped with the reconciler scan) | unique constraints `uq_task_pipeline_sequence`/`uq_task_attempt`/`uq_task_check_attempt`/`uq_pipeline_active_target` back uniqueness queries; non-unique indexes `idx_pipeline_claim (status, next_due_at)` (claim scan), `idx_pipeline_claimed_until (claimed_until)` (admission gate), and `idx_task_name_status (task_name, status)` (TF slot gate) cover the execution queries | ✅ |
 
 ## I. Exception strategy (external vs business)
@@ -99,11 +99,11 @@ documented).
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
 | I1 | Business failures are `ErrorCode` values on the row, never thrown | `TaskMachine.fail`/`retryOrFail` | ✅ |
-| I2 | External-call failures are exceptions caught at exactly one boundary and translated to a `StepOutcome` → `ErrorCode` | `StepRunner.runStep` (wrapping execute/check/postCheck) + `PipelineEngineTest.aThrowingDispatchIsTreatedAsCheckErrorAndRetriedThenFailed` (+ the CALL_TIMEOUT and postCheck tests) | ✅ |
+| I2 | External-call failures are exceptions caught at exactly one boundary and translated to a `StepOutcome` → `ErrorCode` | `StepRunner.runStep` (wrapping execute/check/postCheck) + `PipelineWorkerTest.aThrowingDispatchIsTreatedAsCheckErrorAndRetriedThenFailed` (+ the CALL_TIMEOUT and postCheck tests) | ✅ |
 | I3 | Interruption is a fail-fast runtime signal, NOT mapped to a business `ErrorCode` | `InfraManagerClient.CallInterruptedException`; `StepRunner.runStep` catches only `CallTimeout`/`CallFailed`, so an interrupt is **not caught** — it propagates out of `StepRunner.runStep` and is absorbed by `PipelineScheduler.drain`'s per-pipeline shutdown check (restores interrupt, aborts sweep) | ✅ |
 | I4 | The duplicate-create catch is targeted (constraint-checked) and rethrows other violations | see D3 | ✅ |
 | I5 | Strategy is documented | `docs/exception-strategy.md` | ✅ |
-| I6 | A null/blank job id or null poll from the boundary is guarded → `CHECK_ERROR` retry, never an NPE or a persisted null handle | `TerraformTask` guards + `PipelineEngineTest.aDispatchReturningNoJobIdIsTreatedAsCheckErrorAndRetried` | ✅ |
+| I6 | A null/blank job id or null poll from the boundary is guarded → `CHECK_ERROR` retry, never an NPE or a persisted null handle | `TerraformTask` guards + `PipelineWorkerTest.aDispatchReturningNoJobIdIsTreatedAsCheckErrorAndRetried` | ✅ |
 
 ## J. Code quality (spring-java21 skill §6) & extensibility
 
@@ -122,12 +122,12 @@ documented).
 | K1 | tx1 claim stamps a fresh per-claim UUID fencing token + lease, and blocks a second concurrent claim | `PipelineClaimer.claimOneDue` mints `UUID.randomUUID()` + sets `claimed_by`/`claimed_until`; `PipelineExecutionTest.claimStampsAFreshFencingTokenAndLeaseAndBlocksASecondClaim` | ✅ |
 | K2 | Crash recovery: an expired lease is reclaimed with a different fencing token | `PipelineExecutionTest.anExpiredLeaseIsReclaimedWithADifferentFencingToken` | ✅ |
 | K3 | No stale clobber: a stale claim token cannot overwrite state after reclaim | `PipelineExecutionTest.aStaleClaimTokenCannotClobberStateAfterReclaim` | ✅ |
-| K4 | Two-transaction split: external call runs outside any transaction (between tx1 and tx2) | `StepRunner` has no `@Transactional`; `PipelineWorker.process` ordering (claim → runStep → report); `PipelineEngineTransactionTest` (real-tx proof via `advanceCommitsInItsOwnTransactionVisibleToAFreshRead`) | ✅ |
+| K4 | Two-transaction split: external call runs outside any transaction (between tx1 and tx2) | `StepRunner` has no `@Transactional`; `PipelineWorker.process` ordering (claim → runStep → report); `PipelineWorkerTransactionTest` (real-tx proof via `advanceCommitsInItsOwnTransactionVisibleToAFreshRead`) | ✅ |
 | K5 | Cancel Case A (idle pipeline): API path terminates immediately and clears the claim | `PipelineExecutionTest.cancelCaseAIdleTerminatesImmediatelyAndClearsTheClaim` | ✅ |
 | K6 | Cancel Case B (live lease): API raises flag; claim-holder terminalizes under the row lock | `PipelineExecutionTest.cancelCaseBLiveLeaseRaisesTheFlagAndTheClaimHolderTerminalizesUnderTheLock` | ✅ |
 | K7 | Soft admission cap blocks a second concurrent claim when `runningPipelineCap` is reached | `PipelineSoftCapTest.theAdmissionCapBlocksASecondConcurrentClaim` | ✅ |
 | K8 | TF slot gate reschedules and releases the claim when no slot is free | `PipelineSoftCapTest.theTerraformSlotGateReschedulesAndReleasesTheClaimWhenNoSlotIsFree` | ✅ |
-| K9 | Per-call timeout is owned by `TimeBoundedInfraManagerClient` decorator (`@Primary`) | `client/TimeBoundedInfraManagerClient.java`; `TimeoutException → CallTimeoutException`; `PipelineEngineTest.aCallTimeoutFromTheInfraManagerClientIsCallTimeoutAndRetries` | ✅ |
+| K9 | Per-call timeout is owned by `TimeBoundedInfraManagerClient` decorator (`@Primary`) | `client/TimeBoundedInfraManagerClient.java`; `TimeoutException → CallTimeoutException`; `PipelineWorkerTest.aCallTimeoutFromTheInfraManagerClientIsCallTimeoutAndRetries` | ✅ |
 | K10 | Per-pipeline isolation: a single-pipeline failure does not abort the sweep | `PipelineScheduler.drain` per-pipeline `catch (RuntimeException)` logs + skips; `CallInterruptedException` aborts the sweep | ✅ |
 
 ## Deferred / accepted limitations (📦)
@@ -142,7 +142,7 @@ documented).
 - **State-machine tests suppress the `@DataJpaTest` test transaction** with
   `@Transactional(propagation = NOT_SUPPORTED)` so each `worker.pollOnce()` call commits tx1 and tx2
   independently (like production); the real commit-boundary and cancel-race behavior is additionally
-  proven in `PipelineEngineTransactionTest` (`@SpringBootTest`, real threads/latches). 📦
+  proven in `PipelineWorkerTransactionTest` (`@SpringBootTest`, real threads/latches). 📦
 - **Concurrent duplicate-create race** is verified sequentially (H2); the true row-level INSERT race
   is a MySQL/CI concern (the constraint itself is enforced by H2). 📦
 - **HTTP InfraManager adapter** and the response-code/summary observation fields are out of v1 scope

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.ExecutionSettings;
 import com.bff.pipeline.client.InfraManagerClient;
+import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -90,7 +91,8 @@ class PipelineSchedulerDrainTest {
             }
         };
 
-        scheduler = new PipelineScheduler(fakeWorker, fakeClaimer, null, SETTINGS, Duration.ofHours(1));
+        scheduler = new PipelineScheduler(fakeWorker, fakeClaimer, null, SETTINGS, Duration.ofHours(1),
+                Clock.systemUTC());
         boolean found = scheduler.drain();
 
         assertThat(found).isTrue();
@@ -118,7 +120,8 @@ class PipelineSchedulerDrainTest {
             }
         };
 
-        scheduler = new PipelineScheduler(null, fakeClaimer, null, SETTINGS, Duration.ofHours(1));
+        scheduler = new PipelineScheduler(null, fakeClaimer, null, SETTINGS, Duration.ofHours(1),
+                Clock.systemUTC());
         boolean found = scheduler.drain();
 
         assertThat(found).isFalse();
@@ -153,7 +156,8 @@ class PipelineSchedulerDrainTest {
         };
 
         pool = Executors.newFixedThreadPool(1);
-        scheduler = new PipelineScheduler(fakeWorker, fakeClaimer, pool, SETTINGS, Duration.ofHours(1));
+        scheduler = new PipelineScheduler(fakeWorker, fakeClaimer, pool, SETTINGS, Duration.ofHours(1),
+                Clock.systemUTC());
 
         assertThatThrownBy(() -> scheduler.sweepOnce())
                 .isInstanceOf(InterruptedException.class);

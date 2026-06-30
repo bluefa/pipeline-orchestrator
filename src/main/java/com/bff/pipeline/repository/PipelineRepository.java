@@ -37,6 +37,10 @@ import org.springframework.data.repository.query.Param;
  * {@code nextDueAt}을 현재 시각으로 당겨 워커가 즉시 플래그를 인식하도록 한다(ADR-021 Decision 6, Case B).
  * {@code countByClaimedUntilAfter}는 어드미션 소프트 게이트(runningPipelineCap)를 위해 현재 활성 클레임
  * (리스 미만료) 수를 반환한다(ADR-021 Decision 7).
+ * {@code findNearestClaimableDueAt}은 ADR-021 §280 DB-폴링 부하 제어를 위해 RUNNING 상태이고
+ * 클레임이 없거나 리스가 만료된 파이프라인 중 가장 이른 {@code nextDueAt}을 반환한다. 결과가 없으면
+ * 빈 Optional을 반환한다. 스케줄러가 유휴 슬립을 이 값으로 단축(cap)하여 과도한 폴링 없이
+ * due 파이프라인이 생기는 즉시 깨어날 수 있도록 한다({@code idx_pipeline_claim} 인덱스 활용).
  */
 public interface PipelineRepository extends JpaRepository<Pipeline, Long> {
 
@@ -66,4 +70,8 @@ public interface PipelineRepository extends JpaRepository<Pipeline, Long> {
     int requestCancel(@Param("id") Long id, @Param("now") Instant now);
 
     int countByClaimedUntilAfter(Instant now);
+
+    @Query("select min(p.nextDueAt) from Pipeline p where p.status = com.bff.pipeline.enums.PipelineStatus.RUNNING "
+            + "and (p.claimedUntil is null or p.claimedUntil < :now)")
+    Optional<Instant> findNearestClaimableDueAt(@Param("now") Instant now);
 }

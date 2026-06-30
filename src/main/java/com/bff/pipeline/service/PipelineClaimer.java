@@ -34,6 +34,11 @@ public class PipelineClaimer {
         this.clock = clock;
     }
 
+    @Transactional(readOnly = true)
+    public Optional<Instant> nearestClaimableDueAt() {
+        return pipelines.findNearestClaimableDueAt(clock.instant());
+    }
+
     @Transactional
     public Optional<Claim> claimOneDue() {
         Instant now = clock.instant();

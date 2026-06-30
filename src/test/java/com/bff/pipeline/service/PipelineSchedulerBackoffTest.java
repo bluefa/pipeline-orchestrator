@@ -3,7 +3,11 @@ package com.bff.pipeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.bff.pipeline.ExecutionSettings;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -42,7 +46,8 @@ class PipelineSchedulerBackoffTest {
                 .jitterRatio(JITTER_RATIO)
                 .build();
         // null worker, claimer, and pool are safe here: start() is never called, so no tasks are submitted.
-        return new PipelineScheduler(null, null, null, settings, Duration.ofHours(1));
+        return new PipelineScheduler(null, null, null, settings, Duration.ofHours(1),
+                Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
     }
 
     @Test
@@ -102,6 +107,26 @@ class PipelineSchedulerBackoffTest {
                     .as("applyJitter result must be within ±jitterRatio (iteration %d)", iteration)
                     .isBetween(lowerBound, upperBound);
         }
+    }
+
+    @Test
+    void idleSleepIsCappedToTheNearestDuePipelineTime() {
+        Instant now = Instant.EPOCH;
+
+        // delay 5s, nearestDueAt = now + 1s → result is 1s (capped to the nearer due time)
+        Duration fiveSeconds = Duration.ofSeconds(5);
+        Instant dueInOneSecond = now.plusSeconds(1);
+        Duration capped = scheduler.capToNearestDue(fiveSeconds, Optional.of(dueInOneSecond), now);
+        assertThat(capped).isEqualTo(Duration.ofSeconds(1));
+
+        // nearestDueAt empty → delay unchanged
+        Duration unchanged = scheduler.capToNearestDue(fiveSeconds, Optional.empty(), now);
+        assertThat(unchanged).isEqualTo(fiveSeconds);
+
+        // nearestDueAt = now + 10s (farther than delay 5s) → delay unchanged
+        Instant dueInTenSeconds = now.plusSeconds(10);
+        Duration notCapped = scheduler.capToNearestDue(fiveSeconds, Optional.of(dueInTenSeconds), now);
+        assertThat(notCapped).isEqualTo(fiveSeconds);
     }
 
     private static void assertWithinJitter(Duration actual, long baseMillis) {

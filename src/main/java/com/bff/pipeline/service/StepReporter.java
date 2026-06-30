@@ -69,13 +69,6 @@ public class StepReporter {
     }
 
     @Transactional
-    public void reportCancel(long pipelineId, String claimToken) {
-        Pipeline pipeline = pipelines.findByIdForUpdate(pipelineId).orElse(null);
-        if (pipeline == null || !ownsLiveClaim(pipeline, claimToken)) return;
-        cancel(pipeline, tasks.findByPipelineIdOrderBySequenceAsc(pipelineId));
-    }
-
-    @Transactional
     public void reschedule(long pipelineId, String claimToken, Duration delay) {
         Pipeline pipeline = pipelines.findByIdForUpdate(pipelineId).orElse(null);
         if (pipeline == null || !ownsLiveClaim(pipeline, claimToken)) return;
