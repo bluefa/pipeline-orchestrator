@@ -50,6 +50,9 @@ Java 21 / MySQL.
    Javadoc on each major component's class declaration so its behavior and invariants are clear from the
    header alone. Identifiers and code stay in English; only the prose comments are Korean.
 8. **Surgical changes.** Touch only what the task needs; match the surrounding style.
+9. **Work in a task worktree.** Implementation work starts in a dedicated git worktree/branch, then all
+   edits stay there. If you are already in a task-specific worktree, continue there instead of nesting a
+   second worktree. Codex agents should use `.codex/skills/worktree/SKILL.md` for the setup workflow.
 
 ## Verify before finishing
 
