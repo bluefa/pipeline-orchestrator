@@ -20,7 +20,7 @@ Two sub-cases:
 - **A new *kind* of task** — implement the **`TaskType`** interface
   (`taskName()` / `execute(target, task)` / `check(target, task) → TaskProgress`) as a `@Component` in
   `service/task/type/`. It **registers itself** in `TaskTypeRegistry` (built from the injected `List<TaskType>`),
-  so there is **no enum to extend and no `switch` to edit** — `TaskMachine` resolves the row's
+  so there is **no enum to extend and no `switch` to edit** — `TaskStateMachine` resolves the row's
   `taskName` to its type generically. Reference the new type's `taskName` from a recipe step. Its
   failure modes are new `ErrorCode` values returned as `TaskProgress.failed(reason, retryable)` and
   handled exactly like the existing ones (see [exception-strategy.md](exception-strategy.md)).
@@ -45,7 +45,7 @@ infrastructure actually answers). The lifecycle is: **`execute` → `check` → 
   after the `TERRAFORM_JOB` step in the recipe. The `INSTALL` recipe already does exactly this
   (`apply-network` then `network-ready`). No new mechanism is needed for this common case.
 - **If the check must be bound to the task itself** (one row, "done *and* verified"), override
-  `TaskType.postCheck(target, task)`. This default-no-op method is already wired into `TaskMachine`:
+  `TaskType.postCheck(target, task)`. This default-no-op method is already wired into `TaskStateMachine`:
   when `check` returns `Succeeded`, the engine calls `postCheck` and acts on its `TaskProgress` result
   before marking the task DONE. A `Succeeded` result completes the task; `Pending` reschedules it
   (identical to a poll reschedule); `Failed` retries or fails the task (same failure model as `check`).
@@ -60,7 +60,7 @@ downstream consumers with the same delivery guarantee as the state change.
 
 - **The seam is the single per-pipeline transaction.** Every terminal/transition write already happens
   in one transaction: `PipelineEngine.converge` (via the guarded `finish()` CAS),
-  `PipelineControl.cancel`, and the `TaskMachine` transitions (all in `service/`). An outbox row is
+  `PipelineControl.cancel`, and the `TaskStateMachine` transitions (all in `service/`). An outbox row is
   inserted **in that same transaction**, so the event is committed atomically with the state it
   describes — no dual-write gap.
 - **What it adds:** a `pipeline_event` table (append-only) and a separate relay/poller that ships
@@ -90,6 +90,6 @@ or genuine multi-implementation polymorphism. Exactly two qualify:
   test (fake) implementation.
 - **`TaskType`** (`service/`) — a genuine strategy with two real implementations today
   (`TerraformTask`, `ConditionCheckTask`) and an open set tomorrow, resolved by name through a registry.
-  A `switch` on a closed `kind` enum would force every new task type to edit `TaskMachine`; the
+  A `switch` on a closed `kind` enum would force every new task type to edit `TaskStateMachine`; the
   interface + registry makes a new type an additive, self-registering file. A single-implementation
   interface would *not* earn its place — these two do.

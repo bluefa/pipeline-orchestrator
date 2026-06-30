@@ -55,20 +55,20 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
-public class TaskMachine {
+public class TaskStateMachine {
 
-    private final TaskTypeRegistry taskTypes;
-    private final TaskRepository tasks;
-    private final Observations observations;
-    private final PipelineSettings settings;
+    private final TaskTypeRegistry taskTypeRegistry;
+    private final TaskRepository taskRepository;
+    private final TaskAuditWriter taskAuditWriter;
+    private final PipelineSettings pipelineSettings;
     private final Clock clock;
 
-    public TaskMachine(TaskTypeRegistry taskTypes, TaskRepository tasks, Observations observations,
-            PipelineSettings settings, Clock clock) {
-        this.taskTypes = taskTypes;
-        this.tasks = tasks;
-        this.observations = observations;
-        this.settings = settings;
+    public TaskStateMachine(TaskTypeRegistry taskTypeRegistry, TaskRepository taskRepository, TaskAuditWriter taskAuditWriter,
+            PipelineSettings pipelineSettings, Clock clock) {
+        this.taskTypeRegistry = taskTypeRegistry;
+        this.taskRepository = taskRepository;
+        this.taskAuditWriter = taskAuditWriter;
+        this.pipelineSettings = pipelineSettings;
         this.clock = clock;
     }
 
@@ -84,13 +84,13 @@ public class TaskMachine {
     private void unblock(Task task) {
         task.setStatus(TaskStatus.READY);
         task.setReadyAt(clock.instant());
-        tasks.save(task);
+        taskRepository.save(task);
     }
 
     private void dispatch(String target, Task task) {
         TaskType type = typeOrFail(task);
         if (type == null) return;
-        observations.beginAttempt(task);
+        taskAuditWriter.beginAttempt(task);
         runExternalCall(task, () -> { type.execute(target, task); return TaskProgress.SUCCEEDED; }, false)
                 .ifPresent(ignored -> markInProgress(task));
     }
@@ -124,8 +124,8 @@ public class TaskMachine {
     }
 
     private void recordPendingAndReschedule(Task task, TaskProgress.Pending pending) {
-        observations.recordCheck(task, pending.observed());
-        reschedule(task, TaskSettings.resolvePollingInterval(task, settings));
+        taskAuditWriter.recordCheck(task, pending.observed());
+        reschedule(task, TaskSettings.resolvePollingInterval(task, pipelineSettings));
     }
 
     private void applyFailure(Task task, TaskProgress.Failed failed) {
@@ -138,7 +138,7 @@ public class TaskMachine {
     }
 
     private TaskType typeOrFail(Task task) {
-        TaskType type = taskTypes.find(task.getTaskName()).orElse(null);
+        TaskType type = taskTypeRegistry.find(task.getTaskName()).orElse(null);
         if (type == null) failUnknownTask(task);
         return type;
     }
@@ -148,37 +148,37 @@ public class TaskMachine {
             return Optional.of(call.get());
         } catch (InfraManagerClient.CallTimeoutException exception) {
             log.warn("InfraManager call timed out for task {} ({})", task.getId(), task.getTaskName());
-            if (recordObservation) observations.recordCheck(task, CheckSignal.CALL_TIMEOUT);
+            if (recordObservation) taskAuditWriter.recordCheck(task, CheckSignal.CALL_TIMEOUT);
             retryOrFail(task, ErrorCode.CALL_TIMEOUT);
             return Optional.empty();
         } catch (InfraManagerClient.CallFailedException exception) {
             log.warn("InfraManager call failed for task {} ({}): {}", task.getId(), task.getTaskName(), exception.getMessage());
-            if (recordObservation) observations.recordCheck(task, CheckSignal.API_ERROR);
+            if (recordObservation) taskAuditWriter.recordCheck(task, CheckSignal.API_ERROR);
             retryOrFail(task, ErrorCode.CHECK_ERROR);
             return Optional.empty();
         }
     }
 
     private void failOutright(Task task, ErrorCode reason) {
-        observations.endAttempt(task, TaskStatus.FAILED, reason);
+        taskAuditWriter.endAttempt(task, TaskStatus.FAILED, reason);
         fail(task, reason);
     }
 
     private void markInProgress(Task task) {
         if (task.getJobId() != null) {
-            observations.recordJobId(task, task.getJobId());
+            taskAuditWriter.recordJobId(task, task.getJobId());
         }
         task.setStatus(TaskStatus.IN_PROGRESS);
         Instant now = clock.instant();
         task.setStartedAt(now);
         task.setNextCheckAt(now);
-        tasks.save(task);
+        taskRepository.save(task);
     }
 
     private void retryOrFail(Task task, ErrorCode reason) {
-        observations.endAttempt(task, TaskStatus.FAILED, reason);
+        taskAuditWriter.endAttempt(task, TaskStatus.FAILED, reason);
         task.setFailCount(task.getFailCount() + 1);
-        if (task.getFailCount() >= TaskSettings.resolveMaxFailCount(task, settings)) {
+        if (task.getFailCount() >= TaskSettings.resolveMaxFailCount(task, pipelineSettings)) {
             fail(task, reason);
             return;
         }
@@ -186,25 +186,25 @@ public class TaskMachine {
         task.setReadyAt(clock.instant());
         task.setJobId(null);
         task.setNextCheckAt(null);
-        tasks.save(task);
+        taskRepository.save(task);
     }
 
     private void complete(Task task) {
         task.setStatus(TaskStatus.DONE);
         task.setFinishedAt(clock.instant());
-        tasks.save(task);
-        observations.endAttempt(task, TaskStatus.DONE, null);
+        taskRepository.save(task);
+        taskAuditWriter.endAttempt(task, TaskStatus.DONE, null);
     }
 
     private void fail(Task task, ErrorCode reason) {
         task.setStatus(TaskStatus.FAILED);
         task.setErrorCode(reason);
         task.setFinishedAt(clock.instant());
-        tasks.save(task);
+        taskRepository.save(task);
     }
 
     private void reschedule(Task task, Duration after) {
         task.setNextCheckAt(clock.instant().plus(after));
-        tasks.save(task);
+        taskRepository.save(task);
     }
 }

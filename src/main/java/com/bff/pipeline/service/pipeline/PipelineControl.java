@@ -25,27 +25,27 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class PipelineControl {
 
-    private final PipelineRepository pipelines;
-    private final TaskRepository tasks;
+    private final PipelineRepository pipelineRepository;
+    private final TaskRepository taskRepository;
     private final TaskCanceller taskCanceller;
     private final Clock clock;
 
-    public PipelineControl(PipelineRepository pipelines, TaskRepository tasks, TaskCanceller taskCanceller,
+    public PipelineControl(PipelineRepository pipelineRepository, TaskRepository taskRepository, TaskCanceller taskCanceller,
             Clock clock) {
-        this.pipelines = pipelines;
-        this.tasks = tasks;
+        this.pipelineRepository = pipelineRepository;
+        this.taskRepository = taskRepository;
         this.taskCanceller = taskCanceller;
         this.clock = clock;
     }
 
     @Transactional
     public Pipeline cancel(Long pipelineId) {
-        if (!pipelines.existsById(pipelineId)) {
+        if (!pipelineRepository.existsById(pipelineId)) {
             throw new IllegalArgumentException("no pipeline " + pipelineId);
         }
-        if (pipelines.finish(pipelineId, PipelineStatus.CANCELLED, clock.instant()) != 0) {
-            taskCanceller.cancelNonTerminal(tasks.findByPipelineIdOrderBySequenceAsc(pipelineId));
+        if (pipelineRepository.finish(pipelineId, PipelineStatus.CANCELLED, clock.instant()) != 0) {
+            taskCanceller.cancelNonTerminal(taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId));
         }
-        return pipelines.findById(pipelineId).orElseThrow();
+        return pipelineRepository.findById(pipelineId).orElseThrow();
     }
 }

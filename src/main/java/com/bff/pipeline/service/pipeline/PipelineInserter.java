@@ -28,20 +28,20 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class PipelineInserter {
 
-    private final PipelineRepository pipelines;
-    private final TaskRepository tasks;
+    private final PipelineRepository pipelineRepository;
+    private final TaskRepository taskRepository;
     private final Clock clock;
 
-    public PipelineInserter(PipelineRepository pipelines, TaskRepository tasks, Clock clock) {
-        this.pipelines = pipelines;
-        this.tasks = tasks;
+    public PipelineInserter(PipelineRepository pipelineRepository, TaskRepository taskRepository, Clock clock) {
+        this.pipelineRepository = pipelineRepository;
+        this.taskRepository = taskRepository;
         this.clock = clock;
     }
 
     @Transactional
     public Pipeline insert(String target, PipelineType type) {
         Instant now = clock.instant();
-        Pipeline pipeline = pipelines.saveAndFlush(Pipeline.builder()
+        Pipeline pipeline = pipelineRepository.saveAndFlush(Pipeline.builder()
                 .type(type)
                 .target(target)
                 .status(PipelineStatus.RUNNING)
@@ -49,7 +49,7 @@ public class PipelineInserter {
                 .createdAt(now)
                 .lastActivityAt(now)
                 .build());
-        tasks.saveAll(buildChain(pipeline.getId(), Recipes.forType(type).steps(), now));
+        taskRepository.saveAll(buildChain(pipeline.getId(), Recipes.forType(type).steps(), now));
         return pipeline;
     }
 

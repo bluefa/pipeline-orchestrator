@@ -7,7 +7,7 @@ import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.service.task.TaskCanceller;
-import com.bff.pipeline.service.task.TaskMachine;
+import com.bff.pipeline.service.task.TaskStateMachine;
 import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
@@ -24,7 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 파이프라인을 FAILED로 전환하고 나머지 비종료 태스크들을 CANCEL 처리한다 (ADR-016 §7);
  * 모든 태스크가 DONE이면 파이프라인을 DONE으로 전환한다. 두 경우 모두 RUNNING 상태를 전제로 하는
  * {@code finish()} CAS를 통해 종료되므로, 동시에 실행된 취소 요청이 파이프라인을 이미 CANCELLED로
- * 전환했다면 수렴이 그것을 덮어쓸 수 없다. {@code machine.advance}는 인메모리 체인에서 현재
+ * 전환했다면 수렴이 그것을 덮어쓸 수 없다. {@code taskStateMachine.advance}는 인메모리 체인에서 현재
  * 관리 태스크를 직접 변경하므로 수렴 단계는 DB를 재조회하지 않고도 새 상태를 읽을 수 있다;
  * {@code finish()}의 flush가 그 변경을 영구적으로 반영한다.
  *
@@ -42,29 +42,29 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class PipelineEngine {
 
-    private final PipelineRepository pipelines;
-    private final TaskRepository tasks;
-    private final TaskMachine machine;
+    private final PipelineRepository pipelineRepository;
+    private final TaskRepository taskRepository;
+    private final TaskStateMachine taskStateMachine;
     private final TaskCanceller taskCanceller;
     private final Clock clock;
 
-    public PipelineEngine(PipelineRepository pipelines, TaskRepository tasks, TaskMachine machine,
+    public PipelineEngine(PipelineRepository pipelineRepository, TaskRepository taskRepository, TaskStateMachine taskStateMachine,
             TaskCanceller taskCanceller, Clock clock) {
-        this.pipelines = pipelines;
-        this.tasks = tasks;
-        this.machine = machine;
+        this.pipelineRepository = pipelineRepository;
+        this.taskRepository = taskRepository;
+        this.taskStateMachine = taskStateMachine;
         this.taskCanceller = taskCanceller;
         this.clock = clock;
     }
 
     @Transactional
     public void advance(Long pipelineId) {
-        Pipeline pipeline = pipelines.findById(pipelineId)
+        Pipeline pipeline = pipelineRepository.findById(pipelineId)
                 .orElseThrow(() -> new IllegalArgumentException("no pipeline " + pipelineId));
         if (pipeline.getStatus().isTerminal()) { return; }
-        List<Task> chain = tasks.findByPipelineIdOrderBySequenceAsc(pipelineId);
+        List<Task> chain = taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId);
         Optional<Task> current = currentTask(chain);
-        current.filter(this::isDue).ifPresent(task -> machine.advance(pipeline.getTarget(), task));
+        current.filter(this::isDue).ifPresent(task -> taskStateMachine.advance(pipeline.getTarget(), task));
         converge(pipelineId, chain);
     }
 
@@ -79,9 +79,9 @@ public class PipelineEngine {
     private void converge(Long pipelineId, List<Task> chain) {
         if (chain.stream().anyMatch(task -> task.getStatus() == TaskStatus.FAILED)) {
             taskCanceller.cancelNonTerminal(chain);
-            pipelines.finish(pipelineId, PipelineStatus.FAILED, clock.instant());
+            pipelineRepository.finish(pipelineId, PipelineStatus.FAILED, clock.instant());
         } else if (chain.stream().allMatch(task -> task.getStatus() == TaskStatus.DONE)) {
-            pipelines.finish(pipelineId, PipelineStatus.DONE, clock.instant());
+            pipelineRepository.finish(pipelineId, PipelineStatus.DONE, clock.instant());
         }
     }
 }

@@ -42,7 +42,7 @@ com.bff.pipeline
 ├── recipe/      Code-default recipes (Recipes — a static definition, not a bean)
 ├── service/     @Component/@Service beans, grouped by feature:
 │   ├── pipeline/  PipelineEngine (advance one step), PipelineControl (cancel), PipelineCreator, PipelineInserter
-│   ├── task/      TaskMachine, TaskCanceller, TaskTypeRegistry, Observations
+│   ├── task/      TaskStateMachine, TaskCanceller, TaskTypeRegistry, TaskAuditWriter
 │   └── task/type/ TaskType SPI + its implementations (TerraformTask, ConditionCheckTask)
 ├── client/      InfraManager boundary (InfraManagerClient) + its exception contract
 ├── repository/  Spring Data repositories (guarded-CAS transitions)
@@ -52,7 +52,7 @@ com.bff.pipeline
 
 Each task's behaviour is a **`TaskType`** (`service/task/type/`): `TerraformTask` and `ConditionCheckTask`
 (same package) implement the `execute` → `check` lifecycle (and may override the default no-op `postCheck`),
-and `TaskMachine` resolves a task row to its type **by name** through `TaskTypeRegistry` — so a new kind of task is a new self-registering implementation, not an edit to a
+and `TaskStateMachine` resolves a task row to its type **by name** through `TaskTypeRegistry` — so a new kind of task is a new self-registering implementation, not an edit to a
 `switch`. An unknown name fails the task with `ErrorCode.UNKNOWN_TASK`.
 
 ## Documentation

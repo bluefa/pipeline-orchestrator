@@ -17,23 +17,23 @@ import org.springframework.stereotype.Component;
 @Component
 public class TaskCanceller {
 
-    private final TaskRepository tasks;
-    private final Observations observations;
+    private final TaskRepository taskRepository;
+    private final TaskAuditWriter taskAuditWriter;
     private final Clock clock;
 
-    public TaskCanceller(TaskRepository tasks, Observations observations, Clock clock) {
-        this.tasks = tasks;
-        this.observations = observations;
+    public TaskCanceller(TaskRepository taskRepository, TaskAuditWriter taskAuditWriter, Clock clock) {
+        this.taskRepository = taskRepository;
+        this.taskAuditWriter = taskAuditWriter;
         this.clock = clock;
     }
 
     public void cancelNonTerminal(List<Task> chain) {
         Instant now = clock.instant();
         chain.stream().filter(task -> !task.getStatus().isTerminal()).forEach(task -> {
-            observations.endAttempt(task, TaskStatus.CANCELLED, null);
+            taskAuditWriter.endAttempt(task, TaskStatus.CANCELLED, null);
             task.setStatus(TaskStatus.CANCELLED);
             task.setFinishedAt(now);
-            tasks.save(task);
+            taskRepository.save(task);
         });
     }
 }
