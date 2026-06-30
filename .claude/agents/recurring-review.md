@@ -35,10 +35,24 @@ flag correct code, and respect `// harness-allow:` annotations.
 5. **index coverage.** Every repository query (derived method or `@Query`) must filter on columns backed
    by a `@UniqueConstraint` or `@Index`. FLAG a finder on an unindexed column when an indexed column
    carries the same invariant (e.g. query `activeTarget` — uniquely indexed — not `target`+`status`).
-6. **no abbreviations.** Every identifier (class, method, field, variable, enum constant) is a full word
-   that reveals its role. FLAG terse abbreviations — `im`, `seq`, `ttl`, `cve`, a catch param `e`, a loop
-   `t` — and suggest the spelled-out name (`infraManager`, `sequence`, `timeToLive`, `constraintViolation`,
-   `exception`, `cause`). Allowed: `id` and the conventional `main(String[] args)`.
+6. **intention-revealing names** (the owner's naming philosophy, demonstrated across the rename history —
+   `ebac21f`, `ce76635`, `82d6ece`, `a2dc0a6`). Every identifier earns its name; the role is clear from
+   the name alone. The grep catches abbreviations; you judge the four halves below and suggest the fix:
+   - **abbreviations** — `im` / `seq` / `ttl` / `cve` / `attemptNo` / a catch param `e` / a loop `t` →
+     `infraManager` / `sequence` / `timeToLive` / `constraintViolation` / `attemptNumber` / `exception` /
+     `cause`. Allowed: `id` and the conventional `main(String[] args)`.
+   - **vague type heads** — a class named for a category, not a role: `TaskMachine` → `TaskStateMachine`
+     (which kind of machine?), `Observations` → `TaskAuditWriter` (a bare plural → who-writes-what). FLAG a
+     head of `Machine` / `Manager` / `Handler` / `Helper` / `Processor` / `Util` / `Info` / `Data`, or a
+     bare plural noun, when a precise role name exists.
+   - **guard not in the name** — a conditional / CAS method names its precondition: `finish` →
+     `finishIfRunning` (the update fires only from RUNNING; 0 rows = no-op). Forms: `…IfRunning`,
+     `…IfAbsent`, `…OrFail`.
+   - **non-type-following injected deps** — a constructor-injected field/param is named after its declared
+     type: `pipelines` → `pipelineRepository`, `machine` → `taskStateMachine`, `observations` →
+     `taskAuditWriter`, `infraManager` → `infraManagerClient`, `settings` → `pipelineSettings`. A collection
+     keeps a descriptive plural (`List<TaskType> taskTypes`); `Clock` stays `clock`.
+   Judge intent — do not flag a name that already reveals its role.
 
 ## Output
 

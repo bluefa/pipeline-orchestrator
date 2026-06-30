@@ -67,6 +67,18 @@ for f in "${files[@]}"; do
     add "targeted-catch" "$f" "$ln" "broad catch → target the cause and rethrow the rest"
   done < <(grep -nE 'catch[[:space:]]*\([[:space:]]*(Exception|Throwable)[[:space:]]' "$f" 2>/dev/null | grep -v harness-allow)
 
+  # no-abbreviation (rule half of intention-revealing-names): a curated blocklist of the abbreviations the
+  # owner has repeatedly expanded. Whole-word, on code lines only (a leading `*` / `//` / `/*` comment line
+  # is skipped); allowed `id` and `main(args)`. The role / guard-in-name / type-following halves are
+  # judgment calls left to the recurring-review AGENT (pattern 6) — a grep cannot decide them without
+  # flagging the existing, correct code.
+  while IFS=: read -r ln _; do
+    add "no-abbreviation" "$f" "$ln" "abbreviated identifier → spell out the role (seq→sequence, ttl→timeToLive, im→infraManager, cve→constraintViolation, impl→implementation)"
+  done < <(grep -nwE '(seq|ttl|cve|im|tmp|cfg|ctx|mgr|svc|idx|impl|repo|cmd|attemptNo|cnt|msg|req|resp|val|arr|elem|attr|prev|curr|dest)' "$f" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*(\*|//|/\*)' | grep -v harness-allow)
+  while IFS=: read -r ln _; do
+    add "no-abbreviation" "$f" "$ln" "abbreviated catch param → name the cause (exception / cause)"
+  done < <(grep -nE 'catch[[:space:]]*\([A-Za-z0-9_.]+[[:space:]]+(e|t|ex|exc)[[:space:]]*\)' "$f" 2>/dev/null | grep -v harness-allow)
+
   # Semantic-area reminder: status transitions and new interfaces need the recurring-review AGENT.
   if grep -qE 'setStatus[[:space:]]*\(|^[[:space:]]*(public|private|protected)?[[:space:]]*interface[[:space:]]' "$f" 2>/dev/null; then
     semantic=1

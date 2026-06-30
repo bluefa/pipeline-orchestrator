@@ -23,6 +23,7 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 | **exhaustive-switch** — closed-enum switches enumerate all cases, no `default` swallow | (1) spring-java21 §1/§6 · (2) R1/R2 `advance()` default arm | rule | `default ->` / `default:` |
 | **trust-boundary-null** — a value crossing a trust boundary (a name/row from the repository, a return from an external API/client) is null-guarded: resolve to a clean failure (`UNKNOWN_TASK`) or translate (`CHECK_ERROR`), never propagate an NPE; registries reject null/blank keys at boot | (1) owner · (2) R5 `TaskTypeRegistry` null/dup + `TerraformTask` null jobId/poll (codex + opus) | agent | a boundary read used without a null check |
 | **index-coverage** — every repository query (derived or `@Query`) filters on columns backed by a `@UniqueConstraint`/`@Index`; prefer querying the indexed column (e.g. `activeTarget`) over an unindexed one (`target`,`status`) | (1) codex R5 · (2) sonnet R5 (unindexed `findFirstByTargetAndStatus`) | agent | a finder on a non-indexed column |
+| **intention-revealing-names** — every identifier reveals its role from the name alone: (a) **no abbreviations** (`ImClient`→`InfraManagerClient`, `seq`→`sequence`, `ttl`→`timeToLive`, `cve`→`constraintViolation`, `attemptNo`→`attemptNumber`, catch `e`→`exception`, `t`→`cause`; allowed `id`/`main(args)`); (b) **name the role, not a vague category** (`TaskMachine`→`TaskStateMachine`, `Observations`→`TaskAuditWriter`; avoid `Manager`/`Handler`/`Helper`/bare plurals); (c) **a conditional method names its guard** (`finish`→`finishIfRunning`); (d) **injected deps are type-following** (`pipelines`→`pipelineRepository`, `machine`→`taskStateMachine`, `observations`→`taskAuditWriter`, `infraManager`→`infraManagerClient`) — a collection keeps a descriptive plural, `Clock` stays `clock` | (1) owner (stated 3×) · (2) commits `ebac21f` (abbrev expand) + `ce76635` (`attemptNo`, `TaskKnobs`→`TaskSettings`) + `82d6ece` (`TaskStateMachine`/`TaskAuditWriter`/type-following) + `a2dc0a6` (`finishIfRunning`) | rule (abbreviation blocklist + catch-param in `recurring-check.sh`) + agent (pattern 6: role / guard / type-following) | an abbreviation, a vague type head, an unguarded conditional name, or a non-type-following dep |
 
 ## Watch-list (1 occurrence — recorded, promote on the next hit)
 
@@ -36,13 +37,24 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 | Derive "done" from the ADR (`docs/acceptance-criteria.md`); don't ask for sign-off | owner | process |
 | Respond to the owner in Korean | owner | process |
 | Prefer `Stream`/`IntStream.range` (enumerate) over a `for` loop where it reads cleanly | owner | agent |
-| Purposeful names; **no abbreviations** in ANY identifier (class, method, field, variable) — reveal the role: `ImClient`→`InfraManagerClient`, `im`→`infraManager`, `seq`→`sequence`, `ttl`→`timeToLive`, `cve`→`constraintViolation`, catch `e`→`exception`. Allowed: `id`, `main(args)` (owner stated 3×) | owner | agent (recurring-review pattern 6) |
 | Layered package convention: `entity / service / client / controller / dto / repository / utils` (entity also holds domain enums; dto holds transport values; app wiring at the root package) — no abbreviated package names like `im` | owner | rule (flag a new top-level pkg outside the set) |
 | REST-layer exception handling lives in `advice/GlobalAdvice` (`@RestControllerAdvice`); domain failures stay values | owner | process |
 | A global catch-all exception handler must **log the cause** (never return a generic body and drop the trace) | sonnet R5 | agent |
 
 ## Changelog
 
+- **Naming-philosophy promotion.** The owner's naming standard — stated 3× and demonstrated across four
+  rename commits (`ebac21f`, `ce76635`, `82d6ece`, `a2dc0a6`) — moves from the watch-list to the promoted
+  **intention-revealing-names**. Four facets: no abbreviations · name the role not a vague category
+  (`TaskMachine`→`TaskStateMachine`, `Observations`→`TaskAuditWriter`) · a conditional method names its
+  guard (`finish`→`finishIfRunning`) · injected deps are type-following (`pipelines`→`pipelineRepository`).
+  Detection: an abbreviation blocklist + catch-param grep in `recurring-check.sh` (rule, verified silent on
+  the current tree); the role / guard / type-following halves are added to recurring-review **pattern 6**
+  (agent). spring-java21 §5.1 and AGENTS rule 6 carry the full philosophy, and `.codex/` mirrors the agent
+  + spring-java21 skill. The base code already conforms (the rename landed via PR #3 — `TaskStateMachine`,
+  `TaskAuditWriter`, `finishIfRunning`, type-following fields); the role / type-following halves stay
+  agent-only (not auto-grep) because they need judgment a grep can't make precisely, so the rule stays
+  silent on the conforming tree and fires only on a regression.
 - **Clean-code & exception campaign (4 rounds, 21 reviews — codex×4 + opus×17).** New recurring rules:
   - **closed-exception-vocabulary / single-translation-boundary** — the external boundary catches only a
     closed exception family (`CallTimeout`/`CallFailed`) in ONE helper (`runExternalCall` over
