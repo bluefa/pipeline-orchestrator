@@ -31,8 +31,8 @@
   - **codex**: CLI가 큰 코드베이스 탐색 시 결론을 못 내는 현상이 있어, `xhigh + inline diff` 방식으로 결론 유도.
     - **R1d**: NO(4×P1) — 유효 2건(next_due_at NOT NULL, TimeBounded @ConditionalOnBean) 반영, 오탐 2건(claimToken/attempt NPE) 근거와 함께 기각(opus가 안전 확인). 방어 가드 1건 추가.
     - **R2**: YES(P2 2건: StepReporter 헤더 token-only, DoD finish() 표현) → 반영.
-    - **R3**: (campaign 종료 시 기재).
-  - **종료 기준 충족**: 코드 P0/P1 0건. 남은 지적은 모두 문서/주석 정합성이며 반영 완료.
+    - **R3**(최종): **No P0/P1, MERGE-READY YES** — 라운드1·2 수정이 모두 올바르게 반영됨을 확인.
+  - **종료 기준 충족**: opus 3라운드·codex 3라운드 모두 MERGE-READY YES로 수렴, 코드 P0/P1 0건.
 
 ## 베이스/토폴로지 (중요)
 
