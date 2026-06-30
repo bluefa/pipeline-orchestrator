@@ -44,9 +44,14 @@ com.bff.pipeline
 ├── entity/      JPA entities (Pipeline, Task, TaskAttempt, TaskCheck)
 ├── enums/       Domain enums (PipelineStatus/Type, TaskStatus/Operation, ErrorCode, CheckSignal)
 ├── dto/         External transport values (TerraformPoll, ErrorResponse)
-├── model/       Domain value/contract types (TaskType, TaskProgress, Recipe)
-├── service/     @Component/@Service beans only: creation, cancel, and the ADR-021 execution loop
-│                (PipelineScheduler → PipelineClaimer/PipelineWorker → StepRunner → StepReporter)
+├── model/       Domain value/contract types (TaskType, TaskProgress, Recipe, StepOutcome)
+├── service/     @Component/@Service beans only, grouped by concern:
+│   ├── execution/  ADR-021 claim-pull runtime: PipelineScheduler, PipelineClaimer,
+│   │               PipelineWorker, StepRunner, StepReporter
+│   ├── lifecycle/  pipeline creation & admin cancel: PipelineCreator, PipelineInserter,
+│   │               PipelineControl, Recipes
+│   └── task/       task transitions/types/observation: TaskStateMachine, TaskTypeRegistry,
+│                   TaskCanceller, ObservationRecorder, ConditionCheckTask, terraform/TerraformTask
 ├── client/      InfraManager boundary (InfraManagerClient) + per-call-timeout decorator
 ├── repository/  Spring Data repositories (guarded-CAS transitions)
 ├── controller/  GlobalAdvice (REST exception handler) — the REST layer added later

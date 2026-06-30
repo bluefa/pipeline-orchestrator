@@ -1,4 +1,4 @@
-package com.bff.pipeline.service.terraform;
+package com.bff.pipeline.service.task.terraform;
 
 import com.bff.pipeline.PipelineSettings;
 import com.bff.pipeline.client.InfraManagerClient;

@@ -1,4 +1,4 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.task;
 
 import com.bff.pipeline.model.TaskType;
 import java.util.HashMap;

@@ -1,10 +1,11 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.lifecycle;
+import com.bff.pipeline.service.task.terraform.TerraformTask;
+import com.bff.pipeline.service.task.ConditionCheckTask;
 
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.model.Recipe;
 import com.bff.pipeline.model.RecipeStep;
-import com.bff.pipeline.service.terraform.TerraformTask;
 import java.util.List;
 import org.springframework.stereotype.Component;
 

@@ -1,4 +1,4 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.execution;
 
 import com.bff.pipeline.ExecutionSettings;
 import com.bff.pipeline.client.InfraManagerClient;

@@ -1,4 +1,6 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.execution;
+import com.bff.pipeline.service.task.terraform.TerraformTask;
+import com.bff.pipeline.service.task.ObservationRecorder;
 
 import com.bff.pipeline.ExecutionSettings;
 import com.bff.pipeline.entity.Pipeline;
@@ -8,7 +10,6 @@ import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.model.StepOutcome;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
-import com.bff.pipeline.service.terraform.TerraformTask;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Component;

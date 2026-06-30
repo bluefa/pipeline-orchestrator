@@ -1,4 +1,6 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.task;
+import com.bff.pipeline.service.lifecycle.PipelineControl;
+import com.bff.pipeline.service.execution.StepReporter;
 
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.TaskStatus;
@@ -27,7 +29,7 @@ public class TaskCanceller {
         this.clock = clock;
     }
 
-    void cancelNonTerminal(List<Task> chain) {
+    public void cancelNonTerminal(List<Task> chain) {
         Instant now = clock.instant();
         chain.stream().filter(task -> !task.getStatus().isTerminal()).forEach(task -> {
             observationRecorder.endAttempt(task, TaskStatus.CANCELLED, null);

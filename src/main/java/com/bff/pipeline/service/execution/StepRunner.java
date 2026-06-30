@@ -1,4 +1,6 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.execution;
+import com.bff.pipeline.service.task.TaskTypeRegistry;
+import com.bff.pipeline.service.task.TaskStateMachine;
 
 import com.bff.pipeline.client.InfraManagerClient;
 import com.bff.pipeline.entity.Task;
