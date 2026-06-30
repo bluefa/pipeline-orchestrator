@@ -137,13 +137,53 @@ class PipelineExecutionTest {
         assertThat(mid.isCancelRequested()).isTrue();
         assertThat(mid.getNextDueAt()).isEqualTo(clock.instant());
         assertThat(tasks.findByPipelineIdOrderBySequenceAsc(p.getId()).get(0).getStatus())
-                .isNotEqualTo(TaskStatus.CANCELLED);
+                .isEqualTo(TaskStatus.READY); // 클레임 이후 어드밴스가 없으므로 여전히 READY이어야 한다.
         reporter.report(p.getId(), held.token(), StepOutcome.dispatched("job-x"));
         Pipeline done = pipelines.findById(p.getId()).orElseThrow();
         assertThat(done.getStatus()).isEqualTo(PipelineStatus.CANCELLED);
         assertThat(done.getClaimedBy()).isNull();
         assertThat(tasks.findByPipelineIdOrderBySequenceAsc(p.getId()).get(0).getStatus())
                 .isEqualTo(TaskStatus.CANCELLED);
+    }
+
+    /**
+     * 리스가 만료된 파이프라인은 {@code cancelIfIdle}의 {@code claimedUntil < now} 분기(Case A)를
+     * 통해 즉시 종료 처리된다. 스트래글러 워커의 tx2가 후에 no-op되는 것과는 달리,
+     * API 호출자가 만료된 클레임을 직접 회수하여 취소를 완료한다.
+     */
+    @Test
+    void cancelCaseAExpiredLeaseStillTerminatesImmediately() {
+        Pipeline p = creator.create("t-cancel-a-expired", PipelineType.DELETE);
+        claimer.claimOneDue().orElseThrow(); // token T, claimedUntil = START+30s
+        clock.advance(Duration.ofSeconds(31)); // now = START+31s, 리스 만료
+        // 재클레임 없이 control.cancel() 호출 — cancelIfIdle이 claimedUntil < now를 만족한다.
+        control.cancel(p.getId());
+
+        Pipeline row = pipelines.findById(p.getId()).orElseThrow();
+        assertThat(row.getStatus()).isEqualTo(PipelineStatus.CANCELLED);
+        assertThat(row.getClaimedBy()).isNull();
+        assertThat(row.getActiveTarget()).isNull();
+        assertThat(row.isCancelRequested()).isFalse();
+        assertThat(tasks.findByPipelineIdOrderBySequenceAsc(p.getId()).get(0).getStatus())
+                .isEqualTo(TaskStatus.CANCELLED);
+    }
+
+    /**
+     * 정상적인 dispatch 이후 tx2(report)가 완료되면 파이프라인의 클레임이 해제되고({@code claimedBy=null},
+     * {@code claimedUntil=null}), {@code nextDueAt}이 현재 태스크의 {@code nextCheckAt}(dispatch 직후
+     * {@code now})으로 설정된다.
+     */
+    @Test
+    void aSuccessfulDispatchReleasesTheClaimAndAdvancesNextDueAt() {
+        Pipeline p = creator.create("t-dispatch-release", PipelineType.DELETE);
+        worker.pollOnce(); // tx1: claim → tx2: dispatch → IN_PROGRESS → releaseClaim
+
+        Pipeline row = pipelines.findById(p.getId()).orElseThrow();
+        assertThat(row.getClaimedBy()).isNull();
+        assertThat(row.getClaimedUntil()).isNull();
+        // markInProgress가 task.nextCheckAt = START(clock=START)로 설정하고,
+        // releaseClaim이 pipeline.nextDueAt = task.nextCheckAt = START로 설정한다.
+        assertThat(row.getNextDueAt()).isEqualTo(START);
     }
 
     @Test

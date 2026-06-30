@@ -179,6 +179,8 @@ class PipelineEngineTest {
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
         assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
                 .isEqualTo(ErrorCode.CALL_TIMEOUT);
+        // 재시도는 zero-delay 재시도 폭풍이 아니라 폴링 인터벌(PT10M)만큼 백프레셔 지연되어야 한다.
+        assertThat(task(pipeline, 0).getNextCheckAt()).isEqualTo(START.plus(Duration.ofMinutes(10)));
     }
 
     @Test
@@ -193,6 +195,8 @@ class PipelineEngineTest {
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
         assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
                 .isEqualTo(ErrorCode.CHECK_ERROR);
+        // 재시도는 zero-delay 재시도 폭풍이 아니라 폴링 인터벌(PT10M)만큼 백프레셔 지연되어야 한다.
+        assertThat(task(pipeline, 0).getNextCheckAt()).isEqualTo(START.plus(Duration.ofMinutes(10)));
     }
 
     @Test
