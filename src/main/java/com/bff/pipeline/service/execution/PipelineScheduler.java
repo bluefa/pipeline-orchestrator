@@ -1,6 +1,7 @@
 package com.bff.pipeline.service.execution;
 
 import com.bff.pipeline.ExecutionSettings;
+import com.bff.pipeline.dto.Claim;
 import com.bff.pipeline.client.InfraManagerClient;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -127,7 +128,7 @@ public class PipelineScheduler {
             if (Thread.interrupted()) {
                 throw new InfraManagerClient.CallInterruptedException();
             }
-            Optional<PipelineClaimer.Claim> claim;
+            Optional<Claim> claim;
             try {
                 claim = claimer.claimOneDue();
             } catch (InfraManagerClient.CallInterruptedException interrupted) {

@@ -1,8 +1,7 @@
 package com.bff.pipeline.service.execution;
-import com.bff.pipeline.service.task.terraform.TerraformTask;
-import com.bff.pipeline.service.task.ObservationRecorder;
 
 import com.bff.pipeline.ExecutionSettings;
+import com.bff.pipeline.dto.Claim;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
@@ -10,6 +9,8 @@ import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.model.StepOutcome;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.task.ObservationRecorder;
+import com.bff.pipeline.service.task.terraform.TerraformTask;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
@@ -57,7 +58,7 @@ public class PipelineWorker {
         });
     }
 
-    public void process(PipelineClaimer.Claim claim) {
+    public void process(Claim claim) {
         StepContext context = loadStepContext(claim.pipelineId());
         if (context == null) {
             return;

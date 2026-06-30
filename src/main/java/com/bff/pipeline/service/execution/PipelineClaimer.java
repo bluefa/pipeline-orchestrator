@@ -1,6 +1,7 @@
 package com.bff.pipeline.service.execution;
 
 import com.bff.pipeline.ExecutionSettings;
+import com.bff.pipeline.dto.Claim;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.repository.PipelineRepository;
 import java.time.Clock;
@@ -25,9 +26,6 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Component
 public class PipelineClaimer {
-
-    /** tx1이 발급한 claim: 대상 pipeline id와 이 claim의 fencing token. */
-    public record Claim(long pipelineId, String token) { }
 
     private final PipelineRepository pipelines;
     private final ExecutionSettings settings;

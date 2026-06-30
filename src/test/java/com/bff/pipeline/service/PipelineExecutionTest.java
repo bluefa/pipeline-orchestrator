@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.ExecutionSettings;
 import com.bff.pipeline.PipelineSettings;
+import com.bff.pipeline.dto.Claim;
 import com.bff.pipeline.client.FakeInfraManagerClient;
 import com.bff.pipeline.client.InfraManagerClient;
 import com.bff.pipeline.dto.TerraformPoll;
@@ -174,7 +175,7 @@ class PipelineExecutionTest {
     void aRawRuntimeExceptionFromTheClientPropagatesOutOfProcess() {
         Pipeline pipeline = creator.create("e-bug", PipelineType.DELETE);
         infraManager.onDispatch(() -> { throw new IllegalStateException("a real bug"); });
-        PipelineClaimer.Claim claim = claimer.claimOneDue().orElseThrow();
+        Claim claim = claimer.claimOneDue().orElseThrow();
 
         assertThatThrownBy(() -> worker.process(claim)).isInstanceOf(RuntimeException.class);
 
@@ -249,7 +250,7 @@ class PipelineExecutionTest {
     void aClaimStampsAFreshTokenAndLeaseAndBlocksASecondClaim() {
         creator.create("c-claim", PipelineType.DELETE);
 
-        PipelineClaimer.Claim claim = claimer.claimOneDue().orElseThrow();
+        Claim claim = claimer.claimOneDue().orElseThrow();
 
         Pipeline claimed = pipelines.findById(claim.pipelineId()).orElseThrow();
         assertThat(claimed.getClaimedBy()).isEqualTo(claim.token());
@@ -288,7 +289,7 @@ class PipelineExecutionTest {
         String fresh = claimer.claimOneDue().orElseThrow().token();
         assertThat(fresh).isNotEqualTo(stale);
 
-        worker.process(new PipelineClaimer.Claim(pipeline.getId(), stale));   // old token
+        worker.process(new Claim(pipeline.getId(), stale));   // old token
 
         Pipeline after = pipelines.findById(pipeline.getId()).orElseThrow();
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);   // untouched
@@ -298,7 +299,7 @@ class PipelineExecutionTest {
     @Test
     void aMatchingTokenReportStillAppliesAfterLeaseExpiryWhenNobodyReclaimed() {
         Pipeline pipeline = creator.create("c-token-only", PipelineType.DELETE);
-        PipelineClaimer.Claim claim = claimer.claimOneDue().orElseThrow();
+        Claim claim = claimer.claimOneDue().orElseThrow();
         clock.advance(LEASE.plusSeconds(1));   // lease expired, but token unchanged and nobody reclaimed
 
         worker.process(claim);   // token-only guard → applies
@@ -337,7 +338,7 @@ class PipelineExecutionTest {
     @Test
     void cancelCaseBLiveLeaseOnlyRaisesTheFlagThenTheClaimHolderTerminalizes() {
         Pipeline pipeline = creator.create("x-live", PipelineType.DELETE);
-        PipelineClaimer.Claim claim = claimer.claimOneDue().orElseThrow();
+        Claim claim = claimer.claimOneDue().orElseThrow();
 
         control.cancel(pipeline.getId());
 
@@ -356,7 +357,7 @@ class PipelineExecutionTest {
     @Test
     void aStaleStragglerCannotResurrectAfterCaseACancel() {
         Pipeline pipeline = creator.create("x-resurrect", PipelineType.DELETE);
-        PipelineClaimer.Claim straggler = claimer.claimOneDue().orElseThrow();
+        Claim straggler = claimer.claimOneDue().orElseThrow();
         clock.advance(LEASE.plusSeconds(1));
         control.cancel(pipeline.getId());   // Case A clears the token
 

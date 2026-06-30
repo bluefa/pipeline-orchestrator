@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.ExecutionSettings;
+import com.bff.pipeline.dto.Claim;
 import com.bff.pipeline.client.InfraManagerClient;
 import java.time.Clock;
 import java.time.Duration;
@@ -77,7 +78,7 @@ class PipelineSchedulerTest {
         AtomicInteger processed = new AtomicInteger();
         PipelineClaimer claimer = claimerYielding(1L, 2L);
         PipelineWorker worker = new PipelineWorker(null, null, null, null, null, null, null) {
-            @Override public void process(PipelineClaimer.Claim claim) {
+            @Override public void process(Claim claim) {
                 processed.incrementAndGet();
                 if (claim.pipelineId() == 1L) throw new IllegalStateException("isolated");
             }
@@ -103,7 +104,7 @@ class PipelineSchedulerTest {
     void aCallInterruptedDuringProcessAbortsTheDrain() {
         PipelineClaimer claimer = claimerYielding(1L);
         PipelineWorker worker = new PipelineWorker(null, null, null, null, null, null, null) {
-            @Override public void process(PipelineClaimer.Claim claim) {
+            @Override public void process(Claim claim) {
                 throw new InfraManagerClient.CallInterruptedException();
             }
         };
@@ -116,7 +117,7 @@ class PipelineSchedulerTest {
     private PipelineClaimer claimerYielding(Long... ids) {
         Deque<Long> queue = new ArrayDeque<>(List.of(ids));
         return new PipelineClaimer(null, null, null) {
-            @Override public Optional<PipelineClaimer.Claim> claimOneDue() {
+            @Override public Optional<Claim> claimOneDue() {
                 Long id = queue.poll();
                 return id == null ? Optional.empty() : Optional.of(new Claim(id, "t-" + id));
             }
@@ -125,7 +126,7 @@ class PipelineSchedulerTest {
 
     private PipelineWorker neverProcess() {
         return new PipelineWorker(null, null, null, null, null, null, null) {
-            @Override public void process(PipelineClaimer.Claim claim) {
+            @Override public void process(Claim claim) {
                 throw new AssertionError("should not process after a claim failure");
             }
         };
