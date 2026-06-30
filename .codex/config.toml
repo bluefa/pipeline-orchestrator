@@ -1,0 +1,28 @@
+service_tier = "fast"
+
+[features]
+hooks = true
+fast_mode = true
+
+[hooks]
+
+[[hooks.PreToolUse]]
+matcher = "Bash"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "bash \"$(git rev-parse --show-toplevel)/scripts/recurring-check.sh\""
+timeout = 10
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/pre-bash-main-guard.sh\""
+timeout = 5
+
+[[hooks.PreToolUse]]
+matcher = "apply_patch"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/pre-bash-main-guard.sh\" --edit"
+timeout = 5

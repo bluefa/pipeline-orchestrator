@@ -12,7 +12,7 @@ time, the harness catches it.
 ## The loop
 
 1. **Record.** A new review finding (codex / opus / human) or an owner preference → add a row to the
-   **watch-list** in [`.claude/review-ledger.md`](../../review-ledger.md). If it matches an existing
+   **watch-list** in [`.claude/review-ledger.md`](../../../.claude/review-ledger.md). If it matches an existing
    row, bump its occurrence count and append the new source (round / author) — keep the trail; it is
    what justifies promotion.
 2. **Promote at ≥ 2.** When a row reaches two occurrences, move it to **Promoted** and wire a detection:
@@ -50,4 +50,4 @@ time, the harness catches it.
 ## Current state
 
 Promoted detections and the watch-list of owner preferences live in
-[`.claude/review-ledger.md`](../../review-ledger.md).
+[`.claude/review-ledger.md`](../../../.claude/review-ledger.md).
