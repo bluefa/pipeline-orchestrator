@@ -30,13 +30,19 @@ Java 21 / MySQL.
    (`InfraManagerClient`, prod + test fake) or genuine multi-implementation polymorphism
    (`TaskType` → Terraform/Condition, resolved by `TaskTypeRegistry`) — never a single-impl
    indirection. Prefer a static utility to a one-method bean.
-6. **Layered packages.** `entity / enums / dto / model / service / client / controller / repository / utils`
+6. **Packages by layer, with feature sub-packages inside `service`.**
+   `entity / enums / dto / model / recipe / service / client / controller / repository / utils`
    (app wiring — `PipelineApplication`/`PipelineConfig`/`PipelineSettings` — sits at the root package):
    - `entity` — JPA entities · `enums` — all enums · `dto` — external transport values (TerraformPoll,
      ErrorResponse) · `model` — domain value/contract types that are neither a bean nor transport
-     (TaskType, TaskProgress, Recipe) · `service` — **only** `@Component`/`@Service` beans (no enum,
-     record, or plain interface lives here) · `client` — the InfraManager boundary · `controller` — REST
-     advice · `repository` — Spring Data · `utils` — static helpers.
+     (Recipe, RecipeStep, TaskProgress) · `recipe` — the code-default recipes (`Recipes`, a static
+     definition, not a bean) · `client` — the InfraManager boundary · `controller` — REST advice ·
+     `repository` — Spring Data · `utils` — static helpers.
+   - `service` holds the `@Component`/`@Service` beans, grouped by feature:
+     `service/pipeline` (PipelineEngine, PipelineControl, PipelineCreator, PipelineInserter),
+     `service/task` (TaskMachine, TaskCanceller, TaskTypeRegistry, Observations), and
+     `service/task/type` — the `TaskType` SPI (execution-strategy interface) and its implementations
+     (TerraformTask, ConditionCheckTask).
    Names reveal purpose — **no abbreviations** anywhere (class, method, field, variable): e.g.
    `InfraManagerClient` not `ImClient`, `sequence` not `seq`, `timeToLive` not `ttl`, `attemptNumber`
    not `attemptNo`.

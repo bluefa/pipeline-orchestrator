@@ -124,7 +124,7 @@ These exception types survive, each for a precise reason — none is a business 
    (`CALL_TIMEOUT`) from any other call failure (`CHECK_ERROR`), and so it can catch exactly the
    external-call failures and let a genuine bug fail fast. Neither travels past `TaskMachine`.
 
-2. **`DataIntegrityViolationException`** (Spring, caught in `service/PipelineCreator.java`) — the
+2. **`DataIntegrityViolationException`** (Spring, caught in `service/pipeline/PipelineCreator.java`) — the
    `active_target` unique violation when two creates race for one target. This is the one place an
    infrastructure exception is used as a **control signal**: the catch is targeted (only this type),
    and it compensates by returning the existing active run. This is how "one active pipeline per

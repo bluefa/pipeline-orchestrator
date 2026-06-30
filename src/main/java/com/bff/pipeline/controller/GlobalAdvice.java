@@ -1,8 +1,7 @@
 package com.bff.pipeline.controller;
 
 import com.bff.pipeline.dto.ErrorResponse;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -14,10 +13,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * 연결될 이음새(seam) 역할을 한다. catch-all 핸들러는 원인을 절대 무시하지 않으며,
  * 예외(스택 트레이스 포함)를 로깅한 후 제네릭 응답 본문을 반환한다.
  */
+@Slf4j
 @RestControllerAdvice
 public class GlobalAdvice {
-
-    private static final Logger log = LoggerFactory.getLogger(GlobalAdvice.class);
 
     @ExceptionHandler(IllegalArgumentException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)

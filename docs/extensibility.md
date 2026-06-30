@@ -5,7 +5,7 @@ an Event Outbox. This document records **where each plugs in** so the v1 code st
 them is built yet — YAGNI) while the seams are deliberate, not accidental.
 
 The guiding principle: the extension points are **concrete and few** — the recipe catalog
-(`service/Recipes.java`), the **`TaskType` registry** (`service/TaskTypeRegistry.java`), and the single
+(`recipe/Recipes.java`), the **`TaskType` registry** (`service/task/TaskTypeRegistry.java`), and the single
 per-pipeline transaction boundary. Adding a feature is a new file or a new entry in a known place, not a
 re-wiring.
 
@@ -14,12 +14,12 @@ re-wiring.
 Two sub-cases:
 
 - **More tasks of existing types** (a longer or different chain) — add an entry to
-  `service/Recipes.java`. A recipe is just an ordered list of `(taskName, operation)` steps; the state
+  `recipe/Recipes.java`. A recipe is just an ordered list of `(taskName, operation)` steps; the state
   machine runs any length. No schema change, no new state. The `BLOCKED → READY` unblocking already
   sequences an arbitrary chain.
 - **A new *kind* of task** — implement the **`TaskType`** interface
   (`taskName()` / `execute(target, task)` / `check(target, task) → TaskProgress`) as a `@Component` in
-  `service/`. It **registers itself** in `TaskTypeRegistry` (built from the injected `List<TaskType>`),
+  `service/task/type/`. It **registers itself** in `TaskTypeRegistry` (built from the injected `List<TaskType>`),
   so there is **no enum to extend and no `switch` to edit** — `TaskMachine` resolves the row's
   `taskName` to its type generically. Reference the new type's `taskName` from a recipe step. Its
   failure modes are new `ErrorCode` values returned as `TaskProgress.failed(reason, retryable)` and

@@ -1,4 +1,4 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.task;
 
 import com.bff.pipeline.PipelineSettings;
 import com.bff.pipeline.client.InfraManagerClient;
@@ -7,7 +7,7 @@ import com.bff.pipeline.enums.CheckSignal;
 import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.model.TaskProgress;
-import com.bff.pipeline.model.TaskType;
+import com.bff.pipeline.service.task.type.TaskType;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.utils.TaskSettings;
 import java.time.Clock;
@@ -15,12 +15,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.function.Supplier;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
- * 태스크 하나를 한 단계 전진시킨다 (ADR-016 §2, §6). 현재 태스크는 {@link PipelineEngine}이 전달하며,
+ * 태스크 하나를 한 단계 전진시킨다 (ADR-016 §2, §6). 현재 태스크는 {@code PipelineEngine}이 전달하며,
  * 이 클래스는 태스크별 전환을 소유하되 타입별 세부 작업은 해당 태스크의 {@link TaskType}
  * ({@link TaskTypeRegistry}를 통해 이름으로 조회)에 위임한다. 따라서 태스크 종류에 대한
  * {@code switch} 분기가 없다.
@@ -54,10 +53,9 @@ import org.springframework.stereotype.Component;
  * (진짜 버그)은 캐치하지 않고 그대로 전파된다(fail-fast). 비즈니스 결과는 절대 예외가 아니며 행에 기록되는
  * {@code ErrorCode} 값이다. {@code docs/exception-strategy.md}를 참조한다.
  */
+@Slf4j
 @Component
 public class TaskMachine {
-
-    private static final Logger log = LoggerFactory.getLogger(TaskMachine.class);
 
     private final TaskTypeRegistry taskTypes;
     private final TaskRepository tasks;
@@ -74,7 +72,7 @@ public class TaskMachine {
         this.clock = clock;
     }
 
-    void advance(String target, Task task) {
+    public void advance(String target, Task task) {
         switch (task.getStatus()) {
             case BLOCKED -> unblock(task);
             case READY -> dispatch(target, task);

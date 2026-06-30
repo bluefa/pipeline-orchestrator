@@ -19,6 +19,16 @@ import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.pipeline.PipelineControl;
+import com.bff.pipeline.service.pipeline.PipelineCreator;
+import com.bff.pipeline.service.pipeline.PipelineEngine;
+import com.bff.pipeline.service.pipeline.PipelineInserter;
+import com.bff.pipeline.service.task.Observations;
+import com.bff.pipeline.service.task.TaskCanceller;
+import com.bff.pipeline.service.task.TaskMachine;
+import com.bff.pipeline.service.task.TaskTypeRegistry;
+import com.bff.pipeline.service.task.type.ConditionCheckTask;
+import com.bff.pipeline.service.task.type.TerraformTask;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -50,7 +60,7 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineEngine.class, TaskMachine.class, TaskTypeRegistry.class, TerraformTask.class,
         ConditionCheckTask.class, Observations.class, TaskCanceller.class, PipelineCreator.class,
-        PipelineInserter.class, PipelineControl.class, Recipes.class, PipelineEngineTest.Wiring.class,
+        PipelineInserter.class, PipelineControl.class, PipelineEngineTest.Wiring.class,
         PipelineEngineTest.PostCheckWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineEngineTest {
@@ -440,7 +450,7 @@ class PipelineEngineTest {
         }
     }
 
-    static final class PostCheckProbeTask implements com.bff.pipeline.model.TaskType {
+    static final class PostCheckProbeTask implements com.bff.pipeline.service.task.type.TaskType {
         static final String NAME = "POST_CHECK_PROBE";
         private java.util.function.Supplier<TaskProgress> postCheckBehavior = () -> TaskProgress.SUCCEEDED;
         void onPostCheck(java.util.function.Supplier<TaskProgress> behavior) { this.postCheckBehavior = behavior; }

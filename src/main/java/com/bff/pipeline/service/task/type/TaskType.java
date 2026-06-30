@@ -1,6 +1,7 @@
-package com.bff.pipeline.model;
+package com.bff.pipeline.service.task.type;
 
 import com.bff.pipeline.entity.Task;
+import com.bff.pipeline.model.TaskProgress;
 
 /**
  * task의 종류와 그 실행 방식을 정의하는 인터페이스이다. 엔진은 각 task의 {@link #taskName()}을

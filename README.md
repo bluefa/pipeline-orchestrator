@@ -38,16 +38,20 @@ com.bff.pipeline
 ├── entity/      JPA entities (Pipeline, Task, TaskAttempt, TaskCheck)
 ├── enums/       Domain enums (PipelineStatus/Type, TaskStatus/Operation, ErrorCode, CheckSignal)
 ├── dto/         External transport values (TerraformPoll, ErrorResponse)
-├── model/       Domain value/contract types (TaskType, TaskProgress, Recipe)
-├── service/     @Component/@Service beans only: creation, cancel, the engine + "advance one step"
+├── model/       Domain value/contract types (Recipe, RecipeStep, TaskProgress)
+├── recipe/      Code-default recipes (Recipes — a static definition, not a bean)
+├── service/     @Component/@Service beans, grouped by feature:
+│   ├── pipeline/  PipelineEngine (advance one step), PipelineControl (cancel), PipelineCreator, PipelineInserter
+│   ├── task/      TaskMachine, TaskCanceller, TaskTypeRegistry, Observations
+│   └── task/type/ TaskType SPI + its implementations (TerraformTask, ConditionCheckTask)
 ├── client/      InfraManager boundary (InfraManagerClient) + its exception contract
 ├── repository/  Spring Data repositories (guarded-CAS transitions)
 ├── controller/  GlobalAdvice (REST exception handler) — the REST layer added later
 └── utils/       Static helpers (TaskSettings — effective per-task setting resolution + deadlines)
 ```
 
-Each task's behaviour is a **`TaskType`** (`model/`): `TerraformTask` and `ConditionCheckTask` (in
-`service/`) implement the `execute` → `check` lifecycle (and may override the default no-op `postCheck`),
+Each task's behaviour is a **`TaskType`** (`service/task/type/`): `TerraformTask` and `ConditionCheckTask`
+(same package) implement the `execute` → `check` lifecycle (and may override the default no-op `postCheck`),
 and `TaskMachine` resolves a task row to its type **by name** through `TaskTypeRegistry` — so a new kind of task is a new self-registering implementation, not an edit to a
 `switch`. An unknown name fails the task with `ErrorCode.UNKNOWN_TASK`.
 

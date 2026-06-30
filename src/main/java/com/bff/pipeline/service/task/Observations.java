@@ -1,4 +1,4 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.task;
 
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;

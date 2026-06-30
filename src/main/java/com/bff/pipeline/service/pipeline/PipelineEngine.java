@@ -1,4 +1,4 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.pipeline;
 
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
@@ -6,6 +6,8 @@ import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.task.TaskCanceller;
+import com.bff.pipeline.service.task.TaskMachine;
 import java.time.Clock;
 import java.util.List;
 import java.util.Optional;

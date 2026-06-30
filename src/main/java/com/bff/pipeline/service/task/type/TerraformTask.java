@@ -1,4 +1,4 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.task.type;
 
 import com.bff.pipeline.PipelineSettings;
 import com.bff.pipeline.client.InfraManagerClient;
@@ -7,7 +7,6 @@ import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.CheckSignal;
 import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.model.TaskProgress;
-import com.bff.pipeline.model.TaskType;
 import com.bff.pipeline.utils.TaskSettings;
 import java.time.Clock;
 import org.springframework.stereotype.Component;

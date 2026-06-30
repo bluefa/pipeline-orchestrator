@@ -1,4 +1,4 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.pipeline;
 
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
@@ -6,6 +6,7 @@ import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.model.RecipeStep;
+import com.bff.pipeline.recipe.Recipes;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import java.time.Clock;
@@ -27,13 +28,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class PipelineInserter {
 
-    private final Recipes recipes;
     private final PipelineRepository pipelines;
     private final TaskRepository tasks;
     private final Clock clock;
 
-    public PipelineInserter(Recipes recipes, PipelineRepository pipelines, TaskRepository tasks, Clock clock) {
-        this.recipes = recipes;
+    public PipelineInserter(PipelineRepository pipelines, TaskRepository tasks, Clock clock) {
         this.pipelines = pipelines;
         this.tasks = tasks;
         this.clock = clock;
@@ -50,7 +49,7 @@ public class PipelineInserter {
                 .createdAt(now)
                 .lastActivityAt(now)
                 .build());
-        tasks.saveAll(buildChain(pipeline.getId(), recipes.forType(type).steps(), now));
+        tasks.saveAll(buildChain(pipeline.getId(), Recipes.forType(type).steps(), now));
         return pipeline;
     }
 

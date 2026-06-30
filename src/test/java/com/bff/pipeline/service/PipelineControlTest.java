@@ -9,6 +9,11 @@ import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.pipeline.PipelineControl;
+import com.bff.pipeline.service.pipeline.PipelineCreator;
+import com.bff.pipeline.service.pipeline.PipelineInserter;
+import com.bff.pipeline.service.task.Observations;
+import com.bff.pipeline.service.task.TaskCanceller;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -34,7 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineControl.class, TaskCanceller.class, Observations.class, PipelineCreator.class,
-        PipelineInserter.class, Recipes.class, PipelineControlTest.Wiring.class})
+        PipelineInserter.class, PipelineControlTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineControlTest {
 
