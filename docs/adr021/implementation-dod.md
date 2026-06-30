@@ -127,7 +127,7 @@ ADR-021(claim-pull 실행 모델)의 각 Decision을 **무엇을 구현하는가
 
 - [ ] 전체 빌드 `mvn test` green, 신규 실행모델 테스트 포함.
 - [ ] **NPE 경계 점검(열거식, 검증 가능)**: ① claim 결과 빈 `List`/`Optional`; ② `findByIdForUpdate` 빈 결과; ③ `currentAttempt` 부재; ④ poll `null` 상태(→CallFailed); ⑤ `nextCheckAt`/`nearestDueAt` null; ⑥ `claimToken` null-안전 비교. 각 항목에 대응하는 null-guard가 코드에 있고 테스트/리뷰로 확인.
-- [ ] ADR-016 불변식 불변: one-active-per-target, RUNNING-guarded `finish()` CAS, attempt write-only(완료 read만), `@Version` 낙관락.
+- [ ] ADR-016 불변식 불변: one-active-per-target, 종료 전이는 tx2 `FOR UPDATE`+token 가드(또는 cancel의 `status='RUNNING'` 가드)로 보호, attempt write-only(완료 read만), `@Version`(이제 defense-in-depth).
 - [ ] 설정값(lease/worker/cap/backoff/slot/timeout/jitter/idle)은 모두 `application.yml`의 `pipeline.execution.*`에 있고 코드 상수가 아니다(`ExecutionSettings` 바인딩).
 - [ ] (리뷰 게이트, DoD 아님) clean code — codex/opus 3라운드에서 P0/P1 0건, 더 적은 라인 표현 합의.
 

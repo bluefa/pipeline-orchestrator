@@ -9,23 +9,25 @@
 > Each row is a real site in `src/main/java/com/bff/pipeline/`. "Business failures" (which are *values*,
 > never exceptions) are listed last for contrast.
 
-## 1. External-call failures — a closed exception vocabulary, translated once in `TaskStateMachine`
+## 1. External-call failures — a closed exception vocabulary, translated once in `StepRunner` (phase-A)
 
 `InfraManagerClient` signals a call failure with one of three nested exceptions — a closed vocabulary.
-The only `try/catch` in the business layer is `TaskStateMachine.runExternalCall`, the single helper that wraps
-**every** InfraManager-backed call — `TaskType.execute` and `TaskType.check`. It
-catches **only `CallTimeoutException` and `CallFailedException`** and translates them; `CallInterruptedException`
-and any *other* `RuntimeException` (a genuine bug) are not caught and propagate (fail-fast — cases 6/7).
+The only `try/catch` in the business layer is `StepRunner.runExternalCall`, the single phase-A helper
+(running OUTSIDE any transaction) that wraps **every** InfraManager-backed call — `TaskType.execute` and
+`TaskType.check`. It catches **only `CallTimeoutException` and `CallFailedException`** and translates them
+into a `StepOutcome` value (which tx2's `TaskStateMachine.applyOutcome` later maps to an `ErrorCode`);
+`CallInterruptedException` and any *other* `RuntimeException` (a genuine bug) are not caught and propagate
+(fail-fast — cases 6/7).
 
 | # | Exception | Thrown by | Caught at | Handling | Becomes |
 |---|---|---|---|---|---|
-| 1 | `InfraManagerClient.CallInterruptedException` | production adapter when the calling thread is interrupted (e.g. shutdown) | **not caught** (a distinct `final` type, not matched by the timeout/failed catches) | propagates out of `advance` — fail-fast, never recorded as a business outcome | _(propagates; see §4 / case 7)_ |
-| 2 | `InfraManagerClient.CallTimeoutException` | production adapter when one call exceeds the per-call timeout | `TaskStateMachine.runExternalCall` | **logged** (WARN), then `retryOrFail`; on a `check` (not `execute`) also records a `CALL_TIMEOUT` check observation | `ErrorCode.CALL_TIMEOUT` (retryable) |
-| 3 | `InfraManagerClient.CallFailedException` | production adapter (HTTP 5xx/4xx, connection reset, rejection, malformed/empty response) **or** a `TaskType` guard (§2) | `TaskStateMachine.runExternalCall` | **logged** (WARN), then `retryOrFail`; on a `check` also records an `API_ERROR` check observation | `ErrorCode.CHECK_ERROR` (retryable) |
+| 1 | `InfraManagerClient.CallInterruptedException` | production adapter when the calling thread is interrupted (e.g. shutdown) | **not caught** (a distinct `final` type, not matched by the timeout/failed catches) | propagates out of `StepRunner` / `PipelineWorker.process` as an interrupt that aborts the sweep (JVM shutdown) — never recorded as a business outcome | _(propagates; see §4 / case 7)_ |
+| 2 | `InfraManagerClient.CallTimeoutException` | production adapter when one call exceeds the per-call timeout | `StepRunner.runExternalCall` (phase-A) | **logged** (WARN), returns `StepOutcome.callTimeout(dispatch)`; tx2 `applyOutcome` then `retryOrFail` and, on a `check` (not dispatch), records a `CALL_TIMEOUT` check observation | `ErrorCode.CALL_TIMEOUT` (retryable) |
+| 3 | `InfraManagerClient.CallFailedException` | production adapter (HTTP 5xx/4xx, connection reset, rejection, malformed/empty response) **or** a `TaskType` guard (§2) | `StepRunner.runExternalCall` (phase-A) | **logged** (WARN), returns `StepOutcome.callFailed(dispatch)`; tx2 `applyOutcome` then `retryOrFail` and, on a `check`, records an `API_ERROR` check observation | `ErrorCode.CHECK_ERROR` (retryable) |
 
 Because the same `runExternalCall` wraps both `execute` and `check`, an `execute` that calls the
-InfraManager is translated exactly like a check — its timeout/failure becomes
-`CALL_TIMEOUT`/`CHECK_ERROR`, never an exception escaping `advance`.
+InfraManager is translated exactly like a check — its timeout/failure becomes a `StepOutcome` that tx2
+maps to `CALL_TIMEOUT`/`CHECK_ERROR`, never an exception escaping phase-A.
 
 **Why a closed vocabulary, not a broad `catch (RuntimeException)`.** An earlier version caught any
 `RuntimeException` and turned it into `CHECK_ERROR`. That risked converting a genuine programmer bug in
@@ -33,10 +35,12 @@ our own code (e.g. an NPE in deadline math, or a bug inside a `TaskType`) into a
 and silently retrying it. The boundary now catches only `CallTimeoutException` and `CallFailedException`, so:
 
 - an **external** failure (timeout / failed call) is handled — translated to a value, logged, retried;
-- a **bug** (any other `RuntimeException`) and a shutdown **interrupt** (`CallInterruptedException`) are
-  **not** caught: they propagate out of `advance`, roll the transaction back, and are absorbed by the
-  ADR-021 runner's per-pipeline `catch` (logged, the pipeline skipped — case 7). A bug surfaces loudly
-  instead of hiding as a business failure.
+- a **bug** (any other `RuntimeException`) is **not** caught: it propagates out of `StepRunner` /
+  `PipelineWorker.process` and is absorbed by the ADR-021 runner's per-pipeline `catch (RuntimeException)`
+  in `PipelineScheduler.drain` (logged, the pipeline keeps its lease and is reclaimed on expiry — case 7).
+  A shutdown **interrupt** (`CallInterruptedException`) likewise is not caught here: it propagates as an
+  interrupt that aborts the sweep (JVM shutdown). A bug surfaces loudly instead of hiding as a business
+  failure.
 
 This is the contract the `client` package owns: the production adapter must translate its transport
 failures (Apache/JDK HTTP exceptions, etc.) into a `CallFailedException`; it must not leak a raw
@@ -60,11 +64,11 @@ operation (or application startup) immediately.
 
 | # | Exception | Thrown by | Condition | Reaches |
 |---|---|---|---|---|
-| 6 | any non-`CallException` `RuntimeException` (e.g. `NullPointerException`, `IllegalStateException`) | a bug in a `TaskType` / engine / `ObservationRecorder` while servicing an advance | a real defect, not an external failure | propagates out of `advance` → case 7 (fail-fast, never `CHECK_ERROR`) |
-| 7 | _(any of the above propagating)_ | `PipelineEngine.advance` | — | absorbed by the **ADR-021 runner's** per-pipeline `catch (RuntimeException)` (out of scope here): logged, that pipeline skipped for the sweep; its transaction rolled back, so nothing is half-written |
+| 6 | any non-`CallException` `RuntimeException` (e.g. `NullPointerException`, `IllegalStateException`) | a bug in a `TaskType` / `StepRunner` / `StepReporter` / `TaskStateMachine` / `ObservationRecorder` while servicing a cycle | a real defect, not an external failure | propagates out of `StepRunner` / `PipelineWorker.process` → case 7 (fail-fast, never `CHECK_ERROR`) |
+| 7 | _(any of the above propagating)_ | `PipelineWorker.process` (phase-A `StepRunner` or tx2 `StepReporter`) | the ADR-021 runner's per-pipeline catch in `PipelineScheduler.drain` | absorbed by the **`PipelineScheduler.drain`** per-pipeline `catch (RuntimeException)` (out of scope here): logged, that pipeline keeps its lease and is reclaimed on expiry; any tx2 write rolled back, so nothing is half-written |
 | 8 | `IllegalStateException` | `TaskTypeRegistry` constructor | a `TaskType` bean has a `null`/blank `taskName()`, or two beans claim the same name | **application startup fails** (a misconfiguration must not boot) |
 | 9 | `IllegalArgumentException` | `PipelineSettings` compact constructor | a required `pipeline.*` key is missing, or a duration is zero/negative, or `max-fail-count < 1` | **application startup fails** (incomplete/invalid config must not boot — pre-empts a later NPE/busy-loop in `TaskSettings`) |
-| 10 | `IllegalArgumentException` | `PipelineEngine.advance` / `PipelineControl.cancel` | the pipeline id does not exist | propagates; for cancel via REST it becomes `400` (§5). A non-existent id is a broken invariant (the runner only advances ids it read from the DB). |
+| 10 | `IllegalArgumentException` | `PipelineControl.cancel` | the pipeline id does not exist | propagates; for cancel via REST it becomes `400` (§5). A non-existent id is a broken invariant (the runner only claims ids it read from the DB). |
 
 The value/transport records also fail fast in their compact constructors when handed an invalid value (a
 malformed value, not a business outcome): `dto/TerraformPoll` rejects a not-finished-yet-succeeded poll
@@ -83,7 +87,7 @@ clean failure rather than failing the run with a thrown error.
 | # | Exception | Thrown by | Caught at | Handling |
 |---|---|---|---|---|
 | 11 | `DataIntegrityViolationException` (Spring) | `PipelineInserter.insert` → `saveAndFlush`, when the `uq_pipeline_active_target` unique constraint rejects a second active run for one target | `PipelineCreator.create` | **control signal.** Only the active-target violation is recovered (recognized by constraint name, message fallback): return the existing active run. The insert is retried (bounded, `DUPLICATE_CREATE_RETRY_LIMIT`) because the active run can terminalize in the gap, freeing the target. Any *other* integrity violation is re-thrown — a real bug. If the retries are exhausted, the last violation is re-thrown. |
-| 12 | `OptimisticLockingFailureException` (Spring/JPA, via `Task.@Version`) | flush/commit of `PipelineEngine.advance` when a concurrent `PipelineControl.cancel` committed `CANCELLED` mid-call and bumped the task version | **not caught in this module** | propagates out of `advance`; absorbed by the runner's per-pipeline catch (case 7). The terminal `CANCELLED` is preserved; nothing is corrupted. Symmetrically, a `cancel` that loses the race to a committing `advance` rolls back atomically and surfaces as a `500` via `GlobalAdvice` (the admin retries); cancel-vs-live-worker hardening is deferred to ADR-021. |
+| 12 | `OptimisticLockingFailureException` (Spring/JPA, via `Task.@Version`) | flush/commit of tx2 (`StepReporter.report`) — **defense-in-depth only** | **not caught in this module** | Under ADR-021 the primary guard is the tx2 pipeline-row `FOR UPDATE` lock + claim-token check, which serializes all task writes; a cancel race is resolved by that lock (tx2 reads `cancel_requested` under it and converges atomically). `@Version` is a backstop should a stale write ever slip past: if it fires it propagates out of `StepReporter.report` and is absorbed by `PipelineScheduler.drain`'s per-pipeline catch (case 7) — the pipeline keeps its lease and is reclaimed on expiry. The terminal `CANCELLED` is preserved; nothing is corrupted. |
 
 ## 5. REST layer — `GlobalAdvice` (`@RestControllerAdvice`)
 
@@ -98,16 +102,16 @@ The seam for the REST layer added later. No exception is swallowed: the catch-al
 
 These are the expected outcomes of running infrastructure work. They are written to the task row as an
 `ErrorCode` and **never thrown**. They are decided by `TaskType.check` (as a `TaskProgress.Failed` value)
-or by the engine, then persisted by `TaskStateMachine`.
+or by the state machine, then persisted by `TaskStateMachine.applyOutcome` in tx2.
 
 | `ErrorCode` | Decided by | Retryable? |
 |---|---|---|
 | `JOB_FAILED` | `TerraformTask.check` — the Terraform poll reported the job FAILED | yes |
 | `EXECUTION_TIMEOUT` | `TerraformTask.check` — the job ran past its per-task execution timeout | yes |
 | `TIME_TO_LIVE_EXPIRED` | `ConditionCheckTask.check` — the condition was never met within its TTL | **no** (the wait window is gone) |
-| `UNKNOWN_TASK` | `TaskStateMachine.failUnknownTask` — the stored `taskName` resolves to no registered `TaskType` | **no** |
-| `CALL_TIMEOUT` | `TaskStateMachine` translating case 2 | yes |
-| `CHECK_ERROR` | `TaskStateMachine` translating case 3 | yes |
+| `UNKNOWN_TASK` | `StepRunner.runStep` returns `StepOutcome.unknownTask()` when the stored `taskName` resolves to no registered `TaskType`; tx2 `applyOutcome` fails it outright | **no** |
+| `CALL_TIMEOUT` | `StepRunner` translating case 2 (phase-A), persisted by `TaskStateMachine` in tx2 | yes |
+| `CHECK_ERROR` | `StepRunner` translating case 3 (phase-A), persisted by `TaskStateMachine` in tx2 | yes |
 
 `CALL_TIMEOUT` and `CHECK_ERROR` originate as exceptions (§1) but are *persisted as values*: once
 translated they are ordinary business failures and drive the same retry-or-fail accounting.
@@ -115,8 +119,8 @@ translated they are ordinary business failures and drive the same retry-or-fail 
 ## Invariant a reviewer can check
 
 - Exactly **one external-call translation** `try/catch` exists in the business/service layer:
-  `TaskStateMachine.runExternalCall`, which wraps every InfraManager-backed call (`execute`/`check`)
-  and catches only `CallTimeoutException` and `CallFailedException`. The only other `catch` in the service
+  `StepRunner.runExternalCall` (phase-A, outside any transaction), which wraps every InfraManager-backed
+  call (`execute`/`check`) and catches only `CallTimeoutException` and `CallFailedException`. The only other `catch` in the service
   layer is `PipelineCreator`'s targeted `DataIntegrityViolationException` control-signal catch (§4, case
   11), which *recovers* rather than translates; every other service method is exception-free straight-line
   code.

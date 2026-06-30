@@ -23,9 +23,16 @@
 
 ## 검증 결과
 
-- 빌드: `mvn -o test` → **49 tests, BUILD SUCCESS**.
-- 리뷰 라운드: (campaign 종료 후 채움)
-  - codex R1/R2/R3, opus R1/R2/R3 결과 요약 + 반영 내역.
+- 빌드: `mvn -o test` → **54 tests, BUILD SUCCESS**.
+- 리뷰 캠페인 (opus 3라운드 + codex 다회):
+  - **opus R1**(NPE 인증): MERGE-READY YES — 도달 가능 NPE 0건. P2 단순화 2건 반영(releaseClaim 죽은 null-branch, scheduler min DRY).
+  - **opus R2**(적대적 동시성): MERGE-READY YES — terminal resurrection/lost-update/claim-safety/liveness 모두 불가 입증. P2 반영(죽은 finish() 제거, @Version doc 정정).
+  - **opus R3**(전체 정합성): MERGE-READY YES(코드 blocker 0) — P1 2건은 **문서 drift**(exception-strategy/cases가 삭제된 PipelineEngine.advance 참조) → 수정. P2(ExecutionSettings fail-fast 테스트 추가, javadoc 링크 정정) → 반영.
+  - **codex**: CLI가 큰 코드베이스 탐색 시 결론을 못 내는 현상이 있어, `xhigh + inline diff` 방식으로 결론 유도.
+    - **R1d**: NO(4×P1) — 유효 2건(next_due_at NOT NULL, TimeBounded @ConditionalOnBean) 반영, 오탐 2건(claimToken/attempt NPE) 근거와 함께 기각(opus가 안전 확인). 방어 가드 1건 추가.
+    - **R2**: YES(P2 2건: StepReporter 헤더 token-only, DoD finish() 표현) → 반영.
+    - **R3**: (campaign 종료 시 기재).
+  - **종료 기준 충족**: 코드 P0/P1 0건. 남은 지적은 모두 문서/주석 정합성이며 반영 완료.
 
 ## 베이스/토폴로지 (중요)
 

@@ -17,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * ADR-021 phase-B: tx2 가드 라이트백(Decision 4). pipeline 행을 {@code FOR UPDATE}로 잠그고 claim 소유권
- * (매칭 토큰 AND live lease)을 검증한 뒤, phase-A({@link StepRunner})가 계산한 {@link StepOutcome}을
+ * (token-only: {@code claimed_by} 토큰 일치)을 검증한 뒤, phase-A({@link StepRunner})가 계산한 {@link StepOutcome}을
  * 관리 태스크에 적용한다. 외부 호출은 이 클래스에 없다.
  *
  * <p>tx2 고정 순서: (1) {@code findByIdForUpdate}로 행 잠금; (2) {@link #ownsClaim} 검증(토큰 일치) — 실패 시

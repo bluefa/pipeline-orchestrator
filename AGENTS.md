@@ -5,10 +5,13 @@ Shared rules for coding agents (Claude Code, Codex) in this repository.
 ## What this repo is
 
 The backend implementation of the **ADR-016 install/delete pipeline domain model**
-(`docs/adr/016-install-delete-pipeline-domain-model.md`). A durable, DB-backed state
-machine whose one domain operation is `PipelineEngine.advance(pipelineId)`. The
-**execution model** that drives it (the runner, scheduling, worker pool, crash-recovery
-loop) is the separate **ADR-021** and is deliberately not in this repo. Spring Boot 3 /
+(`docs/adr/016-install-delete-pipeline-domain-model.md`) **and** the **ADR-021 claim-pull
+execution model** (`docs/adr/021-pipeline-execution-model.md`) that drives it. A durable,
+DB-backed state machine, advanced by N worker threads that claim due pipelines via
+`FOR UPDATE SKIP LOCKED` + a lease/fencing token (tx1), run the external call outside any
+transaction, and commit a guarded write-back (tx2): `PipelineScheduler` →
+`PipelineClaimer`/`PipelineWorker` → `StepRunner` → `StepReporter`. The two ADRs stay
+separate so the runtime can be superseded without touching the domain. Spring Boot 3 /
 Java 21 / MySQL.
 
 ## Hard rules
