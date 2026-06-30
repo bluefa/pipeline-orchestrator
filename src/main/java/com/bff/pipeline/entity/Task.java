@@ -40,9 +40,10 @@ import org.hibernate.type.SqlTypes;
  * 않는다(ADR-016 ed97ec0): {@code task_attempt.response}에만 존재하며, 완료는 최신 attempt를 읽는
  * {@code check(attempt, task)}로 판정한다(§3 invariant 1).
  * {@code errorCode}는 {@code status == FAILED}인 경우에만 설정된다. {@code nextCheckAt}은 폴링 task가 다음에
- * 실행될 시각이며, null은 즉시 실행 대상임을 의미한다. {@code version}은 낙관적 락(optimistic lock)이다:
- * InfraManager 호출이 느린 도중 cancel이 CANCELLED를 커밋하면 이 값이 증가하므로, 진행 중(in-flight)인 advance의
- * 낡은(stale) 저장이 종료 상태를 덮어쓰지 않고 거부된다.
+ * 실행될 시각이며, null은 즉시 실행 대상임을 의미한다. {@code version}은 낙관적 락(optimistic lock)이다.
+ * ADR-021 실행 모델에서는 모든 task 쓰기가 tx2의 pipeline 행 {@code FOR UPDATE} 잠금 아래 직렬화되므로
+ * (cancel도 그 잠금을 두고 경합한다) 순서 보장은 사실상 pipeline 잠금이 제공하며, {@code @Version}은
+ * 방어적 다중화(defense-in-depth)로 남는다 — 잠금 경로 밖의 예기치 못한 동시 쓰기가 있어도 stale 저장을 거부한다.
  */
 @Entity
 @Table(

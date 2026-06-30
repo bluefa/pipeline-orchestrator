@@ -40,6 +40,28 @@
   코어 claim-pull 정확성에 집중하고 메트릭은 후속으로 둔다.
 - **확인 요청**: 메트릭(Micrometer counter/gauge)을 이번 범위에 포함할지.
 
+### D-B5. 리뷰 라운드1 반영 & codex 오탐 판정 ✅ 결정함
+- **opus R1**(MERGE-READY YES): `releaseClaim`의 죽은 null-branch 제거, scheduler `min()` DRY화 — 반영.
+- **opus R2 적대적 동시성**(MERGE-READY YES): terminal resurrection/lost-update/claim-safety/liveness 모두 깨지지 않음.
+  반영: 죽은 `PipelineRepository.finish()` 제거(종료 전이는 tx2 FOR UPDATE setter + `cancelIfIdle`로 이동),
+  `Task.@Version` javadoc 정정(이제 순서 보장은 pipeline 행 잠금이 제공, `@Version`은 방어적 다중화).
+- **codex R1d**(MERGE-READY NO, 4×P1) 판정:
+  - P1 `claimToken.equals` NPE → **오탐**(claimToken은 UUID라 구조적으로 non-null; opus가 안전 확인). 그래도 public
+    메서드라 `claimToken != null &&` 방어 가드만 추가.
+  - P1 IN_PROGRESS null attempt NPE → **오탐**. `TerraformTask.check`가 null attempt를 lost-response(executionTimeout
+    fallthrough)로 처리(D-4 설계, 테스트로 증명). 코드 변경 없음.
+  - P1 `next_due_at IS NULL` unclaimable vs 주석 → **유효**. `next_due_at`을 `NOT NULL` 컬럼으로 만들고(항상 시딩됨)
+    주석 정정.
+  - P1 `@Primary` 데코레이터 delegate 누락 → **유효**. `@ConditionalOnBean(name="infraManagerDelegate")`로 만들어
+    delegate가 없으면(데모/테스트) 생성되지 않게 함(컨텍스트 기동 무손상).
+  - P2 shutdown이 in-flight future를 await하지 않음 → **안전(문서화)**. shutdownNow가 sweep을 인터럽트하면 drain
+    future가 cancel되고, 인터럽트된 워커는 크래시와 동치로 lease 만료 reclaim된다(정확성 무손상).
+
+### D-B6. H2 SKIP LOCKED 미검증 (Testcontainers follow-up) — 확인 요청
+- claim 쿼리는 MySQL에서 `FOR UPDATE SKIP LOCKED`, H2에서는 일반 `FOR UPDATE`(블로킹)로 렌더링된다(repo 기존 한계).
+  따라서 "두 워커가 서로 다른 행을 non-blocking claim" 동작은 H2 스위트로는 검증되지 않는다(단일 스레드 claim/lease는 검증).
+- **확인 요청**: 실제 MySQL(Testcontainers) 동시 claim 테스트를 CI에 추가할지.
+
 ### D-B4. per-call timeout 데코레이터(`TimeBoundedInfraManagerClient`) 포함 ✅ 결정함
 - ADR Decision 5의 `apiCallTimeout`을 실제로 강제하려면 호출별 타임아웃 데코레이터가 필요하다. `@Primary`로
   delegate(`infraManagerDelegate`)를 감싸 별도 스레드풀에서 실행하고 `TimeoutException→CallTimeoutException` 변환.

@@ -10,6 +10,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
@@ -22,9 +23,14 @@ import org.springframework.stereotype.Component;
  * <p>{@code @Primary}이며 실제 전송 구현은 {@code @Qualifier("infraManagerDelegate")} 빈으로 주입된다
  * (자기참조 회피). delegate가 던지는 닫힌 어휘 예외는 그대로 통과시키고, 그 외 {@code RuntimeException}은
  * 언랩해 전파한다(fail-fast). 인터럽트는 {@link CallInterruptedException}으로 변환하고 인터럽트 플래그를 복원한다.
+ *
+ * <p>{@code @ConditionalOnBean(name = "infraManagerDelegate")} — 실제 HTTP delegate가 등록된 경우에만 활성화된다.
+ * 이 데모 repo는 프로덕션 HTTP 구현이 없으므로(테스트는 fake를 직접 주입) delegate가 없으면 이 데코레이터는
+ * 생성되지 않아 컨텍스트 기동을 깨뜨리지 않는다. 프로덕션은 {@code infraManagerDelegate} 빈을 제공해 활성화한다.
  */
 @Primary
 @Component
+@ConditionalOnBean(name = "infraManagerDelegate")
 public class TimeBoundedInfraManagerClient implements InfraManagerClient {
 
     private final InfraManagerClient delegate;

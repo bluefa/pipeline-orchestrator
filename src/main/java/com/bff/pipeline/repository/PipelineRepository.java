@@ -1,7 +1,6 @@
 package com.bff.pipeline.repository;
 
 import com.bff.pipeline.entity.Pipeline;
-import com.bff.pipeline.enums.PipelineStatus;
 import jakarta.persistence.LockModeType;
 import jakarta.persistence.QueryHint;
 import java.time.Instant;
@@ -16,12 +15,12 @@ import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.query.Param;
 
 /**
- * {@link Pipeline} 행(row)의 영속성 계층이다. ADR-016 도메인 질의({@code findByActiveTarget}, {@code finish})에
+ * {@link Pipeline} 행(row)의 영속성 계층이다. ADR-016 도메인 질의({@code findByActiveTarget})에
  * ADR-021 실행 모델의 claim/guard/cancel 질의를 더한다.
  *
  * <p>{@code findByActiveTarget}은 해당 target의 현재 활성 실행을 반환한다(불변식상 비종료 동안에만
- * {@code active_target == target}). {@code finish}는 RUNNING-가드 CAS로 pipeline을 종료시키고
- * {@code active_target}을 초기화한다.
+ * {@code active_target == target}). 종료 전이는 더 이상 별도 CAS가 아니라 tx2의 {@code FOR UPDATE} 잠금 아래
+ * 엔티티 setter로 수행된다({@code StepReporter.terminalize}/{@code cancelIfIdle}) — RUNNING 가드는 그 질의들이 직접 갖는다.
  *
  * <p><b>ADR-021 claim(tx1)</b>: {@code findClaimableDuePipelines}는 due predicate를 만족하는 행을
  * {@code PESSIMISTIC_WRITE} + lock-timeout {@code -2}(MySQL 8에서 {@code FOR UPDATE SKIP LOCKED}로 렌더링;
@@ -35,11 +34,6 @@ import org.springframework.data.repository.query.Param;
 public interface PipelineRepository extends JpaRepository<Pipeline, Long> {
 
     Optional<Pipeline> findByActiveTarget(String activeTarget);
-
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("update Pipeline p set p.status = :to, p.activeTarget = null, p.lastActivityAt = :now "
-            + "where p.id = :id and p.status = com.bff.pipeline.enums.PipelineStatus.RUNNING")
-    int finish(@Param("id") Long id, @Param("to") PipelineStatus to, @Param("now") Instant now);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))

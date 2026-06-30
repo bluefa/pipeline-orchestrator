@@ -80,7 +80,7 @@ public class StepReporter {
      * 정당한 단일 소유자이며, 그 report를 버리면 불필요한 재dispatch만 유발).
      */
     private boolean ownsClaim(Pipeline pipeline, String claimToken) {
-        return claimToken.equals(pipeline.getClaimedBy());
+        return claimToken != null && claimToken.equals(pipeline.getClaimedBy());
     }
 
     private void cancel(Pipeline pipeline, List<Task> chain) {

@@ -73,8 +73,11 @@ public class Pipeline {
 
     // ── ADR-021 실행 좌표(execution-coordination) 컬럼: claim/lease/cooperative-cancel. 도메인 상태와 분리된다. ──
 
-    /** 다음 claim 대상 시각. null이거나 과거이면 due. 성공 report/reschedule가 전진시킨다. */
-    @Column(name = "next_due_at")
+    /**
+     * 다음 claim 대상 시각. 과거(&lt;= now)이면 due. 생성 시 {@code now}로 시딩되고 성공 report/reschedule가 전진시키므로
+     * 항상 non-null이다(claim predicate {@code next_due_at <= now}는 null을 due로 보지 않으므로 null이면 영원히 unclaimed).
+     */
+    @Column(name = "next_due_at", nullable = false)
     private Instant nextDueAt;
 
     /** claim마다 새로 생성하는 fencing token(UUID). tx2 guarded write-back의 소유권 키이다. */
