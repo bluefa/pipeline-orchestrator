@@ -21,8 +21,11 @@ import org.springframework.transaction.annotation.Transactional;
  * matching token AND live lease)을 검증한 뒤 {@link StepOutcome}을 관리 엔티티에 적용한다.
  *
  * <p>소유권 검증 실패(스테일 스트래글러 또는 만료 리스 스트래글러)는 전체 report를 no-op으로 처리한다.
- * 리스 만료 스트래글러는 토큰이 여전히 일치하더라도 리스가 만료되면 쓰기가 거부된다(ADR Decision 5:
- * leaseDuration &gt; apiCallTimeout이므로 정상 tx2는 항상 유효 리스 안에서 실행됨). {@code cancelRequested}는
+ * 리스 만료 스트래글러는 토큰이 여전히 일치하더라도 리스가 만료되면 쓰기가 거부된다(ADR-021 Decision 5에
+ * 따라 리스를 충분히 크게 설정하면 정상 운영에서 tx2는 유효 리스 안에서 실행된다;
+ * {@link com.bff.pipeline.ExecutionSettings}는 최소 조건인 {@code leaseDuration > apiCallTimeout}만
+ * 강제하며, 병리적 리스 초과 시에는 report가 no-op으로 처리되고 재디스패치로 안전하게 회수된다(멱등)).
+ * {@code cancelRequested}는
  * 잠금을 획득한 직후 확인되므로 협력적 취소 플래그가 경합 없이 관찰된다(ADR Decision 6).
  * 관리 엔티티 필드 직접 설정 + dirty-check flush — CAS 없음
  * (ADR Decision 4/6: FOR UPDATE + 검증된 단일 쓰기자이므로 별도 상태 가드 불필요).

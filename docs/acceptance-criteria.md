@@ -1,4 +1,4 @@
-# ADR-016 Acceptance Criteria & Test Matrix
+# ADR-016 + ADR-021 Acceptance Criteria & Test Matrix
 
 The **definition of done** for this module, derived from
 [ADR-016](adr/016-install-delete-pipeline-domain-model.md). Each ADR decision becomes one or more
@@ -271,7 +271,13 @@ ErrorCode-discriminating retry + poll-phase timeout-observation tests).
 
 ## ADR-021 review campaign
 
-Rounds tracked separately (to be filled by the orchestrator after S7 merges).
+A multi-round codex (gpt-5.5 xhigh) + opus review campaign on the execution layer; every round's P0/P1 fixed before the next. 51 tests green.
 
-| Round | Reviewer | Verdict | P0 | P1 | P2 | Notes |
-|---|---|---|---|---|---|---|
+| Round | Reviewers | Verdict | Key findings → fixes |
+|---|---|---|---|
+| 1 | codex + opus×2 (two-tx race, ADR faithfulness) | fixes | same-tx2 BLOCKED→READY unblock (P1); admission index; retry backoff; adaptive load-control loop wiring the backoff/jitter/idle knobs; reschedule honors cancel |
+| 2 | codex + opus×2 (clean-code, docs/observation) | fixes | scheduler drain reworked: claim-vs-process split, CallInterrupted aborts the sweep (2×P1 regressions from the round-1 loop); StepRunner terminal-arm fail-fast; DRY catch helper; decorator Error pass-through; doc sync |
+| 3 | codex + adversarial opus | fixes | tx2 ownership requires a LIVE lease, not just a matching token (P1, closes the expired-straggler-vs-Case-A window); sweepOnce cancels outstanding futures on every interrupt path; drain interrupt-at-top; converge all-terminal defensive guard |
+| 4 | codex + persistence/JPA opus | docs only | MERGE-READY (both); MySQL-8 schema/index/lock mappings verified against generated Hibernate DDL; doc wording sync + recorded MySQL-CI/schema-freeze operational notes |
+| 5 | codex + test-engineer opus | tests | MERGE-READY (codex); added the two previously-untested components — TimeBoundedInfraManagerClient decorator + PipelineScheduler drain — plus retry-spacing / Case-A-expired / claim-release / Case-B discriminating asserts (41→51 tests) |
+| 6 | codex + holistic opus | APPROVE | 0 P0 / 0 P1; holistic cold-read APPROVE; only cosmetic polish (this round) |

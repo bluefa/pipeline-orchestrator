@@ -35,7 +35,7 @@ import org.springframework.context.annotation.Bean;
         "spring.jpa.hibernate.ddl-auto=create-drop",
         "pipeline.execution.scheduler-initial-delay=PT30M"
 })
-class PipelineEngineTransactionTest {
+class PipelineWorkerTransactionTest {
 
     @Autowired private PipelineCreator creator;
     @Autowired private PipelineControl control;

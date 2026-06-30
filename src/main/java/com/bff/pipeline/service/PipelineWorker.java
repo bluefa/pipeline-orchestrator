@@ -52,6 +52,11 @@ public class PipelineWorker {
         this.clock = clock;
     }
 
+    /**
+     * 단일 claim→process 사이클 진입점(테스트 및 편의용). 프로덕션 스윕({@link PipelineScheduler#drain})은
+     * {@code claimer.claimOneDue()} + {@code process(...)}를 직접 호출하여 클레임 단계 실패와
+     * 처리 단계 실패를 분리한다.
+     */
     public Optional<Long> pollOnce() {
         Optional<PipelineClaimer.Claim> claimed = claimer.claimOneDue();
         if (claimed.isEmpty()) return Optional.empty();

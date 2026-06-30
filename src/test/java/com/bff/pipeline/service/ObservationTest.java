@@ -30,7 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 관찰(observation) 전용 테이블의 쓰기 동작을 검증한다. 시도(attempt)마다 올바른 {@code attempt_no}를
  * 가진 {@code task_attempt} 행이 하나씩 기록되며, {@code task_check}는 폴링마다 새 행을 추가하는 것이
- * 아니라 attempt당 하나의 행을 제자리에서 갱신함을 확인한다. {@link PipelineEngineTest}의 Wiring
+ * 아니라 attempt당 하나의 행을 제자리에서 갱신함을 확인한다. {@link PipelineWorkerTest}의 Wiring
  * (fake InfraManager, 가변 Clock)을 재사용한다. {@code NOT_SUPPORTED}가 테스트 래핑 트랜잭션을
  * 억제하므로 관찰 행들이 각 단계의 커밋 후에도 유지된다.
  */
@@ -41,7 +41,7 @@ import org.springframework.transaction.annotation.Transactional;
         PipelineInserter.class, Recipes.class,
         StepRunner.class, StepReporter.class, PipelineClaimer.class, PipelineWorker.class,
         TimeBoundedInfraManagerClient.class,
-        PipelineEngineTest.Wiring.class})
+        PipelineWorkerTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class ObservationTest {
 
@@ -53,7 +53,7 @@ class ObservationTest {
     @Autowired private PipelineRepository pipelines;
     @Autowired private TaskAttemptRepository attempts;
     @Autowired private TaskCheckRepository checks;
-    @Autowired private PipelineEngineTest.MutableClock clock;
+    @Autowired private PipelineWorkerTest.MutableClock clock;
     @Autowired private FakeInfraManagerClient infraManager;
 
     @BeforeEach

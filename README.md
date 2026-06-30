@@ -1,7 +1,7 @@
 # pipeline-orchestrator
 
-The **ADR-016 install/delete pipeline domain model** and **ADR-021 claim-pull execution layer** —
-[PR #511](https://github.com/bluefa/pii-agent-demo/pull/511).
+The **ADR-016 install/delete pipeline domain model** ([PR #511](https://github.com/bluefa/pii-agent-demo/pull/511) — domain half)
+and **ADR-021 claim-pull execution layer** ([PR #512](https://github.com/bluefa/pii-agent-demo/pull/512) — execution half).
 
 A pipeline runs an ordered chain of tasks for **one target** to **INSTALL or DELETE**
 infrastructure. Each task is a `TERRAFORM_JOB` (dispatch a Terraform job, poll until it

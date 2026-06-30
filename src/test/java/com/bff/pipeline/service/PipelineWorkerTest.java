@@ -57,9 +57,9 @@ import org.springframework.transaction.annotation.Transactional;
         PipelineInserter.class, PipelineControl.class, Recipes.class,
         StepRunner.class, StepReporter.class, PipelineClaimer.class, PipelineWorker.class,
         TimeBoundedInfraManagerClient.class,
-        PipelineEngineTest.Wiring.class, PipelineEngineTest.PostCheckWiring.class})
+        PipelineWorkerTest.Wiring.class, PipelineWorkerTest.PostCheckWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-class PipelineEngineTest {
+class PipelineWorkerTest {
 
     private static final Instant START = Instant.parse("2026-06-23T00:00:00Z");
 

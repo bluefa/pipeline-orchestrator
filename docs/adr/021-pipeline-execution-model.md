@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — 2026-06-27.
+Accepted — implemented in pipeline-orchestrator (2026-06-27 proposed).
 
 This is the **execution half** of the install/delete pipeline design: how the durable state
 machine of [ADR-016](016-install-delete-pipeline-domain-model.md) is actually driven forward.

@@ -62,7 +62,7 @@ class PipelineExecutionTest {
     @Autowired private PipelineRepository pipelines;
     @Autowired private TaskAttemptRepository attempts;
     @Autowired private TaskCheckRepository checks;
-    @Autowired private PipelineEngineTest.MutableClock clock;
+    @Autowired private PipelineWorkerTest.MutableClock clock;
     @Autowired private FakeInfraManagerClient infraManager;
 
     @BeforeEach
@@ -202,8 +202,8 @@ class PipelineExecutionTest {
     static class Wiring {
 
         @Bean
-        PipelineEngineTest.MutableClock clock() {
-            return new PipelineEngineTest.MutableClock(START);
+        PipelineWorkerTest.MutableClock clock() {
+            return new PipelineWorkerTest.MutableClock(START);
         }
 
         @Bean("infraManagerDelegate")
