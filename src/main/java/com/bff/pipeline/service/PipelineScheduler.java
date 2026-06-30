@@ -101,6 +101,11 @@ public class PipelineScheduler {
      * 자기-재조정 스윕 루프의 단일 실행 단위이다. 예상치 못한 예외가 루프를 종료시키지 않도록
      * try/finally에서 항상 다음 실행을 재스케줄한다. 인터럽트(JVM 종료 신호)가 감지되면 재스케줄하지 않고
      * 루프를 종료한다.
+     *
+     * <p><b>nearest-due 조회 내결함성:</b> 유휴 스윕 후 nearest-due DB 조회는 best-effort이다.
+     * 조회가 실패해도 {@link #cappedIdleDelay(Duration)}가 예외를 흡수하고 비제한 적응형 대기 시간으로
+     * 폴백하므로, DB 일시 장애 중에도 {@code scheduler.schedule(...)}이 반드시 실행되어
+     * 자기-재조정 루프가 영구 중단되지 않는다.
      */
     void runSweep() {
         boolean workFound = false;
@@ -114,10 +119,28 @@ public class PipelineScheduler {
             if (!interrupted) {
                 Duration delay = nextDelay(workFound);
                 if (!workFound) {
-                    delay = capToNearestDue(delay, claimer.nearestClaimableDueAt(), clock.instant());
+                    delay = cappedIdleDelay(delay);
                 }
                 scheduler.schedule(this::runSweep, delay.toMillis(), TimeUnit.MILLISECONDS);
             }
+        }
+    }
+
+    /**
+     * 유휴 슬립을 nearest-due 시각으로 단축하되, DB 조회 실패 시 원래 대기 시간을 그대로 반환한다.
+     *
+     * <p>nearest-due 조회({@link PipelineClaimer#nearestClaimableDueAt()})는 best-effort이다:
+     * {@link RuntimeException}이 발생하면 WARN 로그 후 입력 {@code delay}를 그대로 반환하여
+     * DB 일시 장애 중에도 자기-재조정 루프가 계속 동작할 수 있도록 한다.
+     * {@link #capToNearestDue(Duration, java.util.Optional, java.time.Instant)}는 순수 함수로
+     * 변경하지 않는다 — DB 호출만 이 메서드에서 보호된다.
+     */
+    Duration cappedIdleDelay(Duration delay) {
+        try {
+            return capToNearestDue(delay, claimer.nearestClaimableDueAt(), clock.instant());
+        } catch (RuntimeException runtimeException) {
+            log.warn("nearest-due lookup failed; falling back to the uncapped idle delay", runtimeException);
+            return delay;
         }
     }
 

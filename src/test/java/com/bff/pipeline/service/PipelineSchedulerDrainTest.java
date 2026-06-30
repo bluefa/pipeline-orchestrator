@@ -7,6 +7,7 @@ import com.bff.pipeline.ExecutionSettings;
 import com.bff.pipeline.client.InfraManagerClient;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -128,7 +129,34 @@ class PipelineSchedulerDrainTest {
         assertThat(claimCallCount.get()).isEqualTo(1);
     }
 
-    // ── Test 3: 처리 중 CallInterrupted가 sweepOnce를 중단시킨다 ─────────────
+    // ── Test 3: nearest-due 조회 실패가 루프를 중단시키지 않는다 ────────────
+
+    /**
+     * {@link PipelineClaimer#nearestClaimableDueAt()}가 {@link RuntimeException}을 던질 때
+     * {@link PipelineScheduler#cappedIdleDelay(Duration)}이 예외를 전파하지 않고
+     * 입력 대기 시간을 그대로 반환함을 검증한다.
+     * 이는 DB 일시 장애 중에도 자기-재조정 루프가 영구 중단되지 않음을 직접적으로 증명한다.
+     */
+    @Test
+    void aFailedNearestDueLookupFallsBackToTheUncappedDelayAndKeepsTheLoopAlive() {
+        PipelineClaimer throwingClaimer = new PipelineClaimer(null, null, null) {
+            @Override
+            public Optional<Instant> nearestClaimableDueAt() {
+                throw new RuntimeException("DB connection lost");
+            }
+        };
+
+        scheduler = new PipelineScheduler(null, throwingClaimer, null, SETTINGS, Duration.ofHours(1),
+                Clock.systemUTC());
+        Duration originalDelay = Duration.ofSeconds(3);
+
+        Duration result = scheduler.cappedIdleDelay(originalDelay);
+
+        // 예외가 전파되지 않고, 원래 대기 시간이 그대로 반환된다.
+        assertThat(result).isEqualTo(originalDelay);
+    }
+
+    // ── Test 4: 처리 중 CallInterrupted가 sweepOnce를 중단시킨다 ──────────────
 
     /**
      * worker.process()가 {@link InfraManagerClient.CallInterruptedException}을 던지면
