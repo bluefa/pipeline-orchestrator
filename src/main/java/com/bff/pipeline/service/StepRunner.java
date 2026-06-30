@@ -7,8 +7,7 @@ import com.bff.pipeline.model.StepOutcome;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
 import java.util.function.Supplier;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
@@ -24,10 +23,9 @@ import org.springframework.stereotype.Component;
  * <p>결과 {@link StepOutcome}은 phase-B({@link StepReporter}→{@link TaskStateMachine})가 tx2 안에서
  * 태스크 전환으로 적용한다. {@code @Transactional}이 없다 — 트랜잭션 밖 실행이 이 클래스의 핵심 계약이다.
  */
+@Slf4j
 @Component
 public class StepRunner {
-
-    private static final Logger log = LoggerFactory.getLogger(StepRunner.class);
 
     private final TaskTypeRegistry taskTypes;
 

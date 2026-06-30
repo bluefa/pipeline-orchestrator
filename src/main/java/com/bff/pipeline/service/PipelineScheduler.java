@@ -17,8 +17,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -34,10 +33,9 @@ import org.springframework.stereotype.Component;
  * pipeline 단위로 격리되며(claim은 lease 만료로 reclaim), nearest-due 조회 실패는 uncapped fallback로
  * 루프를 살린다. 오직 인터럽트(JVM 종료)만 재예약을 멈춘다.
  */
+@Slf4j
 @Component
 public class PipelineScheduler {
-
-    private static final Logger log = LoggerFactory.getLogger(PipelineScheduler.class);
 
     private final PipelineWorker worker;
     private final PipelineClaimer claimer;

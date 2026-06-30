@@ -18,8 +18,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
@@ -41,12 +40,11 @@ import org.springframework.stereotype.Component;
  * <p>외부에서 반환된 값이 사용 불가능한 경우(빈 dispatch 응답, null poll 상태)는 영속/폴링 대신 호출 실패로 처리하여
  * ({@code CallFailedException}) 엔진이 재시도하도록 한다. 타입 이름 {@link #NAME}은 모든 terraform task 행에 저장된다.
  */
+@Slf4j
 @Component
 public class TerraformTask implements TaskType {
 
     public static final String NAME = "TERRAFORM_JOB";
-
-    private static final Logger log = LoggerFactory.getLogger(TerraformTask.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final TypeReference<List<String>> JOB_IDS = new TypeReference<>() { };
 
