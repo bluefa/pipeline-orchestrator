@@ -41,7 +41,7 @@ import org.springframework.stereotype.Component;
  * 디스패치 가능한 상태로 만든다.
  *
  * <p><b>불변식.</b> 디스패치는 멱등적이다 (ADR-016 §5): IN_PROGRESS 저장 이전에 장애가 발생해도
- * 다음 advance에서 재디스패치로 복구된다. 재시도 시 job id는 초기화되고 {@code nextCheckAt}은
+ * 다음 advance에서 재디스패치로 복구된다. 재시도 시 새 시도가 새 {@code response}를 기록하고 {@code nextCheckAt}은
  * null로 설정되어 새 디스패치가 즉시 실행 가능한 상태가 된다. 시도 관찰 행은 태스크 종료와 동일
  * 트랜잭션에서 종료 처리되므로, 커밋 후 종료된 태스크 뒤에 IN_PROGRESS 상태의 관찰이 남지 않는다.
  * 또한 {@code failCount}가 증가하기 전에 종료 처리되므로, 정확한 {@code attempt_number}에 기록된다.
@@ -57,21 +57,21 @@ import org.springframework.stereotype.Component;
  * {@code ErrorCode} 값이다. {@code docs/exception-strategy.md}를 참조한다.
  */
 @Component
-public class TaskMachine {
+public class TaskStateMachine {
 
-    private static final Logger log = LoggerFactory.getLogger(TaskMachine.class);
+    private static final Logger log = LoggerFactory.getLogger(TaskStateMachine.class);
 
     private final TaskTypeRegistry taskTypes;
     private final TaskRepository tasks;
-    private final Observations observations;
+    private final ObservationRecorder observationRecorder;
     private final PipelineSettings settings;
     private final Clock clock;
 
-    public TaskMachine(TaskTypeRegistry taskTypes, TaskRepository tasks, Observations observations,
+    public TaskStateMachine(TaskTypeRegistry taskTypes, TaskRepository tasks, ObservationRecorder observationRecorder,
             PipelineSettings settings, Clock clock) {
         this.taskTypes = taskTypes;
         this.tasks = tasks;
-        this.observations = observations;
+        this.observationRecorder = observationRecorder;
         this.settings = settings;
         this.clock = clock;
     }
@@ -94,14 +94,14 @@ public class TaskMachine {
     private void dispatch(String target, Task task) {
         TaskType type = typeOrFail(task);
         if (type == null) return;
-        observations.beginAttempt(task);
+        observationRecorder.beginAttempt(task);
         runExternalCall(task, () -> { recordDispatch(task, type.execute(target, task)); return TaskProgress.SUCCEEDED; }, false)
                 .ifPresent(ignored -> markInProgress(task));
     }
 
     private void recordDispatch(Task task, DispatchResult dispatchResult) {
         switch (dispatchResult) {
-            case DispatchResult.WithResponse withResponse -> observations.recordResponse(task, withResponse.response());
+            case DispatchResult.WithResponse withResponse -> observationRecorder.recordResponse(task, withResponse.response());
             case DispatchResult.None ignored -> { }
         }
     }
@@ -109,7 +109,7 @@ public class TaskMachine {
     private void poll(String target, Task task) {
         TaskType type = typeOrFail(task);
         if (type == null) return;
-        TaskAttempt attempt = observations.currentAttempt(task).orElse(null);
+        TaskAttempt attempt = observationRecorder.currentAttempt(task).orElse(null);
         runExternalCall(task, () -> type.check(target, task, attempt), true)
                 .ifPresent(progress -> applyCheck(task, progress));
     }
@@ -123,7 +123,7 @@ public class TaskMachine {
     }
 
     private void recordPendingAndReschedule(Task task, TaskProgress.Pending pending) {
-        observations.recordCheck(task, pending.observed());
+        observationRecorder.recordCheck(task, pending.observed());
         reschedule(task, TaskSettings.resolvePollingInterval(task, settings));
     }
 
@@ -147,19 +147,19 @@ public class TaskMachine {
             return Optional.of(call.get());
         } catch (InfraManagerClient.CallTimeoutException exception) {
             log.warn("InfraManager call timed out for task {} ({})", task.getId(), task.getTaskName());
-            if (recordObservation) observations.recordCheck(task, CheckSignal.CALL_TIMEOUT);
+            if (recordObservation) observationRecorder.recordCheck(task, CheckSignal.CALL_TIMEOUT);
             retryOrFail(task, ErrorCode.CALL_TIMEOUT);
             return Optional.empty();
         } catch (InfraManagerClient.CallFailedException exception) {
             log.warn("InfraManager call failed for task {} ({}): {}", task.getId(), task.getTaskName(), exception.getMessage());
-            if (recordObservation) observations.recordCheck(task, CheckSignal.API_ERROR);
+            if (recordObservation) observationRecorder.recordCheck(task, CheckSignal.API_ERROR);
             retryOrFail(task, ErrorCode.CHECK_ERROR);
             return Optional.empty();
         }
     }
 
     private void failOutright(Task task, ErrorCode reason) {
-        observations.endAttempt(task, TaskStatus.FAILED, reason);
+        observationRecorder.endAttempt(task, TaskStatus.FAILED, reason);
         fail(task, reason);
     }
 
@@ -172,7 +172,7 @@ public class TaskMachine {
     }
 
     private void retryOrFail(Task task, ErrorCode reason) {
-        observations.endAttempt(task, TaskStatus.FAILED, reason);
+        observationRecorder.endAttempt(task, TaskStatus.FAILED, reason);
         task.setFailCount(task.getFailCount() + 1);
         if (task.getFailCount() >= TaskSettings.resolveMaxFailCount(task, settings)) {
             fail(task, reason);
@@ -188,7 +188,7 @@ public class TaskMachine {
         task.setStatus(TaskStatus.DONE);
         task.setFinishedAt(clock.instant());
         tasks.save(task);
-        observations.endAttempt(task, TaskStatus.DONE, null);
+        observationRecorder.endAttempt(task, TaskStatus.DONE, null);
     }
 
     private void fail(Task task, ErrorCode reason) {

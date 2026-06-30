@@ -11,7 +11,7 @@
   - `dispatchResponseCode`/`dispatchResponseSummary` (:63-64) **삭제** (ADR Schema에서 제거됨).
   - javadoc: "쓰기 전용/절대 안 읽음" 제거 → "최신 row가 완료 `check`의 입력. 각 종류가 `response` 역직렬화."
 - `model/TaskType.java`
-  - `check(target, task)` → **`check(target, task, attempt)`** (최신 `TaskAttempt` 전달). `execute`는 원시 response를 돌려주도록 시그니처 조정(반환 String) — 엔진이 `Observations`로 attempt.response에 기록.
+  - `check(target, task)` → **`check(target, task, attempt)`** (최신 `TaskAttempt` 전달). `execute`는 원시 response를 돌려주도록 시그니처 조정(반환 String) — 엔진이 `ObservationRecorder`로 attempt.response에 기록.
   - javadoc: 각 종류가 자기 `response`를 역직렬화함을 명시.
 - `client/InfraManagerClient.java`
   - `String runTerraform(...)` → **원시 dispatch response(String, N개 job id 포함 가능)** 반환. javadoc 갱신.

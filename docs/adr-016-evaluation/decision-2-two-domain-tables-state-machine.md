@@ -4,9 +4,8 @@
 
 부분 준수. `pipeline`/`task` rows, basic task lifecycle, blocked chain, and stored
 `pipeline.status` projection are implemented. However, the implementation materially differs from
-the external ADR schema/enums: no `TaskKind` enum, no `task.kind` column, a `task.jobId` column is
-present, `ErrorCode` values differ, and recipe selection is by `PipelineType` only, not
-`(type, provider)`.
+the external ADR schema/enums: no `TaskKind` enum, no `task.kind` column, `ErrorCode` values differ,
+and recipe selection is by `PipelineType` only, not `(type, provider)`.
 
 ## ADR requirements
 
@@ -32,8 +31,8 @@ present, `ErrorCode` values differ, and recipe selection is by `PipelineType` on
 - the engine reads the task chain ordered by sequence:
   `src/main/java/com/bff/pipeline/service/PipelineEngine.java:63`
 - `BLOCKED -> READY`, `READY -> IN_PROGRESS`, and `IN_PROGRESS -> DONE/FAILED` are driven in
-  `TaskMachine`:
-  `src/main/java/com/bff/pipeline/service/TaskMachine.java:77`
+  `TaskStateMachine`:
+  `src/main/java/com/bff/pipeline/service/TaskStateMachine.java:77`
 - pipeline projection is converged in the same `@Transactional` `advance` method:
   `src/main/java/com/bff/pipeline/service/PipelineEngine.java:58`,
   `src/main/java/com/bff/pipeline/service/PipelineEngine.java:77`
@@ -52,8 +51,6 @@ present, `ErrorCode` values differ, and recipe selection is by `PipelineType` on
 - production task types are named with strings:
   `src/main/java/com/bff/pipeline/service/TerraformTask.java:31`,
   `src/main/java/com/bff/pipeline/service/ConditionCheckTask.java:25`
-- `task.jobId` exists even though the external ADR schema says task has no job-id column:
-  `src/main/java/com/bff/pipeline/entity/Task.java:77`
 - `ErrorCode` uses `TIME_TO_LIVE_EXPIRED` and adds `UNKNOWN_TASK`; external ADR says
   `TTL_EXPIRED` and does not list `UNKNOWN_TASK`:
   `src/main/java/com/bff/pipeline/enums/ErrorCode.java:17`

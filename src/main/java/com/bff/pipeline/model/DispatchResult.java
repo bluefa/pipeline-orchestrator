@@ -5,11 +5,10 @@ package com.bff.pipeline.model;
  * 엔진은 이 값을 보고 {@code task_attempt.response}(text)에 무엇을 기록할지 exhaustive하게 결정한다.
  *
  * <ul>
- *   <li>{@link WithResponse} — dispatch가 원시 응답 텍스트를 돌려준 경우(TERRAFORM_JOB은 {@code N}개 job id를 담은
- *       JSON). {@code response}가 그대로 {@code task_attempt.response}에 저장되며, 완료 판정 시 각 {@link TaskType}이
- *       자기 형식으로 역직렬화한다.</li>
- *   <li>{@link #NONE} — 디스패치할 대상이 없는 순수 폴링 타입(CONDITION_CHECK)의 <b>응답 없음(void)</b> 결과.
- *       기록할 응답이 없다.</li>
+ *   <li>{@link WithResponse} — dispatch가 <b>원시 응답 텍스트</b>를 돌려준 경우. 엔진은 그 텍스트의 형식을
+ *       해석하지 않고 {@code task_attempt.response}에 그대로 저장하며, 완료 판정 시 각 {@link TaskType}이
+ *       자기 형식으로 역직렬화한다(응답 스키마는 전적으로 해당 task type의 사적 계약이다).</li>
+ *   <li>{@link #NONE} — 디스패치할 대상이 없는 순수 폴링 타입의 <b>응답 없음(void)</b> 결과. 기록할 응답이 없다.</li>
  * </ul>
  */
 public sealed interface DispatchResult permits DispatchResult.WithResponse, DispatchResult.None {

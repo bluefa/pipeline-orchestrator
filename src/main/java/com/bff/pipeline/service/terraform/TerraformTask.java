@@ -1,4 +1,4 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.terraform;
 
 import com.bff.pipeline.PipelineSettings;
 import com.bff.pipeline.client.InfraManagerClient;
@@ -10,6 +10,8 @@ import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
+import com.bff.pipeline.model.terraform.JobIdTerraformJob;
+import com.bff.pipeline.model.terraform.TerraformJob;
 import com.bff.pipeline.utils.TaskSettings;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -24,9 +26,10 @@ import org.springframework.stereotype.Component;
  * Terraform 잡을 디스패치하고 완료까지 폴링하는 {@link TaskType} 구현체이다(ADR-016 ed97ec0 §5).
  * {@code execute}는 한 번의 dispatch가 만든 <b>{@code N}개 job id를 담은 원시 response</b>(JSON 배열)를 반환하고,
  * 엔진이 이를 {@code task_attempt.response}에 기록한다. {@code check}는 최신 attempt의 {@code response}를
- * Jackson으로 역직렬화해 각 job을 폴링하며, task별 실행 타임아웃(execution timeout)의 제약을 받는다.
+ * Jackson으로 역직렬화해 {@link TerraformJob} 목록으로 만든 뒤 <b>각 job이 자기 상태를 스스로 조회</b>하게 하고
+ * ({@link TerraformJob#pollStatus}), 그 결과를 task 단위로 집계한다 — task별 실행 타임아웃(execution timeout)의 제약을 받는다.
  *
- * <p><b>완료 집계(N개 job).</b> 모든 job이 success로 끝나면 {@code SUCCEEDED}; 하나라도 FAILED면 재시도 가능한
+ * <p><b>완료 집계(N개 job, whole-task 재시도).</b> 모든 job이 success로 끝나면 {@code SUCCEEDED}; 하나라도 FAILED면 재시도 가능한
  * {@code JOB_FAILED}; 아직 running이고 executionTimeout 전이면 {@code pending}; executionTimeout을 넘기면
  * 재시도 가능한 {@code EXECUTION_TIMEOUT}이다.
  *
@@ -91,7 +94,8 @@ public class TerraformTask implements TaskType {
                     task.getId(), attempt.getAttemptNumber());
             return TaskProgress.failedTerminal(ErrorCode.CHECK_ERROR);
         }
-        return pollAll(task, jobIds);
+        List<TerraformJob> jobs = jobIds.stream().map(jobId -> (TerraformJob) new JobIdTerraformJob(jobId)).toList();
+        return aggregate(task, jobs);
     }
 
     private boolean isBlankJobId(String jobId) {
@@ -108,13 +112,10 @@ public class TerraformTask implements TaskType {
         return TaskProgress.pending(CheckSignal.RUNNING);
     }
 
-    private TaskProgress pollAll(Task task, List<String> jobIds) {
+    private TaskProgress aggregate(Task task, List<TerraformJob> jobs) {
         boolean allFinished = true;
-        for (String jobId : jobIds) {
-            TerraformPoll poll = infraManager.terraformJobStatus(jobId);
-            if (poll == null) {
-                throw new InfraManagerClient.CallFailedException("InfraManager returned no status for job " + jobId);
-            }
+        for (TerraformJob job : jobs) {
+            TerraformPoll poll = job.pollStatus(infraManager);
             if (poll.finished()) {
                 if (!poll.succeeded()) {
                     return TaskProgress.failedRetryable(ErrorCode.JOB_FAILED);

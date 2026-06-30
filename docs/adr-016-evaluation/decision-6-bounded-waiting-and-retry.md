@@ -28,9 +28,9 @@ contract, not implemented inside this module.
 - defaults are in `PipelineSettings`:
   `src/main/java/com/bff/pipeline/PipelineSettings.java:21`
 - external call failures map to `CALL_TIMEOUT` or `CHECK_ERROR` and call `retryOrFail`:
-  `src/main/java/com/bff/pipeline/service/TaskMachine.java:148`
+  `src/main/java/com/bff/pipeline/service/TaskStateMachine.java:148`
 - `retryOrFail` increments `failCount`, fails at/above max, or resets to `READY` for a fresh run:
-  `src/main/java/com/bff/pipeline/service/TaskMachine.java:180`
+  `src/main/java/com/bff/pipeline/service/TaskStateMachine.java:180`
 - Terraform failed poll and execution timeout are retryable failures:
   `src/main/java/com/bff/pipeline/service/TerraformTask.java:65`,
   `src/main/java/com/bff/pipeline/service/TerraformTask.java:68`
@@ -44,7 +44,7 @@ contract, not implemented inside this module.
   `src/main/java/com/bff/pipeline/service/ConditionCheckTask.java:51`
 - terminal failures call `failOutright`, not `retryOrFail`, so condition TTL does not increment
   `failCount` and does not retry:
-  `src/main/java/com/bff/pipeline/service/TaskMachine.java:133`
+  `src/main/java/com/bff/pipeline/service/TaskStateMachine.java:133`
 - per-call timeout is modeled by `InfraManagerClient.CallTimeoutException`:
   `src/main/java/com/bff/pipeline/client/InfraManagerClient.java:14`
   but there is no timeout duration or enforcement implementation in this ADR-016 module.

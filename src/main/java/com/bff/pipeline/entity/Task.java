@@ -35,9 +35,9 @@ import org.hibernate.type.SqlTypes;
  * 이 값들은 {@link JdbcTypeCode}를 통해 BIGINT(나노초 단위, Hibernate의 Duration 매핑 방식)로 저장된다.
  *
  * <p>{@code sequence}는 체인 내 위치를 나타낸다. {@code taskName}은 task 타입의 이름으로, 엔진이 이를
- * {@code TaskType}으로 해석하여 해당 task를 구동한다. dispatch 핸들(TERRAFORM_JOB의 N개 job id를 담은 원시
- * response)은 더 이상 task에 두지 않는다(ADR-016 ed97ec0): {@code task_attempt.response}에만 존재하며, 완료는
- * 최신 attempt를 읽는 {@code check(attempt, task)}로 판정한다(§3 invariant 1).
+ * {@code TaskType}으로 해석하여 해당 task를 구동한다. dispatch가 반환한 원시 response는 더 이상 task에 두지
+ * 않는다(ADR-016 ed97ec0): {@code task_attempt.response}에만 존재하며, 완료는 최신 attempt를 읽는
+ * {@code check(attempt, task)}로 판정한다(§3 invariant 1).
  * {@code errorCode}는 {@code status == FAILED}인 경우에만 설정된다. {@code nextCheckAt}은 폴링 task가 다음에
  * 실행될 시각이며, null은 즉시 실행 대상임을 의미한다. {@code version}은 낙관적 락(optimistic lock)이다:
  * InfraManager 호출이 느린 도중 cancel이 CANCELLED를 커밋하면 이 값이 증가하므로, 진행 중(in-flight)인 advance의

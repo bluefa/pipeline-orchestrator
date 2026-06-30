@@ -4,6 +4,7 @@ import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.model.Recipe;
 import com.bff.pipeline.model.RecipeStep;
+import com.bff.pipeline.service.terraform.TerraformTask;
 import java.util.List;
 import org.springframework.stereotype.Component;
 

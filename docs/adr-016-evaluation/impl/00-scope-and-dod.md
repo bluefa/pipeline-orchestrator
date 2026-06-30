@@ -73,7 +73,7 @@ job 핸들을 도메인 `task.job_id`에서 제거하고, dispatch 결과 원시
 |---|---|---|---|
 | 1 | `wave-1` (=ADR sync + 본 문서들) | ADR ed97ec0 동기화, scope/DoD/wave 문서 | (plan sanity) |
 | 2 | `wave-2-domain-model-and-seam.md` | 엔티티(`Task`/`TaskAttempt`) + 계약(`TaskType`/`InfraManagerClient`/repo) | opus/codex |
-| 3 | `wave-3-engine-and-observations.md` | `TaskMachine`/`Observations`/`TerraformTask`/`ConditionCheckTask`/`TaskCanceller` 배선 + D-3/D-4/D-5 | opus/codex |
+| 3 | `wave-3-engine-and-observations.md` | `TaskStateMachine`/`ObservationRecorder`/`TerraformTask`/`ConditionCheckTask`/`TaskCanceller` 배선 + D-3/D-4/D-5 | opus/codex |
 | 4 | `wave-4-tests.md` | 테스트 재타겟 + 신규, `mvn test` GREEN | opus/codex (final) |
 
 각 wave: **구현 → `mvn test`(가능 지점) → opus/codex 리뷰 → P0/P1 수정 → 다음 wave.**

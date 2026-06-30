@@ -4,16 +4,16 @@
 
 ## 변경 파일 & 작업
 
-- `service/Observations.java`
+- `service/ObservationRecorder.java`
   - `recordJobId` → **`recordResponse(task, rawResponse)`**: dispatch 직후 최신 attempt에 `response` 기록.
   - `beginAttempt`에서 `task.getJobId()` 복사 제거.
   - 완료용 "최신 attempt 읽기"는 repo 메서드로 노출(엔진이 호출). write 경로의 no-op(없으면) 유지하되, **read 경로는 '없음'을 엔진에 신호**해야 함(D-4 분기용).
-- `service/TaskMachine.java`
+- `service/TaskStateMachine.java`
   - `poll`(:100-): 최신 attempt 로드 → `type.check(target, task, attempt)` 호출.
   - **D-4 (결과 유실)**: 최신 attempt의 `response`가 **없음**(dispatch 후 write 실패/크래시) → 즉시 CHECK_ERROR 아님 → **executionTimeout fallthrough**(deadline 도달 시 retryable `EXECUTION_TIMEOUT` → `retryOrFail`로 failCount 공유). **반드시 `log.warn`으로 '어느 단계(dispatch 후 write)에서 왜 유실됐는지' 명시.**
   - **D-5 (malformed-present)**: `response`는 있으나 역직렬화 실패 → **fail 처리**(유실과 구분; `applyFailure`/`failOutright` 경로, 사유 로깅).
   - `markInProgress`(:170-171) jobId 미러링 제거; `retryOrFail`(:189) `setJobId(null)` 제거. fresh-run은 새 attempt 행으로 성립.
-  - `dispatch`: `execute`가 돌려준 원시 response를 `Observations.recordResponse`로 기록(write 실패 시 D-4 경로).
+  - `dispatch`: `execute`가 돌려준 원시 response를 `ObservationRecorder.recordResponse`로 기록(write 실패 시 D-4 경로).
 - `service/TerraformTask.java`
   - `execute`: `task.setJobId` 제거 → 원시 dispatch response 반환(엔진이 기록). null/blank → `CallFailedException` 유지.
   - `check(target, task, attempt)`: `attempt.response`를 **Jackson 파싱**해 N개 job id 추출(새 의존성 X, Response 클래스 X). 각 job 폴링 후 **D-3 집계**: 전부 success→`SUCCEEDED`; 하나라도 failed→`failedRetryable(JOB_FAILED)`; 아직 running & executionTimeout 전→`pending`; executionTimeout 도달→`failedRetryable(EXECUTION_TIMEOUT)`. 파싱 실패→D-5(fail).

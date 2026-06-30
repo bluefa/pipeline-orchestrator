@@ -20,7 +20,7 @@ Two sub-cases:
 - **A new *kind* of task** — implement the **`TaskType`** interface
   (`taskName()` / `execute(target, task)` / `check(target, task) → TaskProgress`) as a `@Component` in
   `service/`. It **registers itself** in `TaskTypeRegistry` (built from the injected `List<TaskType>`),
-  so there is **no enum to extend and no `switch` to edit** — `TaskMachine` resolves the row's
+  so there is **no enum to extend and no `switch` to edit** — `TaskStateMachine` resolves the row's
   `taskName` to its type generically. Reference the new type's `taskName` from a recipe step. Its
   failure modes are new `ErrorCode` values returned as `TaskProgress.failed(reason, retryable)` and
   handled exactly like the existing ones (see [exception-strategy.md](exception-strategy.md)).
@@ -43,7 +43,7 @@ downstream consumers with the same delivery guarantee as the state change.
 
 - **The seam is the single per-pipeline transaction.** Every terminal/transition write already happens
   in one transaction: `PipelineEngine.converge` (via the guarded `finish()` CAS),
-  `PipelineControl.cancel`, and the `TaskMachine` transitions (all in `service/`). An outbox row is
+  `PipelineControl.cancel`, and the `TaskStateMachine` transitions (all in `service/`). An outbox row is
   inserted **in that same transaction**, so the event is committed atomically with the state it
   describes — no dual-write gap.
 - **What it adds:** a `pipeline_event` table (append-only) and a separate relay/poller that ships
@@ -64,15 +64,23 @@ To keep the file count and concept count low (a stated goal of the ADR and the o
 - No generic "pipeline definition" engine — recipes are code defaults in a `Map` (`Recipes`).
 - `TaskOperation` stays a closed enum until the operation set actually opens.
 
-## The two interfaces that earn their place
+## The interfaces that earn their place
 
 The file/concept budget is tight, so an `interface` must be justified — either a real external boundary
-or genuine multi-implementation polymorphism. Exactly two qualify:
+or genuine multi-implementation polymorphism. Three qualify:
 
 - **`InfraManagerClient`** (`client/`) — a real external integration, with a production (HTTP) and a
   test (fake) implementation.
-- **`TaskType`** (`service/`) — a genuine strategy with two real implementations today
+- **`TaskType`** (`model/`, impls in `service/`) — a genuine strategy with two real implementations today
   (`TerraformTask`, `ConditionCheckTask`) and an open set tomorrow, resolved by name through a registry.
-  A `switch` on a closed `kind` enum would force every new task type to edit `TaskMachine`; the
-  interface + registry makes a new type an additive, self-registering file. A single-implementation
-  interface would *not* earn its place — these two do.
+  A `switch` on a closed `kind` enum would force every new task type to edit `TaskStateMachine`; the
+  interface + registry makes a new type an additive, self-registering file.
+- **`TerraformJob`** (`model/`) — the seam that makes <em>per-job completion-check ownership</em> explicit:
+  one terraform dispatch yields N jobs, and each job decides for itself how its completion is judged
+  (its own InfraManager call + interpretation), while `TerraformTask.aggregate` stays independent of any
+  one job kind. This is a deliberate owner decision: terraform jobs are heterogeneous in principle (a job
+  whose completion is *not* keyed on a job id is expected), so the check scenario belongs to each job
+  kind, not to a single hard-coded loop. It carries **one implementation today** (`JobIdTerraformJob`,
+  polled by job id); the seam — not a second impl — is what earns it, and a new kind is an additive file.
+  This is the one intentional exception to the "no single-implementation interface" guard, made because
+  the variable concern (how a job is checked) is real and owner-mandated, not speculative.
