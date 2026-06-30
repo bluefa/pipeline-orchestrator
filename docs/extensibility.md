@@ -1,7 +1,7 @@
 # Extensibility — v1 seams
 
-This is a **v1** domain model. Three extensions are anticipated: more tasks, a Task Post-Check, and
-an Event Outbox. This document records **where each plugs in** so the v1 code stays minimal (none of
+This is a **v1** domain model. Two extensions are anticipated: more tasks and an Event Outbox. This
+document records **where each plugs in** so the v1 code stays minimal (none of
 them is built yet — YAGNI) while the seams are deliberate, not accidental.
 
 The guiding principle: the extension points are **concrete and few** — the recipe catalog
@@ -36,24 +36,7 @@ operation set becomes open or configured, replace the enum with a small registry
 metadata) and validate against it — the ADR names this as the alternative. Until then, a closed enum
 keeps it type-safe and is the cheaper choice.
 
-## 2. Task Post-Check
-
-A post-check is a verification that runs *after* a task's main work succeeds (e.g. confirm the applied
-infrastructure actually answers). The lifecycle is: **`execute` → `check` → `postCheck`**.
-
-- **If the check is a distinct step**, it is already expressible today: add a `CONDITION_CHECK` step
-  after the `TERRAFORM_JOB` step in the recipe. The `INSTALL` recipe already does exactly this
-  (`apply-network` then `network-ready`). No new mechanism is needed for this common case.
-- **If the check must be bound to the task itself** (one row, "done *and* verified"), override
-  `TaskType.postCheck(target, task)`. This default-no-op method is already wired into `TaskMachine`:
-  when `check` returns `Succeeded`, the engine calls `postCheck` and acts on its `TaskProgress` result
-  before marking the task DONE. A `Succeeded` result completes the task; `Pending` reschedules it
-  (identical to a poll reschedule); `Failed` retries or fails the task (same failure model as `check`).
-  A failed post-check is returned as `TaskProgress.failed(...)` — a business value, never a thrown
-  exception. The default `postCheck` returns `SUCCEEDED`, so all existing task types complete exactly
-  as before: the seam is open but costs nothing until a type overrides it.
-
-## 3. Event Outbox
+## 2. Event Outbox
 
 An outbox durably publishes domain events (pipeline `DONE`/`FAILED`/`CANCELLED`, task transitions) to
 downstream consumers with the same delivery guarantee as the state change.

@@ -52,8 +52,7 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineEngine.class, TaskMachine.class, TaskTypeRegistry.class, TerraformTask.class,
         ConditionCheckTask.class, Observations.class, TaskCanceller.class, PipelineCreator.class,
-        PipelineInserter.class, PipelineControl.class, Recipes.class, PipelineEngineTest.Wiring.class,
-        PipelineEngineTest.PostCheckWiring.class})
+        PipelineInserter.class, PipelineControl.class, Recipes.class, PipelineEngineTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineEngineTest {
 
@@ -68,7 +67,6 @@ class PipelineEngineTest {
     @Autowired private TaskCheckRepository checks;
     @Autowired private MutableClock clock;
     @Autowired private FakeInfraManagerClient infraManager;
-    @Autowired private PostCheckProbeTask postCheckProbe;
 
     @BeforeEach
     void reset() {
@@ -76,7 +74,6 @@ class PipelineEngineTest {
         infraManager.onDispatch(() -> "[\"job-1\"]");
         infraManager.onPoll(TerraformPoll::running);
         infraManager.onCheck(() -> false);
-        postCheckProbe.onPostCheck(() -> TaskProgress.SUCCEEDED);
     }
 
     @AfterEach
@@ -297,58 +294,6 @@ class PipelineEngineTest {
         assertThat(status(pipeline)).isEqualTo(PipelineStatus.FAILED);
     }
 
-    @Test
-    void postCheckFailureFailsTheTask() {
-        Pipeline pipeline = creator.create("t-pc-fail", PipelineType.DELETE);
-        Task task0 = task(pipeline, 0);
-        task0.setTaskName(PostCheckProbeTask.NAME);
-        tasks.save(task0);
-        postCheckProbe.onPostCheck(() -> TaskProgress.failedTerminal(ErrorCode.JOB_FAILED));
-
-        advance(pipeline);
-        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
-        advance(pipeline);
-
-        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.FAILED);
-        assertThat(task(pipeline, 0).getErrorCode()).isEqualTo(ErrorCode.JOB_FAILED);
-        assertThat(status(pipeline)).isEqualTo(PipelineStatus.FAILED);
-    }
-
-    @Test
-    void postCheckCallFailureBecomesCheckErrorAndRetries() {
-        Pipeline pipeline = creator.create("t-pc-callfail", PipelineType.DELETE);
-        Task task0 = task(pipeline, 0);
-        task0.setTaskName(PostCheckProbeTask.NAME);
-        tasks.save(task0);
-        postCheckProbe.onPostCheck(() -> { throw new InfraManagerClient.CallFailedException("post-check call failed"); });
-
-        advance(pipeline);
-        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
-        advance(pipeline);
-
-        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
-        assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
-        assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
-                .isEqualTo(ErrorCode.CHECK_ERROR);
-    }
-
-    @Test
-    void postCheckPendingReschedulesAndKeepsRunning() {
-        Pipeline pipeline = creator.create("t-pc-pending", PipelineType.DELETE);
-        Task task0 = task(pipeline, 0);
-        task0.setTaskName(PostCheckProbeTask.NAME);
-        tasks.save(task0);
-        postCheckProbe.onPostCheck(() -> TaskProgress.pending(CheckSignal.NOT_MET));
-
-        advance(pipeline);
-        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
-
-        advance(pipeline);
-
-        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
-        assertThat(task(pipeline, 0).getNextCheckAt()).isAfter(clock.instant());
-        assertThat(status(pipeline)).isEqualTo(PipelineStatus.RUNNING);
-    }
 
 
     @Test
@@ -483,12 +428,6 @@ class PipelineEngineTest {
         }
     }
 
-    @TestConfiguration
-    static class PostCheckWiring {
-        @Bean
-        PostCheckProbeTask postCheckProbe() { return new PostCheckProbeTask(); }
-    }
-
     /** 테스트용 {@link Clock} 구현체로, instant를 명시적으로 설정하거나 진행시킬 수 있어 테스트 추적에서 시간을 제어한다. */
     static final class MutableClock extends Clock {
         private Instant now;
@@ -521,19 +460,4 @@ class PipelineEngineTest {
         }
     }
 
-    static final class PostCheckProbeTask implements com.bff.pipeline.model.TaskType {
-        static final String NAME = "POST_CHECK_PROBE";
-        private java.util.function.Supplier<TaskProgress> postCheckBehavior = () -> TaskProgress.SUCCEEDED;
-        void onPostCheck(java.util.function.Supplier<TaskProgress> behavior) { this.postCheckBehavior = behavior; }
-        public String taskName() { return NAME; }
-        public com.bff.pipeline.model.DispatchResult execute(String target, Task task) {
-            return com.bff.pipeline.model.DispatchResult.NONE;
-        }
-        public TaskProgress check(String target, Task task, com.bff.pipeline.entity.TaskAttempt attempt) {
-            return TaskProgress.SUCCEEDED;
-        }
-        public TaskProgress postCheck(String target, Task task, com.bff.pipeline.entity.TaskAttempt attempt) {
-            return postCheckBehavior.get();
-        }
-    }
 }

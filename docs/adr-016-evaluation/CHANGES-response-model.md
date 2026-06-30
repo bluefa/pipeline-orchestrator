@@ -39,7 +39,7 @@
 - `dispatch_response_code/summary`(:63-64) 처리는 owner 결정(아래 Q2).
 
 ### C. 서비스 / 클라이언트
-- `model/TaskType.java:36-41` — `check`(및 필요시 `execute`/`postCheck`)가 **최신 attempt(또는 response)** 에 접근하도록
+- `model/TaskType.java:36-41` — `check`(및 필요시 `execute`)가 **최신 attempt(또는 response)** 에 접근하도록
   seam 변경. (signature를 `check(attempt, task)`로 바꾸기 vs `TerraformTask`에 "최신 attempt 읽기 port" 부여 — Q1)
 - `client/InfraManagerClient.java:29` — `runTerraform`이 단일 `String jobId` 대신 **원시 response**(N ids 포함 가능) 반환.
   `terraformJobStatus`(:32) 입력도 새 완료 경로가 주는 값으로.

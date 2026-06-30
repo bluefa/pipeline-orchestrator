@@ -30,7 +30,7 @@ import org.springframework.stereotype.Component;
  * <pre>
  *   BLOCKED      → unblock → READY                         (선행 태스크가 DONE 도달)
  *   READY        → type.execute (멱등 디스패치)             → IN_PROGRESS
- *   IN_PROGRESS  → type.check → Succeeded → type.postCheck → DONE (실패 시 재예약/재시도)
+ *   IN_PROGRESS  → type.check → Succeeded → DONE            (실패 시 재예약/재시도)
  *                              Pending   → reschedule
  *                              Failed    → retry-or-fail (or fail outright if not retryable)
  * </pre>
@@ -48,7 +48,7 @@ import org.springframework.stereotype.Component;
  * 재시도 불가 실패(예: TTL이 만료되어 대기 구간이 소멸된 경우)는 추가 시도 없이 즉시 태스크를
  * 실패 처리한다.
  *
- * <p><b>예외 전략:</b> {@link TaskType}의 {@code execute}, {@code check}, {@code postCheck}가 수행하는
+ * <p><b>예외 전략:</b> {@link TaskType}의 {@code execute}, {@code check}가 수행하는
  * 모든 외부 호출은 단일 {@code runExternalCall} 경계를 통해 변환된다
  * ({@link InfraManagerClient.CallTimeoutException} → CALL_TIMEOUT,
  * {@link InfraManagerClient.CallFailedException} → CHECK_ERROR). 변환 전에 반드시
@@ -111,23 +111,10 @@ public class TaskMachine {
         if (type == null) return;
         TaskAttempt attempt = observations.currentAttempt(task).orElse(null);
         runExternalCall(task, () -> type.check(target, task, attempt), true)
-                .ifPresent(progress -> applyCheck(type, target, task, attempt, progress));
+                .ifPresent(progress -> applyCheck(task, progress));
     }
 
-    private void applyCheck(TaskType type, String target, Task task, TaskAttempt attempt, TaskProgress progress) {
-        switch (progress) {
-            case TaskProgress.Succeeded ignored -> afterCheckSucceeded(type, target, task, attempt);
-            case TaskProgress.Pending pending -> recordPendingAndReschedule(task, pending);
-            case TaskProgress.Failed failed -> applyFailure(task, failed);
-        }
-    }
-
-    private void afterCheckSucceeded(TaskType type, String target, Task task, TaskAttempt attempt) {
-        runExternalCall(task, () -> type.postCheck(target, task, attempt), true)
-                .ifPresent(progress -> applyPostCheck(task, progress));
-    }
-
-    private void applyPostCheck(Task task, TaskProgress progress) {
+    private void applyCheck(Task task, TaskProgress progress) {
         switch (progress) {
             case TaskProgress.Succeeded ignored -> complete(task);
             case TaskProgress.Pending pending -> recordPendingAndReschedule(task, pending);

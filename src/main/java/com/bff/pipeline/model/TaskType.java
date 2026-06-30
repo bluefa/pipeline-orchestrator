@@ -27,8 +27,8 @@ import com.bff.pipeline.entity.TaskAttempt;
  * 플래그 포함) — 비즈니스 실패는 여기서 데이터이며 절대 예외가 아니다
  * ({@code docs/exception-strategy.md} 참조).
  *
- * <p>라이프사이클 순서: {@code execute} → {@code check} → {@code postCheck}.
- * {@code postCheck}는 {@code check}가 성공을 반환한 직후에 호출되는 사후 검증 단계다.
+ * <p>라이프사이클 순서: {@code execute} → {@code check}. {@code check}가 성공을 반환하면 task는 곧장 DONE이다
+ * (ADR-016 §3: 완료는 최신 attempt 위 코드 레벨 check 한 번으로 판정하며 별도의 사후 단계가 없다).
  */
 public interface TaskType {
 
@@ -48,7 +48,4 @@ public interface TaskType {
      * 값이며 절대 예외가 아니다. 호출 실패만 {@code RuntimeException}으로 신호한다.
      */
     TaskProgress check(String target, Task task, TaskAttempt attempt);
-
-    /** check 성공 이후의 사후 검증 단계. 기본은 검증 없음({@code SUCCEEDED}); 필요한 task type만 재정의한다. */
-    default TaskProgress postCheck(String target, Task task, TaskAttempt attempt) { return TaskProgress.SUCCEEDED; }
 }

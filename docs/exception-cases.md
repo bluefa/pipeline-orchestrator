@@ -13,18 +13,18 @@
 
 `InfraManagerClient` signals a call failure with one of three nested exceptions — a closed vocabulary.
 The only `try/catch` in the business layer is `TaskMachine.runExternalCall`, the single helper that wraps
-**every** InfraManager-backed call — `TaskType.execute`, `TaskType.check`, and `TaskType.postCheck`. It
+**every** InfraManager-backed call — `TaskType.execute` and `TaskType.check`. It
 catches **only `CallTimeoutException` and `CallFailedException`** and translates them; `CallInterruptedException`
 and any *other* `RuntimeException` (a genuine bug) are not caught and propagate (fail-fast — cases 6/7).
 
 | # | Exception | Thrown by | Caught at | Handling | Becomes |
 |---|---|---|---|---|---|
 | 1 | `InfraManagerClient.CallInterruptedException` | production adapter when the calling thread is interrupted (e.g. shutdown) | **not caught** (a distinct `final` type, not matched by the timeout/failed catches) | propagates out of `advance` — fail-fast, never recorded as a business outcome | _(propagates; see §4 / case 7)_ |
-| 2 | `InfraManagerClient.CallTimeoutException` | production adapter when one call exceeds the per-call timeout | `TaskMachine.runExternalCall` | **logged** (WARN), then `retryOrFail`; on a `check`/`postCheck` (not `execute`) also records a `CALL_TIMEOUT` check observation | `ErrorCode.CALL_TIMEOUT` (retryable) |
-| 3 | `InfraManagerClient.CallFailedException` | production adapter (HTTP 5xx/4xx, connection reset, rejection, malformed/empty response) **or** a `TaskType` guard (§2) | `TaskMachine.runExternalCall` | **logged** (WARN), then `retryOrFail`; on a `check`/`postCheck` also records an `API_ERROR` check observation | `ErrorCode.CHECK_ERROR` (retryable) |
+| 2 | `InfraManagerClient.CallTimeoutException` | production adapter when one call exceeds the per-call timeout | `TaskMachine.runExternalCall` | **logged** (WARN), then `retryOrFail`; on a `check` (not `execute`) also records a `CALL_TIMEOUT` check observation | `ErrorCode.CALL_TIMEOUT` (retryable) |
+| 3 | `InfraManagerClient.CallFailedException` | production adapter (HTTP 5xx/4xx, connection reset, rejection, malformed/empty response) **or** a `TaskType` guard (§2) | `TaskMachine.runExternalCall` | **logged** (WARN), then `retryOrFail`; on a `check` also records an `API_ERROR` check observation | `ErrorCode.CHECK_ERROR` (retryable) |
 
-Because the same `runExternalCall` wraps `execute`, `check`, and `postCheck`, a post-check that calls the
-InfraManager is translated exactly like a check — a `postCheck` timeout/failure becomes
+Because the same `runExternalCall` wraps both `execute` and `check`, an `execute` that calls the
+InfraManager is translated exactly like a check — its timeout/failure becomes
 `CALL_TIMEOUT`/`CHECK_ERROR`, never an exception escaping `advance`.
 
 **Why a closed vocabulary, not a broad `catch (RuntimeException)`.** An earlier version caught any
@@ -115,7 +115,7 @@ translated they are ordinary business failures and drive the same retry-or-fail 
 ## Invariant a reviewer can check
 
 - Exactly **one external-call translation** `try/catch` exists in the business/service layer:
-  `TaskMachine.runExternalCall`, which wraps every InfraManager-backed call (`execute`/`check`/`postCheck`)
+  `TaskMachine.runExternalCall`, which wraps every InfraManager-backed call (`execute`/`check`)
   and catches only `CallTimeoutException` and `CallFailedException`. The only other `catch` in the service
   layer is `PipelineCreator`'s targeted `DataIntegrityViolationException` control-signal catch (§4, case
   11), which *recovers* rather than translates; every other service method is exception-free straight-line

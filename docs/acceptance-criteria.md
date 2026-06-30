@@ -99,7 +99,7 @@ documented).
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
 | I1 | Business failures are `ErrorCode` values on the row, never thrown | `TaskMachine.fail`/`retryOrFail` | ✅ |
-| I2 | External-call failures are exceptions caught at exactly one boundary and translated to `ErrorCode` | the single `TaskMachine.runExternalCall` helper (wrapping execute/check/postCheck) + `PipelineEngineTest.aThrowingDispatchIsTreatedAsCheckErrorAndRetriedThenFailed` (+ the CALL_TIMEOUT and postCheck tests) | ✅ |
+| I2 | External-call failures are exceptions caught at exactly one boundary and translated to `ErrorCode` | the single `TaskMachine.runExternalCall` helper (wrapping execute/check) + `PipelineEngineTest.aThrowingDispatchIsTreatedAsCheckErrorAndRetriedThenFailed` (+ the CALL_TIMEOUT tests) | ✅ |
 | I3 | Interruption is a fail-fast runtime signal, NOT mapped to a business `ErrorCode` | `InfraManagerClient.CallInterruptedException`; `runExternalCall` catches only `CallTimeout`/`CallFailed`, so an interrupt is **not caught** — it propagates out of `advance` (absorbed by the ADR-021 runner's per-pipeline catch) | ✅ |
 | I4 | The duplicate-create catch is targeted (constraint-checked) and rethrows other violations | see D3 | ✅ |
 | I5 | Strategy is documented | `docs/exception-strategy.md` | ✅ |
@@ -113,7 +113,7 @@ documented).
 | J2 | Closed-set switches are exhaustive, no `default` swallow | `TaskMachine.advance` enumerates terminal states | ✅ |
 | J3 | Interfaces are justified — `InfraManagerClient` (external boundary, prod + fake) and `TaskType` (genuine N-impl polymorphism, registry-resolved); static utility (`TaskSettings`) over a one-method bean | package scan | ✅ |
 | J4 | Tests behavior-named, fixed `Clock`, fakes not mocks | test suite | ✅ |
-| J5 | Extension seams (more task kinds / post-check / outbox) documented, not pre-built | `docs/extensibility.md` | ✅ |
+| J5 | Extension seams (more task kinds / outbox) documented, not pre-built | `docs/extensibility.md` | ✅ |
 
 ## Deferred / accepted limitations (📦)
 
@@ -183,7 +183,7 @@ removed → **23 tests**. The criteria/evidence above are updated to the post-re
 | 4 | codex (gpt-5.5 xhigh) | **Yes** | 0 | 0 | 0 | re-review of the pure-domain tree: refactor preserved every invariant; no findings |
 
 **Post-review redesign — `TaskType` strategy + layered packages.** Per the owner: the `TaskKind` enum +
-`switch` became a **`TaskType` interface** (`taskName`/`execute`/`check`(/`postCheck`)→`TaskProgress`) with
+`switch` became a **`TaskType` interface** (`taskName`/`execute`/`check`→`TaskProgress`) with
 `TerraformTask`/`ConditionCheckTask` resolved by name via `TaskTypeRegistry`; an unknown name →
 `UNKNOWN_TASK` [B8/G7]. `Task.kind` → `Task.taskName`. Code repackaged into layers; `ImClient` →
 `InfraManagerClient`; `PipelineInserter` for-loop → `IntStream`; added `GlobalAdvice`. API-boundary null
@@ -229,14 +229,13 @@ A focused readability + exception campaign over the final code: **21 independent
 
 **What the campaign changed.** (1) The InfraManager boundary was **narrowed** to a closed vocabulary —
 `CallTimeoutException` / `CallFailedException` / `CallInterruptedException` — and unified into one
-`TaskMachine.runExternalCall` helper wrapping `execute`/`check`/`postCheck`; it catches only Timeout/Failed
+`TaskMachine.runExternalCall` helper wrapping `execute`/`check`; it catches only Timeout/Failed
 (logs, translates), while an interrupt and any other `RuntimeException` (a genuine bug) propagate fail-fast
 instead of being mis-recorded as `CHECK_ERROR`. Every throw/catch site is catalogued in
 [exception-cases.md](exception-cases.md). (2) Cancel now ends the open attempt as `CANCELLED` via the shared
-`TaskCanceller` (DRY); `advance` fails fast on a missing pipeline id. (3) The `TaskType` lifecycle gained the
-`postCheck` extension seam, inside the boundary and test-covered. (4) Packages were split to
+`TaskCanceller` (DRY); `advance` fails fast on a missing pipeline id. (3) Packages were split to
 `entity/enums/dto/model/service/...` (`service` = beans only); identifiers de-abbreviated
 (`execute`, `attemptNumber`, `TaskSettings`, `RecipeStep`, `failedRetryable`/`failedTerminal`,
 `failUnknownTask`); config defaults set to **executionTimeout 50m / maxFailCount 2**; and every major class
-carries a **detailed Korean class-header Javadoc**. Suite green (**30 tests**, incl. the postCheck seam +
+carries a **detailed Korean class-header Javadoc**. Suite green (**30 tests**, incl.
 ErrorCode-discriminating retry + poll-phase timeout-observation tests).
