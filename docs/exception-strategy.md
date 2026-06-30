@@ -86,7 +86,8 @@ straight to the row:
       │  (StepOutcome value crosses into tx2)
       ▼
  service/    applies outcome (phase B — tx2 guarded write-back)
-   StepReporter.report       verifies claim ownership (claimed_by token), then delegates to
+   StepReporter.report       verifies claim ownership (matching token AND still-live lease,
+                            `claimed_until > now` — `ownsLiveClaim`), then delegates to
                              TaskMachine.applyOutcome — no external calls, no try/catch for
                              external-call failures; business outcomes (StepOutcome variants)
                              → ErrorCode value written to the row

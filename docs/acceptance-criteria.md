@@ -155,6 +155,23 @@ documented).
   deadlock between a cancel and a concurrent claim-scan under high contention remains a CI concern
   (H2 tests do not reproduce InnoDB deadlocks); it would abort one transaction, which is safe
   (`cancelIfIdle` is RUNNING-guarded + idempotent; the worker re-polls on the next sweep). 📦
+- **MySQL-CI coverage for SKIP LOCKED**: the claim's `@Lock(PESSIMISTIC_WRITE)` + `lock.timeout=-2`
+  degrades to plain `FOR UPDATE` on H2 (H2 has no `SKIP LOCKED` support); true multi-worker
+  concurrent-claim behaviour — specifically the non-blocking skip of a locked row — is only
+  exercisable against MySQL 8 in CI. 📦
+- **`ddl-auto=update` first-boot ALTER**: adding `cancel_requested bit not null` to the existing
+  ADR-016 `pipeline` table is backfilled with `0` by MySQL 8 (correct), but is invisible on H2
+  `create-drop`; verify once against a pre-populated MySQL table before first production boot. 📦
+- **Schema-freeze checklist**: the future switch to `ddl-auto=validate` validates tables and columns
+  but NOT indexes, so a missing execution index (`idx_pipeline_claim`, `idx_pipeline_claimed_until`,
+  `idx_task_name_status`) would silently degrade to a full scan + filesort while still passing
+  validate — verify index existence in MySQL before freezing. Additionally, the enum columns are
+  native MySQL `ENUM`; adding a future enum constant requires an explicit `ALTER TABLE` (Hibernate
+  `update` will not modify an existing enum column definition). 📦
+- **UTC datetime caveat**: `Instant` columns map to MySQL `datetime(6)` and are correct for all
+  Hibernate access under `hibernate.jdbc.time_zone=UTC`; any raw-SQL operation comparing
+  `next_due_at` to `NOW()` must set the DB session `time_zone='+00:00'` to avoid a timezone
+  mismatch. 📦
 
 ## Review-round log
 
