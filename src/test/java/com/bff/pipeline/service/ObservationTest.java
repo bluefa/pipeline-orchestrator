@@ -2,6 +2,8 @@ package com.bff.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.bff.pipeline.ExecutionSettings;
+import com.bff.pipeline.PipelineSettings;
 import com.bff.pipeline.client.FakeInfraManagerClient;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.entity.Pipeline;
@@ -28,29 +30,28 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 관찰(observation) 전용 테이블의 쓰기 동작을 검증한다. 시도(attempt)마다 올바른 {@code attempt_no}를
- * 가진 {@code task_attempt} 행이 하나씩 기록되며, {@code task_check}는 폴링마다 새 행을 추가하는 것이
- * 아니라 attempt당 하나의 행을 제자리에서 갱신함을 확인한다. {@link PipelineEngineTest}의 Wiring
- * (fake InfraManager, 가변 Clock)을 재사용한다. {@code NOT_SUPPORTED}가 테스트 래핑 트랜잭션을
- * 억제하므로 관찰 행들이 각 단계의 커밋 후에도 유지된다.
+ * 관찰(observation) 전용 테이블의 쓰기 동작을 검증한다(ADR-021 워커가 구동). 시도마다 올바른 {@code attempt_no}를 가진
+ * {@code task_attempt} 행이 하나씩 기록되고, {@code task_check}는 폴링마다 새 행을 추가하지 않고 attempt당 한 행을
+ * 제자리 갱신함을 확인한다. {@link PipelineExecutionTest.Wiring}(fake InfraManager, MutableClock, settings)을 재사용한다.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineEngine.class, TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class,
-        ConditionCheckTask.class, ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class,
-        PipelineInserter.class, Recipes.class, PipelineEngineTest.Wiring.class})
+@Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
+        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, ConditionCheckTask.class,
+        ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class, PipelineInserter.class,
+        Recipes.class, PipelineExecutionTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class ObservationTest {
 
     private static final Instant START = Instant.parse("2026-06-23T00:00:00Z");
 
-    @Autowired private PipelineEngine engine;
+    @Autowired private PipelineWorker worker;
     @Autowired private PipelineCreator creator;
     @Autowired private TaskRepository tasks;
     @Autowired private PipelineRepository pipelines;
     @Autowired private TaskAttemptRepository attempts;
     @Autowired private TaskCheckRepository checks;
-    @Autowired private PipelineEngineTest.MutableClock clock;
+    @Autowired private MutableClock clock;
     @Autowired private FakeInfraManagerClient infraManager;
 
     @BeforeEach
@@ -70,14 +71,13 @@ class ObservationTest {
     }
 
     @Test
-    void aHappyTerraformTaskRecordsOneDoneAttemptWithItsJobId() {
+    void aHappyTerraformTaskRecordsOneDoneAttemptWithItsResponse() {
         Pipeline pipeline = creator.create("obs-happy", PipelineType.DELETE);
         infraManager.onPoll(TerraformPoll::success);
-        engine.advance(pipeline.getId());
-        engine.advance(pipeline.getId());
+        worker.pollOnce();
+        worker.pollOnce();
 
         var recorded = attempts.findByTaskIdOrderByAttemptNumberAsc(taskId(pipeline, 0));
-
         assertThat(recorded).singleElement().satisfies(attempt -> {
             assertThat(attempt.getAttemptNumber()).isEqualTo(1);
             assertThat(attempt.getStatus()).isEqualTo(TaskStatus.DONE);
@@ -107,7 +107,7 @@ class ObservationTest {
         Long conditionTaskId = taskId(pipeline, 1);
 
         for (int i = 0; i < 3; i++) {
-            engine.advance(pipeline.getId());
+            worker.pollOnce();
             clock.advance(Duration.ofMinutes(11));
         }
 
@@ -122,16 +122,17 @@ class ObservationTest {
     private Pipeline createInstallAtConditionInProgress() {
         Pipeline pipeline = creator.create("obs-cond", PipelineType.INSTALL);
         infraManager.onPoll(TerraformPoll::success);
-        engine.advance(pipeline.getId());
-        engine.advance(pipeline.getId());
-        engine.advance(pipeline.getId());
-        engine.advance(pipeline.getId());
+        worker.pollOnce();   // dispatch terraform
+        worker.pollOnce();   // poll terraform → DONE + promote condition READY
+        worker.pollOnce();   // dispatch condition → IN_PROGRESS
+        assertThat(tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).get(1).getStatus())
+                .isEqualTo(TaskStatus.IN_PROGRESS);
         return pipeline;
     }
 
     private void runUntilTerminal(Pipeline pipeline) {
         for (int i = 0; i < 20; i++) {
-            engine.advance(pipeline.getId());
+            worker.pollOnce();
             clock.advance(Duration.ofHours(1));
             if (pipelines.findById(pipeline.getId()).orElseThrow().getStatus() != PipelineStatus.RUNNING) {
                 return;

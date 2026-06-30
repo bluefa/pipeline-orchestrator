@@ -1,0 +1,93 @@
+package com.bff.pipeline.service;
+
+import com.bff.pipeline.ExecutionSettings;
+import com.bff.pipeline.entity.Pipeline;
+import com.bff.pipeline.entity.Task;
+import com.bff.pipeline.entity.TaskAttempt;
+import com.bff.pipeline.enums.TaskStatus;
+import com.bff.pipeline.model.StepOutcome;
+import com.bff.pipeline.repository.PipelineRepository;
+import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.terraform.TerraformTask;
+import java.util.List;
+import java.util.Optional;
+import org.springframework.stereotype.Component;
+
+/**
+ * ADR-021 한 사이클의 조립자: claim(tx1, {@link PipelineClaimer}) 이후 외부호출(phase-A,
+ * {@link StepRunner}) → report(tx2, {@link StepReporter})를 잇는다. <b>자신은 트랜잭션을 열지 않는다</b> —
+ * 외부호출이 어떤 행 락도 보유하지 않게 하기 위함(Decision 3). 트랜잭션은 claimer/reporter에만 있다.
+ *
+ * <p>cancel은 두 안전지점에서 관찰된다: claim 직후({@link #loadStepContext}에서 {@code cancel_requested}
+ * 또는 현재 task 없음 → 외부호출 생략하고 report로 수렴/해제) 그리고 tx2 안({@link StepReporter#report}).
+ * TF dispatch 단계인데 slot이 없으면 외부호출 대신 reschedule로 claim을 해제한다(Decision 7).
+ */
+@Component
+public class PipelineWorker {
+
+    private record StepContext(String target, Task currentTask, TaskAttempt attempt,
+            boolean cancelRequested, boolean terraformDispatch) { }
+
+    private final PipelineClaimer claimer;
+    private final PipelineRepository pipelines;
+    private final TaskRepository tasks;
+    private final ObservationRecorder observationRecorder;
+    private final StepRunner stepRunner;
+    private final StepReporter reporter;
+    private final ExecutionSettings settings;
+
+    public PipelineWorker(PipelineClaimer claimer, PipelineRepository pipelines, TaskRepository tasks,
+            ObservationRecorder observationRecorder, StepRunner stepRunner, StepReporter reporter,
+            ExecutionSettings settings) {
+        this.claimer = claimer;
+        this.pipelines = pipelines;
+        this.tasks = tasks;
+        this.observationRecorder = observationRecorder;
+        this.stepRunner = stepRunner;
+        this.reporter = reporter;
+        this.settings = settings;
+    }
+
+    /** 편의: 한 건 claim 후 처리하고, 처리한 pipeline id를 반환한다(없으면 empty). */
+    public Optional<Long> pollOnce() {
+        return claimer.claimOneDue().map(claim -> {
+            process(claim);
+            return claim.pipelineId();
+        });
+    }
+
+    public void process(PipelineClaimer.Claim claim) {
+        StepContext context = loadStepContext(claim.pipelineId());
+        if (context == null) {
+            return;
+        }
+        if (context.cancelRequested() || context.currentTask() == null) {
+            reporter.report(claim.pipelineId(), claim.token(), null);
+            return;
+        }
+        if (context.terraformDispatch() && !slotAvailable()) {
+            reporter.reschedule(claim.pipelineId(), claim.token(), settings.slotRetry());
+            return;
+        }
+        StepOutcome outcome = stepRunner.runStep(context.target(), context.currentTask(), context.attempt());
+        reporter.report(claim.pipelineId(), claim.token(), outcome);
+    }
+
+    private StepContext loadStepContext(long pipelineId) {
+        Pipeline pipeline = pipelines.findById(pipelineId).orElse(null);
+        if (pipeline == null) {
+            return null;
+        }
+        List<Task> chain = tasks.findByPipelineIdOrderBySequenceAsc(pipelineId);
+        Task current = chain.stream().filter(task -> !task.getStatus().isTerminal()).findFirst().orElse(null);
+        TaskAttempt attempt = current == null ? null : observationRecorder.currentAttempt(current).orElse(null);
+        boolean terraformDispatch = current != null
+                && current.getStatus() == TaskStatus.READY
+                && TerraformTask.NAME.equals(current.getTaskName());
+        return new StepContext(pipeline.getTarget(), current, attempt, pipeline.isCancelRequested(), terraformDispatch);
+    }
+
+    private boolean slotAvailable() {
+        return tasks.countByTaskNameAndStatus(TerraformTask.NAME, TaskStatus.IN_PROGRESS) < settings.slotCap();
+    }
+}

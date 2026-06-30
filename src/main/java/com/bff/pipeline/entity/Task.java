@@ -10,6 +10,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
@@ -46,7 +47,8 @@ import org.hibernate.type.SqlTypes;
 @Entity
 @Table(
         name = "task",
-        uniqueConstraints = @UniqueConstraint(name = "uq_task_pipeline_sequence", columnNames = {"pipeline_id", "sequence"}))
+        uniqueConstraints = @UniqueConstraint(name = "uq_task_pipeline_sequence", columnNames = {"pipeline_id", "sequence"}),
+        indexes = @Index(name = "idx_task_name_status", columnList = "task_name, status"))
 @Getter
 @Setter
 @NoArgsConstructor

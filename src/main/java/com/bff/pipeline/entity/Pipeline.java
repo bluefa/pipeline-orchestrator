@@ -9,6 +9,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.Instant;
@@ -32,7 +33,11 @@ import lombok.Setter;
 @Entity
 @Table(
         name = "pipeline",
-        uniqueConstraints = @UniqueConstraint(name = Pipeline.ACTIVE_TARGET_CONSTRAINT, columnNames = "active_target"))
+        uniqueConstraints = @UniqueConstraint(name = Pipeline.ACTIVE_TARGET_CONSTRAINT, columnNames = "active_target"),
+        indexes = {
+                @Index(name = "idx_pipeline_claim", columnList = "status, next_due_at"),
+                @Index(name = "idx_pipeline_claimed_until", columnList = "claimed_until")
+        })
 @Getter
 @Setter
 @NoArgsConstructor
@@ -65,4 +70,22 @@ public class Pipeline {
 
     @Column(name = "active_target")
     private String activeTarget;
+
+    // ── ADR-021 실행 좌표(execution-coordination) 컬럼: claim/lease/cooperative-cancel. 도메인 상태와 분리된다. ──
+
+    /** 다음 claim 대상 시각. null이거나 과거이면 due. 성공 report/reschedule가 전진시킨다. */
+    @Column(name = "next_due_at")
+    private Instant nextDueAt;
+
+    /** claim마다 새로 생성하는 fencing token(UUID). tx2 guarded write-back의 소유권 키이다. */
+    @Column(name = "claimed_by")
+    private String claimedBy;
+
+    /** lease 만료 시각. {@code < now}이면 claim이 자동 해제되어 다음 스캔이 reclaim한다(ADR-021 Decision 5). */
+    @Column(name = "claimed_until")
+    private Instant claimedUntil;
+
+    /** cooperative cancel(Case B) 플래그. claim 보유 워커가 안전지점에서 읽어 스스로 CANCELLED 적용한다. */
+    @Column(name = "cancel_requested", nullable = false)
+    private boolean cancelRequested;
 }

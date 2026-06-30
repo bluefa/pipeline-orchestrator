@@ -9,19 +9,25 @@ finishes) or a `CONDITION_CHECK` (poll until a condition is met). The pipeline s
 process restarts, never runs two active pipelines for the same target, retries a task a
 few times before failing it, and can be cancelled.
 
-> The **database row is the only state.** The domain exposes one operation —
-> `PipelineEngine.advance(pipelineId)` — that moves a pipeline's state machine forward one
-> step. A restart simply resumes from the rows.
+> The **database row is the only state.** A restart simply resumes from the rows.
 
-## Scope — domain only (ADR-016), not execution (ADR-021)
+## Scope — domain (ADR-016) + execution (ADR-021)
 
-This module is the **durable domain model**: the state, the data model, the uniqueness rule,
-the failure semantics, and the lifecycle. The **execution model** — *when, how often, and with
-what concurrency* `advance()` is called (the runner, scheduling, worker pool, crash recovery) —
-is the separate, independently-revisable **ADR-021** and is **deliberately not in this repo** (only
-[ADR-016](docs/adr/016-install-delete-pipeline-domain-model.md), the domain half, lives here). There is
-no scheduler and no reconciler loop here; an
-ADR-021 runner drives the engine. Tests drive `advance()` directly.
+This module is the **durable domain model** (ADR-016: state, data model, uniqueness rule, failure
+semantics, lifecycle) **and** the **claim-pull execution model** (ADR-021: how the state machine is
+driven forward). The two stay in separate ADRs so the runtime can be superseded without touching the
+domain.
+
+The execution model is a **claim-pull, two-transaction loop** (ADR-021): N worker threads pull due
+pipelines from the DB via `FOR UPDATE SKIP LOCKED` + a lease/fencing token (tx1), run the external
+InfraManager call **outside any transaction**, then commit a guarded write-back (tx2). There is no
+leader election, no replica constraint, and no in-memory in-flight guard — the DB claim is the only
+coordination primitive, so it is multi-pod safe by construction. Crash recovery is automatic via lease
+expiry; cancel is immediate for an idle pipeline and cooperative for a running one.
+
+- [ADR-016](docs/adr/016-install-delete-pipeline-domain-model.md) — the domain half
+- [ADR-021](docs/adr/021-pipeline-execution-model.md) — the execution half (implemented here)
+- [docs/adr021/implementation-dod.md](docs/adr021/implementation-dod.md) — per-Decision scope & DoD
 
 ## Stack
 
@@ -39,17 +45,20 @@ com.bff.pipeline
 ├── enums/       Domain enums (PipelineStatus/Type, TaskStatus/Operation, ErrorCode, CheckSignal)
 ├── dto/         External transport values (TerraformPoll, ErrorResponse)
 ├── model/       Domain value/contract types (TaskType, TaskProgress, Recipe)
-├── service/     @Component/@Service beans only: creation, cancel, the engine + "advance one step"
-├── client/      InfraManager boundary (InfraManagerClient) + its exception contract
+├── service/     @Component/@Service beans only: creation, cancel, and the ADR-021 execution loop
+│                (PipelineScheduler → PipelineClaimer/PipelineWorker → StepRunner → StepReporter)
+├── client/      InfraManager boundary (InfraManagerClient) + per-call-timeout decorator
 ├── repository/  Spring Data repositories (guarded-CAS transitions)
 ├── controller/  GlobalAdvice (REST exception handler) — the REST layer added later
 └── utils/       Static helpers (TaskSettings — effective per-task setting resolution + deadlines)
 ```
 
-Each task's behaviour is a **`TaskType`** (`model/`): `TerraformTask` and `ConditionCheckTask` (in
-`service/`) implement the `execute` → `check` lifecycle (and may override the default no-op `postCheck`),
-and `TaskMachine` resolves a task row to its type **by name** through `TaskTypeRegistry` — so a new kind of task is a new self-registering implementation, not an edit to a
-`switch`. An unknown name fails the task with `ErrorCode.UNKNOWN_TASK`.
+Each task's behaviour is a **`TaskType`** (`model/`): `TerraformTask` (in `service/terraform/`) and
+`ConditionCheckTask` implement the `execute` → `check` lifecycle, and `TaskStateMachine` resolves a task
+row to its type **by name** through `TaskTypeRegistry` — so a new kind of task is a new self-registering
+implementation, not an edit to a `switch`. An unknown name fails the task with `ErrorCode.UNKNOWN_TASK`.
+The external call (`execute`/`check`) is performed by `StepRunner` outside any transaction; its result
+(`StepOutcome`) is applied to the task row by `TaskStateMachine.applyOutcome` inside the tx2 write-back.
 
 ## Documentation
 

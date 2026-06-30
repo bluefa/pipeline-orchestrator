@@ -49,6 +49,8 @@ public class PipelineInserter {
                 .activeTarget(target)
                 .createdAt(now)
                 .lastActivityAt(now)
+                .nextDueAt(now)            // ADR-021 Decision 4: 생성 시 즉시 claim 가능하도록 시딩(없으면 영원히 unclaimed)
+                .cancelRequested(false)
                 .build());
         tasks.saveAll(buildChain(pipeline.getId(), recipes.forType(type).steps(), now));
         return pipeline;

@@ -1,0 +1,47 @@
+# ADR-021 구현 — 자율 진행 중 내린 결정 & 확인이 필요한 항목
+
+자리를 비운 동안(약 7시간) 자율로 진행하면서 내린 판단과, 돌아온 뒤 확인이 필요한 항목을 기록한다.
+각 항목은 **무엇을/왜** 그렇게 했는지와, 다른 선택을 원할 경우 **되돌리는 비용**을 적는다.
+
+## D-A. 작업 베이스를 새 브랜치(off `origin/main`)로 시작 — stale 브랜치 재사용 안 함 ✅ 결정함
+
+- **발견**: 기존 `feat/adr-021-execution-model` 브랜치에 이미 10라운드 리뷰 캠페인을 거친 실행모델 구현(스케줄러/워커/claimer/reporter,
+  ~2100줄)이 있었다. 그러나 이 브랜치는 ADR-016 response-model 리팩터(PR #5/#7, `TaskMachine→TaskStateMachine`,
+  `Observations→ObservationRecorder`, `task_attempt.job_id → response` text, `service/terraform/`)가 머지되기 **전의 베이스**에 있다.
+- **판단**: 도메인 의미가 바뀐 파일(특히 `TaskMachine`)을 가로지르는 blind rebase는 잘못된 도메인 위에 자동 머지될 위험이 크다.
+  그래서 `origin/main`에서 새 브랜치 `feat/adr-021-claim-pull-execution`을 따고, 기존 브랜치를 **검증된 설계 참조**로만 활용해
+  구조를 새 도메인에 맞게 재구현한다.
+- **되돌리기**: 기존 브랜치를 rebase해서 살리고 싶다면 가능하나 충돌 해소 비용이 큼. 현재 선택이 더 안전하다고 판단.
+- **확인 요청**: 이 방향이 맞는지. (기존 `feat/adr-021-execution-model` 브랜치/워크트리는 건드리지 않고 보존해 둠.)
+
+## D-B. 구현 중 내린 세부 결정 (리뷰 라운드 누적)
+
+### D-B1. 재시도 케이던스: retry 시 `nextCheckAt = now + pollingInterval` ✅ 결정함
+- 현재 main의 `TaskStateMachine.retryOrFail`은 `nextCheckAt=null`(즉시 재실행)이었다. ADR-021 claim 루프에서는
+  즉시 due → 즉시 재claim → 즉시 재dispatch가 InfraManager를 난타한다. 그래서 retry 시 `pollingInterval`만큼
+  지연한다(재dispatch는 멱등이라 안전). 도메인 의미(READY로 복귀, failCount 증가)는 그대로.
+- **확인 요청**: 이 지연이 적절한지(별도 retry backoff 키를 두는 게 나을지). 현재는 기존 `pollingInterval` 재사용.
+
+### D-B2. 429/503 status-code별 back-pressure는 V1 deferred (일반 back-pressure는 이미 구현됨) ✅ 결정함
+- ADR "Safety mechanisms" 절은 429/503 시 `next_due_at`을 밀어 back off하라고 한다.
+- **이미 충족되는 부분**: 호출 실패(429/503 포함)는 `CallFailedException`→`CHECK_ERROR`→`retryOrFail`로 처리되고,
+  retry는 `nextCheckAt=now+pollingInterval`로 설정 → `releaseClaim`이 `next_due_at`을 그만큼 전진시킨다.
+  즉 **외부 실패 시 next_due_at을 밀어 back off하는 ADR 의도는 (pollingInterval 단위로) 이미 작동한다.**
+- **deferred인 부분**: `InfraManagerClient`의 닫힌 예외 어휘(`CallTimeout`/`CallFailed`/`CallInterrupted`)는 HTTP
+  status code를 운반하지 않으므로 **429/503에만 더 큰/Retry-After 기반 backoff**를 주는 차등 처리는 못 한다.
+  그건 예외 어휘 확장(`CallRejectedException(retryAfter)`)이 필요 → ADR-016 예외 전략 변경이라 V1 범위를 넘는다.
+  멱등성으로 정확성은 유지(여분 호출만). codex DoD 리뷰는 이 차등 부재를 P1로 봤으나, 일반 back-pressure가
+  작동하므로 ADR 의도와 모순되지 않는다고 판단.
+- **확인 요청**: 429/503 차등 backoff(Retry-After 존중)를 V1에 넣을지. 넣는다면 예외 어휘 확장 동의 필요.
+
+### D-B3. 운영 메트릭은 observability follow-up으로 deferred ✅ 결정함
+- ADR "Operational reference"의 metric 카탈로그(claim QPS, stale-report discard, reclaim, slot retry,
+  overshoot, latency 등)는 reference catalog이며, 이 데모 repo엔 Micrometer/메트릭 인프라가 없다.
+  코어 claim-pull 정확성에 집중하고 메트릭은 후속으로 둔다.
+- **확인 요청**: 메트릭(Micrometer counter/gauge)을 이번 범위에 포함할지.
+
+### D-B4. per-call timeout 데코레이터(`TimeBoundedInfraManagerClient`) 포함 ✅ 결정함
+- ADR Decision 5의 `apiCallTimeout`을 실제로 강제하려면 호출별 타임아웃 데코레이터가 필요하다. `@Primary`로
+  delegate(`infraManagerDelegate`)를 감싸 별도 스레드풀에서 실행하고 `TimeoutException→CallTimeoutException` 변환.
+- 프로덕션 HTTP delegate 빈은 이 repo에 아직 없음(데모) — 통합 테스트는 fake delegate를 제공. 현재 main도
+  프로덕션 InfraManager 빈이 없으므로 컨텍스트 기동 조건을 악화시키지 않는다.
