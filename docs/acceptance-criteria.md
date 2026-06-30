@@ -79,7 +79,7 @@ documented).
 | G1 | Two task kinds today (TERRAFORM_JOB, CONDITION_CHECK); the set is open via new `TaskType` impls | `TerraformTask`/`ConditionCheckTask` (a third kind is a new file, not an enum edit) | ✅ |
 | G2 | Retry is a fresh run (no terminal resurrection) | `TaskStateMachine.retryOrFail` resets to READY | ✅ |
 | G3 | Cancel converges directly to CANCELLED (no CANCELLING) and terminalizes every non-terminal task | `PipelineControl.cancel` + `PipelineControlTest` | ✅ |
-| G4 | Cancel is a RUNNING-guarded transition — it can never resurrect a pipeline a converge already terminalized | `PipelineControl.cancel` uses the guarded `finish(..., CANCELLED, ...)` CAS, 0-row = no-op | ✅ |
+| G4 | Cancel is a RUNNING-guarded transition — it can never resurrect a pipeline a converge already terminalized | `PipelineControl.cancel` uses the guarded `finishIfRunning(..., CANCELLED, ...)` CAS, 0-row = no-op | ✅ |
 | G5 | A FAILED pipeline marks the failing task FAILED and CANCELS the rest | `PipelineEngine.cancelRemaining` + `PipelineEngineTest.aFailedPipelineCancelsItsRemainingBlockedTasks` | ✅ |
 | G6 | A terminal state is never resurrected | guarded CAS on every pipeline terminalization (finish/cancel); `Task.@Version` on the task race | ✅ |
 | G7 | A task whose stored `taskName` resolves to no `TaskType` fails with `UNKNOWN_TASK` (a value, no NPE) | `TaskStateMachine` resolve→`fail(UNKNOWN_TASK)` + `PipelineEngineTest.aTaskWhoseStoredNameHasNoRegisteredTypeFailsAsUnknownTask` | ✅ |
@@ -136,8 +136,8 @@ documented).
   pool, and the crash-recovery loop that decides *when/how* `advance()` runs. This module is the pure
   domain; tests drive `advance()` directly in place of the runner. 📦
 - **Cancel vs terminal-advance lock order** (codex R4 P1). A cancel locks the pipeline row first
-  (`finish()` CAS) then its tasks; a converging `advance` locks the current task first then the pipeline
-  (`finish()`). Under a *concurrent* cancel + advance on the **same** pipeline, MySQL/InnoDB may pick a
+  (`finishIfRunning()` CAS) then its tasks; a converging `advance` locks the current task first then the pipeline
+  (`finishIfRunning()`). Under a *concurrent* cancel + advance on the **same** pipeline, MySQL/InnoDB may pick a
   deadlock victim and abort it. **Correctness is unaffected** — the RUNNING-guarded CAS + `Task.@Version`
   guarantee no resurrection and no `active_target` leak whichever way it resolves; the victim's caller
   simply retries. The safe code fix (reordering cancel to task-first) would introduce a *new* `@Version`
@@ -152,7 +152,7 @@ documented).
 | 1 | codex (gpt-5.5 xhigh) | No | 0 | 4 | 3 | cancel CAS, observation isolation, dup-create catch, interrupt mapping; nits: default arm, cancelled-attempt status, @DataJpaTest tx |
 | 1 | opus (code-reviewer) | No | 0 | 3 | 8 | **corroborated cancel CAS as the one blocker**; dup-create catch; @DataJpaTest tx (rated P1); nits incl. TTL-per-attempt, converge re-query, observation tx |
 
-**Round-1 fixes applied** (commit `fix:` …): cancel via RUNNING-guarded `finish()` CAS [G4]; targeted
+**Round-1 fixes applied** (commit `fix:` …): cancel via RUNNING-guarded `finishIfRunning()` CAS [G4]; targeted
 dup-create catch [D3/I4]; `NOT_SUPPORTED` on the state-machine tests [test integrity]; interrupt
 rethrown as fail-fast [I3]; exhaustive `advance` switch [J2]; cancel-no-clobber test added; observation
 same-tx model documented [C4]; TTL-per-attempt comment. Suite green (23 tests).
@@ -161,8 +161,8 @@ same-tx model documented [C4]; TTL-per-attempt comment. Suite green (23 tests).
 
 **Round-2 fixes applied** (commit `fix:` …): `Reconciler.tick` now rethrows `CallInterruptedException`
 before the per-pipeline `RuntimeException` catch, so a shutdown interrupt truly aborts the tick [I3];
-`PipelineControl.cancel` made the `finish()` CAS its **sole** guard (dropped the early terminal return),
-so `cancelDoesNotResurrect…` now deterministically exercises the `finish()==0` branch [G4]. Added
+`PipelineControl.cancel` made the `finishIfRunning()` CAS its **sole** guard (dropped the early terminal return),
+so `cancelDoesNotResurrect…` now deterministically exercises the `finishIfRunning()==0` branch [G4]. Added
 `ImCallTest` (timeout / interrupt / success boundary). Suite green (26 tests).
 
 | 3 | codex (gpt-5.5 xhigh) | **Yes** | 0 | 0 | 0 | both round-2 fixes VERIFIED; **no remaining findings** |
