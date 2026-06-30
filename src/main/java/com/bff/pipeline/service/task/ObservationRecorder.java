@@ -32,18 +32,18 @@ import org.springframework.stereotype.Component;
 @Component
 public class ObservationRecorder {
 
-    private final TaskAttemptRepository attempts;
-    private final TaskCheckRepository checks;
+    private final TaskAttemptRepository taskAttemptRepository;
+    private final TaskCheckRepository taskCheckRepository;
     private final Clock clock;
 
-    public ObservationRecorder(TaskAttemptRepository attempts, TaskCheckRepository checks, Clock clock) {
-        this.attempts = attempts;
-        this.checks = checks;
+    public ObservationRecorder(TaskAttemptRepository taskAttemptRepository, TaskCheckRepository taskCheckRepository, Clock clock) {
+        this.taskAttemptRepository = taskAttemptRepository;
+        this.taskCheckRepository = taskCheckRepository;
         this.clock = clock;
     }
 
     public void beginAttempt(Task task) {
-        attempts.save(TaskAttempt.builder()
+        taskAttemptRepository.save(TaskAttempt.builder()
                 .taskId(task.getId())
                 .attemptNumber(attemptNumber(task))
                 .status(TaskStatus.IN_PROGRESS)
@@ -54,7 +54,7 @@ public class ObservationRecorder {
     public void recordResponse(Task task, String response) {
         currentAttempt(task).ifPresent(attempt -> {
             attempt.setResponse(response);
-            attempts.save(attempt);
+            taskAttemptRepository.save(attempt);
         });
     }
 
@@ -74,7 +74,7 @@ public class ObservationRecorder {
         }
         check.setLastExternalStatus(signal.name());
         check.setLastCheckedAt(clock.instant());
-        checks.save(check);
+        taskCheckRepository.save(check);
     }
 
     public void endAttempt(Task task, TaskStatus outcome, ErrorCode errorCode) {
@@ -82,7 +82,7 @@ public class ObservationRecorder {
             attempt.setStatus(outcome);
             attempt.setErrorCode(errorCode);
             attempt.setFinishedAt(clock.instant());
-            attempts.save(attempt);
+            taskAttemptRepository.save(attempt);
         });
     }
 
@@ -92,11 +92,11 @@ public class ObservationRecorder {
      * 때만 변하므로 시도 전체에 걸쳐 안정적이다. 비어 있으면(유실) 호출자는 executionTimeout fallthrough로 처리한다.
      */
     public Optional<TaskAttempt> currentAttempt(Task task) {
-        return attempts.findByTaskIdAndAttemptNumber(task.getId(), attemptNumber(task));
+        return taskAttemptRepository.findByTaskIdAndAttemptNumber(task.getId(), attemptNumber(task));
     }
 
     private TaskCheck currentCheck(TaskAttempt attempt) {
-        return checks.findByTaskAttemptId(attempt.getId())
+        return taskCheckRepository.findByTaskAttemptId(attempt.getId())
                 .orElseGet(() -> TaskCheck.builder().taskAttemptId(attempt.getId()).build());
     }
 

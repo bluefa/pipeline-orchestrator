@@ -46,16 +46,16 @@ import org.springframework.stereotype.Component;
 @Component
 public class TaskStateMachine {
 
-    private final TaskRepository tasks;
+    private final TaskRepository taskRepository;
     private final ObservationRecorder observationRecorder;
-    private final PipelineSettings settings;
+    private final PipelineSettings pipelineSettings;
     private final Clock clock;
 
-    public TaskStateMachine(TaskRepository tasks, ObservationRecorder observationRecorder,
-            PipelineSettings settings, Clock clock) {
-        this.tasks = tasks;
+    public TaskStateMachine(TaskRepository taskRepository, ObservationRecorder observationRecorder,
+            PipelineSettings pipelineSettings, Clock clock) {
+        this.taskRepository = taskRepository;
         this.observationRecorder = observationRecorder;
-        this.settings = settings;
+        this.pipelineSettings = pipelineSettings;
         this.clock = clock;
     }
 
@@ -83,7 +83,7 @@ public class TaskStateMachine {
     private void unblock(Task task) {
         task.setStatus(TaskStatus.READY);
         task.setReadyAt(clock.instant());
-        tasks.save(task);
+        taskRepository.save(task);
     }
 
     private void markInProgress(Task task, DispatchResult dispatchResult) {
@@ -94,12 +94,12 @@ public class TaskStateMachine {
         task.setStatus(TaskStatus.IN_PROGRESS);
         task.setStartedAt(now);
         task.setNextCheckAt(now);
-        tasks.save(task);
+        taskRepository.save(task);
     }
 
     private void recordPendingAndReschedule(Task task, CheckSignal observed) {
         observationRecorder.recordCheck(task, observed);
-        reschedule(task, TaskSettings.resolvePollingInterval(task, settings));
+        reschedule(task, TaskSettings.resolvePollingInterval(task, pipelineSettings));
     }
 
     private void failOutright(Task task, ErrorCode reason) {
@@ -110,20 +110,20 @@ public class TaskStateMachine {
     private void retryOrFail(Task task, ErrorCode reason) {
         observationRecorder.endAttempt(task, TaskStatus.FAILED, reason);
         task.setFailCount(task.getFailCount() + 1);
-        if (task.getFailCount() >= TaskSettings.resolveMaxFailCount(task, settings)) {
+        if (task.getFailCount() >= TaskSettings.resolveMaxFailCount(task, pipelineSettings)) {
             fail(task, reason);
             return;
         }
         task.setStatus(TaskStatus.READY);
         task.setReadyAt(clock.instant());
-        task.setNextCheckAt(clock.instant().plus(TaskSettings.resolvePollingInterval(task, settings)));
-        tasks.save(task);
+        task.setNextCheckAt(clock.instant().plus(TaskSettings.resolvePollingInterval(task, pipelineSettings)));
+        taskRepository.save(task);
     }
 
     private void complete(Task task) {
         task.setStatus(TaskStatus.DONE);
         task.setFinishedAt(clock.instant());
-        tasks.save(task);
+        taskRepository.save(task);
         observationRecorder.endAttempt(task, TaskStatus.DONE, null);
     }
 
@@ -131,11 +131,11 @@ public class TaskStateMachine {
         task.setStatus(TaskStatus.FAILED);
         task.setErrorCode(reason);
         task.setFinishedAt(clock.instant());
-        tasks.save(task);
+        taskRepository.save(task);
     }
 
     private void reschedule(Task task, Duration after) {
         task.setNextCheckAt(clock.instant().plus(after));
-        tasks.save(task);
+        taskRepository.save(task);
     }
 }

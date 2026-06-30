@@ -33,29 +33,29 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class StepReporter {
 
-    private final PipelineRepository pipelines;
-    private final TaskRepository tasks;
-    private final TaskStateMachine machine;
+    private final PipelineRepository pipelineRepository;
+    private final TaskRepository taskRepository;
+    private final TaskStateMachine taskStateMachine;
     private final TaskCanceller taskCanceller;
     private final Clock clock;
 
-    public StepReporter(PipelineRepository pipelines, TaskRepository tasks, TaskStateMachine machine,
+    public StepReporter(PipelineRepository pipelineRepository, TaskRepository taskRepository, TaskStateMachine taskStateMachine,
             TaskCanceller taskCanceller, Clock clock) {
-        this.pipelines = pipelines;
-        this.tasks = tasks;
-        this.machine = machine;
+        this.pipelineRepository = pipelineRepository;
+        this.taskRepository = taskRepository;
+        this.taskStateMachine = taskStateMachine;
         this.taskCanceller = taskCanceller;
         this.clock = clock;
     }
 
     @Transactional
     public void report(long pipelineId, String claimToken, StepOutcome outcome) {
-        Pipeline pipeline = pipelines.findByIdForUpdate(pipelineId).orElse(null);
+        Pipeline pipeline = pipelineRepository.findByIdForUpdate(pipelineId).orElse(null);
         if (pipeline == null || !ownsClaim(pipeline, claimToken)) return;
-        List<Task> chain = tasks.findByPipelineIdOrderBySequenceAsc(pipelineId);
+        List<Task> chain = taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId);
         if (pipeline.isCancelRequested()) { cancel(pipeline, chain); return; }
         if (outcome != null) {
-            currentTask(chain).ifPresent(task -> machine.applyOutcome(task, outcome));
+            currentTask(chain).ifPresent(task -> taskStateMachine.applyOutcome(task, outcome));
         }
         converge(pipeline, chain);
         promoteBlockedSuccessor(pipeline, chain);
@@ -64,10 +64,10 @@ public class StepReporter {
 
     @Transactional
     public void reschedule(long pipelineId, String claimToken, Duration delay) {
-        Pipeline pipeline = pipelines.findByIdForUpdate(pipelineId).orElse(null);
+        Pipeline pipeline = pipelineRepository.findByIdForUpdate(pipelineId).orElse(null);
         if (pipeline == null || !ownsClaim(pipeline, claimToken)) return;
         if (pipeline.isCancelRequested()) {
-            cancel(pipeline, tasks.findByPipelineIdOrderBySequenceAsc(pipelineId));
+            cancel(pipeline, taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId));
             return;
         }
         pipeline.setNextDueAt(clock.instant().plus(delay));
@@ -118,7 +118,7 @@ public class StepReporter {
             if (task.getStatus() == TaskStatus.BLOCKED) {
                 task.setStatus(TaskStatus.READY);
                 task.setReadyAt(clock.instant());
-                tasks.save(task);
+                taskRepository.save(task);
             }
         });
     }

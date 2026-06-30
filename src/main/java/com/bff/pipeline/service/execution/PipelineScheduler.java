@@ -38,10 +38,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class PipelineScheduler {
 
-    private final PipelineWorker worker;
-    private final PipelineClaimer claimer;
-    private final ExecutorService pool;
-    private final ExecutionSettings settings;
+    private final PipelineWorker pipelineWorker;
+    private final PipelineClaimer pipelineClaimer;
+    private final ExecutorService pipelineWorkerPool;
+    private final ExecutionSettings executionSettings;
     private final Duration initialDelay;
     private final java.time.Clock clock;
 
@@ -53,17 +53,17 @@ public class PipelineScheduler {
             });
     private Duration idleBackoff;
 
-    public PipelineScheduler(PipelineWorker worker, PipelineClaimer claimer,
-            @Qualifier("pipelineWorkerPool") ExecutorService pool, ExecutionSettings settings,
+    public PipelineScheduler(PipelineWorker pipelineWorker, PipelineClaimer pipelineClaimer,
+            @Qualifier("pipelineWorkerPool") ExecutorService pipelineWorkerPool, ExecutionSettings executionSettings,
             @Value("${pipeline.execution.scheduler-initial-delay:PT5S}") Duration initialDelay,
             java.time.Clock clock) {
-        this.worker = worker;
-        this.claimer = claimer;
-        this.pool = pool;
-        this.settings = settings;
+        this.pipelineWorker = pipelineWorker;
+        this.pipelineClaimer = pipelineClaimer;
+        this.pipelineWorkerPool = pipelineWorkerPool;
+        this.executionSettings = executionSettings;
         this.initialDelay = initialDelay;
         this.clock = clock;
-        this.idleBackoff = settings.backoffBase();
+        this.idleBackoff = executionSettings.backoffBase();
     }
 
     @PostConstruct
@@ -97,8 +97,8 @@ public class PipelineScheduler {
 
     boolean sweepOnce() throws InterruptedException {
         List<Future<Boolean>> futures = new ArrayList<>();
-        for (int i = 0; i < settings.workerPerPod(); i++) {
-            futures.add(pool.submit((Callable<Boolean>) this::drain));
+        for (int i = 0; i < executionSettings.workerPerPod(); i++) {
+            futures.add(pipelineWorkerPool.submit((Callable<Boolean>) this::drain));
         }
         boolean workFound = false;
         for (Future<Boolean> future : futures) {
@@ -111,7 +111,7 @@ public class PipelineScheduler {
                 Throwable cause = executionFailure.getCause();
                 if (cause instanceof InfraManagerClient.CallInterruptedException) {
                     futures.forEach(f -> f.cancel(true));
-                    throw new InterruptedException("worker interrupted");
+                    throw new InterruptedException("pipelineWorker interrupted");
                 }
                 if (cause instanceof Error error) {
                     throw error;
@@ -130,7 +130,7 @@ public class PipelineScheduler {
             }
             Optional<Claim> claim;
             try {
-                claim = claimer.claimOneDue();
+                claim = pipelineClaimer.claimOneDue();
             } catch (InfraManagerClient.CallInterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 throw interrupted;
@@ -143,7 +143,7 @@ public class PipelineScheduler {
             }
             anyFound = true;
             try {
-                worker.process(claim.get());
+                pipelineWorker.process(claim.get());
             } catch (InfraManagerClient.CallInterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 throw interrupted;
@@ -156,11 +156,11 @@ public class PipelineScheduler {
 
     Duration nextDelay(boolean workFound) {
         if (workFound) {
-            idleBackoff = settings.backoffBase();
-            return settings.pollInterval();
+            idleBackoff = executionSettings.backoffBase();
+            return executionSettings.pollInterval();
         }
-        idleBackoff = min(idleBackoff.multipliedBy(2), settings.backoffMax());
-        return applyJitter(min(idleBackoff, settings.maxIdleSleep()));
+        idleBackoff = min(idleBackoff.multipliedBy(2), executionSettings.backoffMax());
+        return applyJitter(min(idleBackoff, executionSettings.maxIdleSleep()));
     }
 
     private static Duration min(Duration a, Duration b) {
@@ -168,14 +168,14 @@ public class PipelineScheduler {
     }
 
     Duration applyJitter(Duration base) {
-        double fraction = ThreadLocalRandom.current().nextDouble(-1.0, 1.0) * settings.jitterRatio();
+        double fraction = ThreadLocalRandom.current().nextDouble(-1.0, 1.0) * executionSettings.jitterRatio();
         long millis = Math.max(1L, Math.round(base.toMillis() * (1.0 + fraction)));
         return Duration.ofMillis(millis);
     }
 
     private Duration cappedIdleDelay(Duration delay) {
         try {
-            return capToNearestDue(delay, claimer.nearestClaimableDueAt(), clock.instant());
+            return capToNearestDue(delay, pipelineClaimer.nearestClaimableDueAt(), clock.instant());
         } catch (RuntimeException lookupFailure) {
             log.warn("nearest-due lookup failed; using uncapped idle delay", lookupFailure);
             return delay;

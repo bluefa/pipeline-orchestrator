@@ -53,17 +53,17 @@ class PipelineSoftCapTest {
 
     private static final Instant START = Instant.parse("2026-06-23T00:00:00Z");
 
-    @Autowired private PipelineClaimer claimer;
-    @Autowired private PipelineWorker worker;
+    @Autowired private PipelineClaimer pipelineClaimer;
+    @Autowired private PipelineWorker pipelineWorker;
     @Autowired private PipelineCreator creator;
-    @Autowired private TaskRepository tasks;
-    @Autowired private PipelineRepository pipelines;
+    @Autowired private TaskRepository taskRepository;
+    @Autowired private PipelineRepository pipelineRepository;
     @Autowired private MutableClock clock;
 
     @AfterEach
     void clean() {
-        tasks.deleteAll();
-        pipelines.deleteAll();
+        taskRepository.deleteAll();
+        pipelineRepository.deleteAll();
         clock.set(START);
     }
 
@@ -72,18 +72,18 @@ class PipelineSoftCapTest {
         creator.create("cap-a", PipelineType.DELETE);
         creator.create("cap-b", PipelineType.DELETE);
 
-        assertThat(claimer.claimOneDue()).isPresent();   // 1 active claim == cap
-        assertThat(claimer.claimOneDue()).isEmpty();      // blocked by the soft cap
+        assertThat(pipelineClaimer.claimOneDue()).isPresent();   // 1 active claim == cap
+        assertThat(pipelineClaimer.claimOneDue()).isEmpty();      // blocked by the soft cap
     }
 
     @Test
     void creationIsNotGatedByTheCap() {
         creator.create("cap-c", PipelineType.DELETE);
-        claimer.claimOneDue();   // cap reached
+        pipelineClaimer.claimOneDue();   // cap reached
 
         Pipeline overCap = creator.create("cap-d", PipelineType.DELETE);
 
-        assertThat(pipelines.findById(overCap.getId()).orElseThrow().getStatus())
+        assertThat(pipelineRepository.findById(overCap.getId()).orElseThrow().getStatus())
                 .isEqualTo(PipelineStatus.RUNNING);
     }
 
@@ -92,10 +92,10 @@ class PipelineSoftCapTest {
         occupyTheOnlyTerraformSlot();
         Pipeline pipeline = creator.create("cap-slot", PipelineType.DELETE);   // the only due pipeline
 
-        worker.pollOnce();   // terraform READY dispatch, but the single slot is taken → reschedule
+        pipelineWorker.pollOnce();   // terraform READY dispatch, but the single slot is taken → reschedule
 
-        Pipeline after = pipelines.findById(pipeline.getId()).orElseThrow();
-        assertThat(tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).getFirst().getStatus())
+        Pipeline after = pipelineRepository.findById(pipeline.getId()).orElseThrow();
+        assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).getFirst().getStatus())
                 .isEqualTo(TaskStatus.READY);                       // not dispatched
         assertThat(after.getClaimedBy()).isNull();                  // claim released
         assertThat(after.getNextDueAt()).isEqualTo(START.plusSeconds(1));   // pushed by slotRetry
@@ -104,12 +104,12 @@ class PipelineSoftCapTest {
     /** slotCap=1을 채우는 IN_PROGRESS terraform task를 두되, 그 pipeline은 미래 due로 두어 claim 대상에서 제외한다. */
     private void occupyTheOnlyTerraformSlot() {
         Pipeline filler = creator.create("cap-filler", PipelineType.DELETE);
-        Task task = tasks.findByPipelineIdOrderBySequenceAsc(filler.getId()).getFirst();
+        Task task = taskRepository.findByPipelineIdOrderBySequenceAsc(filler.getId()).getFirst();
         task.setStatus(TaskStatus.IN_PROGRESS);
-        tasks.save(task);
-        Pipeline row = pipelines.findById(filler.getId()).orElseThrow();
+        taskRepository.save(task);
+        Pipeline row = pipelineRepository.findById(filler.getId()).orElseThrow();
         row.setNextDueAt(START.plus(Duration.ofDays(1)));   // not due → won't be claimed
-        pipelines.save(row);
+        pipelineRepository.save(row);
     }
 
     @TestConfiguration

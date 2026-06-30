@@ -29,14 +29,14 @@ import org.springframework.stereotype.Component;
 @Component
 public class StepRunner {
 
-    private final TaskTypeRegistry taskTypes;
+    private final TaskTypeRegistry taskTypeRegistry;
 
-    public StepRunner(TaskTypeRegistry taskTypes) {
-        this.taskTypes = taskTypes;
+    public StepRunner(TaskTypeRegistry taskTypeRegistry) {
+        this.taskTypeRegistry = taskTypeRegistry;
     }
 
     public StepOutcome runStep(String target, Task task, TaskAttempt attempt) {
-        TaskType type = taskTypes.find(task.getTaskName()).orElse(null);
+        TaskType type = taskTypeRegistry.find(task.getTaskName()).orElse(null);
         if (type == null) {
             return StepOutcome.unknownTask();
         }

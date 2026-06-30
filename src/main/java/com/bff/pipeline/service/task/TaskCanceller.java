@@ -19,12 +19,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class TaskCanceller {
 
-    private final TaskRepository tasks;
+    private final TaskRepository taskRepository;
     private final ObservationRecorder observationRecorder;
     private final Clock clock;
 
-    public TaskCanceller(TaskRepository tasks, ObservationRecorder observationRecorder, Clock clock) {
-        this.tasks = tasks;
+    public TaskCanceller(TaskRepository taskRepository, ObservationRecorder observationRecorder, Clock clock) {
+        this.taskRepository = taskRepository;
         this.observationRecorder = observationRecorder;
         this.clock = clock;
     }
@@ -35,7 +35,7 @@ public class TaskCanceller {
             observationRecorder.endAttempt(task, TaskStatus.CANCELLED, null);
             task.setStatus(TaskStatus.CANCELLED);
             task.setFinishedAt(now);
-            tasks.save(task);
+            taskRepository.save(task);
         });
     }
 }

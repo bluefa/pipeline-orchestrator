@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 /**
  * ADR-021 Decision 5: 호출별 타임아웃을 강제하는 {@link InfraManagerClient} 데코레이터이다. 러너가 per-call
  * timeout({@code apiCallTimeout})을 소유한다는 ADR 계약을 실제로 구현한다 — delegate 호출을 별도 풀
- * ({@code imCallPool})에서 실행해 느린 호출이 워커 스레드를 점유하지 못하게 하고, 마감을 넘기면
+ * ({@code infraManagerCallPool})에서 실행해 느린 호출이 워커 스레드를 점유하지 못하게 하고, 마감을 넘기면
  * {@link CallTimeoutException}으로 변환한다.
  *
  * <p>{@code @Primary}이며 실제 전송 구현은 {@code @Qualifier("infraManagerDelegate")} 빈으로 주입된다
@@ -34,14 +34,14 @@ import org.springframework.stereotype.Component;
 public class TimeBoundedInfraManagerClient implements InfraManagerClient {
 
     private final InfraManagerClient delegate;
-    private final ExecutorService imCallPool;
-    private final ExecutionSettings settings;
+    private final ExecutorService infraManagerCallPool;
+    private final ExecutionSettings executionSettings;
 
     public TimeBoundedInfraManagerClient(@Qualifier("infraManagerDelegate") InfraManagerClient delegate,
-            @Qualifier("imCallPool") ExecutorService imCallPool, ExecutionSettings settings) {
+            @Qualifier("infraManagerCallPool") ExecutorService infraManagerCallPool, ExecutionSettings executionSettings) {
         this.delegate = delegate;
-        this.imCallPool = imCallPool;
-        this.settings = settings;
+        this.infraManagerCallPool = infraManagerCallPool;
+        this.executionSettings = executionSettings;
     }
 
     @Override
@@ -60,9 +60,9 @@ public class TimeBoundedInfraManagerClient implements InfraManagerClient {
     }
 
     private <T> T withTimeout(Supplier<T> call) {
-        Future<T> future = imCallPool.submit(call::get);
+        Future<T> future = infraManagerCallPool.submit(call::get);
         try {
-            return future.get(settings.apiCallTimeout().toMillis(), TimeUnit.MILLISECONDS);
+            return future.get(executionSettings.apiCallTimeout().toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException timeout) {
             future.cancel(true);
             throw new CallTimeoutException();

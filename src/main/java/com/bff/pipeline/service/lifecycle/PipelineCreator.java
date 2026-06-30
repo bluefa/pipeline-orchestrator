@@ -31,24 +31,24 @@ public class PipelineCreator {
 
     private static final int DUPLICATE_CREATE_RETRY_LIMIT = 3;
 
-    private final PipelineInserter inserter;
-    private final PipelineRepository pipelines;
+    private final PipelineInserter pipelineInserter;
+    private final PipelineRepository pipelineRepository;
 
-    public PipelineCreator(PipelineInserter inserter, PipelineRepository pipelines) {
-        this.inserter = inserter;
-        this.pipelines = pipelines;
+    public PipelineCreator(PipelineInserter pipelineInserter, PipelineRepository pipelineRepository) {
+        this.pipelineInserter = pipelineInserter;
+        this.pipelineRepository = pipelineRepository;
     }
 
     public Pipeline create(String target, PipelineType type) {
         DataIntegrityViolationException lastViolation = null;
         for (int attempt = 0; attempt < DUPLICATE_CREATE_RETRY_LIMIT; attempt++) {
             try {
-                return inserter.insert(target, type);
+                return pipelineInserter.insert(target, type);
             } catch (DataIntegrityViolationException duplicate) {
                 if (!isActiveTargetViolation(duplicate)) {
                     throw duplicate;
                 }
-                Optional<Pipeline> active = pipelines.findByActiveTarget(target);
+                Optional<Pipeline> active = pipelineRepository.findByActiveTarget(target);
                 if (active.isPresent()) {
                     return active.get();
                 }

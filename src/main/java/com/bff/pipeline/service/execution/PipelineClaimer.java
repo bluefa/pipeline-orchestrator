@@ -27,13 +27,13 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class PipelineClaimer {
 
-    private final PipelineRepository pipelines;
-    private final ExecutionSettings settings;
+    private final PipelineRepository pipelineRepository;
+    private final ExecutionSettings executionSettings;
     private final Clock clock;
 
-    public PipelineClaimer(PipelineRepository pipelines, ExecutionSettings settings, Clock clock) {
-        this.pipelines = pipelines;
-        this.settings = settings;
+    public PipelineClaimer(PipelineRepository pipelineRepository, ExecutionSettings executionSettings, Clock clock) {
+        this.pipelineRepository = pipelineRepository;
+        this.executionSettings = executionSettings;
         this.clock = clock;
     }
 
@@ -41,22 +41,22 @@ public class PipelineClaimer {
     public Optional<Claim> claimOneDue() {
         Instant now = clock.instant();
         // soft admission gate — 활성 claim 수만 센다(전체 RUNNING 아님). count-read라 M+C-1 overshoot 허용.
-        if (pipelines.countByClaimedUntilAfter(now) >= settings.runningPipelineCap()) {
+        if (pipelineRepository.countByClaimedUntilAfter(now) >= executionSettings.runningPipelineCap()) {
             return Optional.empty();
         }
-        List<Pipeline> due = pipelines.findClaimableDuePipelines(now, PageRequest.of(0, 1));
+        List<Pipeline> due = pipelineRepository.findClaimableDuePipelines(now, PageRequest.of(0, 1));
         if (due.isEmpty()) {
             return Optional.empty();
         }
         Pipeline pipeline = due.get(0);
         String token = UUID.randomUUID().toString();
         pipeline.setClaimedBy(token);
-        pipeline.setClaimedUntil(now.plus(settings.leaseDuration()));
+        pipeline.setClaimedUntil(now.plus(executionSettings.leaseDuration()));
         return Optional.of(new Claim(pipeline.getId(), token));
     }
 
     @Transactional(readOnly = true)
     public Optional<Instant> nearestClaimableDueAt() {
-        return pipelines.findNearestClaimableDueAt(clock.instant());
+        return pipelineRepository.findNearestClaimableDueAt(clock.instant());
     }
 }

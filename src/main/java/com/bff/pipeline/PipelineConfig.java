@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Configuration;
  * {@code @ConfigurationProperties}로 활성화한다.
  *
  * <p>ADR-021 실행 모델용 스레드 풀 둘을 분리해 제공한다(데드락 회피): {@code pipelineWorkerPool}은 워커
- * drain 사이클을, {@code imCallPool}은 호출별 타임아웃 데코레이터({@code TimeBoundedInfraManagerClient})가
+ * drain 사이클을, {@code infraManagerCallPool}은 호출별 타임아웃 데코레이터({@code TimeBoundedInfraManagerClient})가
  * delegate 호출을 격리 실행하는 데 쓴다. 둘 다 {@code workerPerPod} 크기이며 컨텍스트 종료 시 shutdown된다.
  */
 @Configuration
@@ -31,7 +31,7 @@ public class PipelineConfig {
     }
 
     @Bean(destroyMethod = "shutdown")
-    public ExecutorService imCallPool(ExecutionSettings settings) {
+    public ExecutorService infraManagerCallPool(ExecutionSettings settings) {
         return Executors.newFixedThreadPool(settings.workerPerPod());
     }
 }

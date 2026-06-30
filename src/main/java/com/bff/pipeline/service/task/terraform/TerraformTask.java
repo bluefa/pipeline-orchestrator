@@ -48,13 +48,13 @@ public class TerraformTask implements TaskType {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final TypeReference<List<String>> JOB_IDS = new TypeReference<>() { };
 
-    private final InfraManagerClient infraManager;
-    private final PipelineSettings settings;
+    private final InfraManagerClient infraManagerClient;
+    private final PipelineSettings pipelineSettings;
     private final Clock clock;
 
-    public TerraformTask(InfraManagerClient infraManager, PipelineSettings settings, Clock clock) {
-        this.infraManager = infraManager;
-        this.settings = settings;
+    public TerraformTask(InfraManagerClient infraManagerClient, PipelineSettings pipelineSettings, Clock clock) {
+        this.infraManagerClient = infraManagerClient;
+        this.pipelineSettings = pipelineSettings;
         this.clock = clock;
     }
 
@@ -65,7 +65,7 @@ public class TerraformTask implements TaskType {
 
     @Override
     public DispatchResult execute(String target, Task task) {
-        String response = infraManager.runTerraform(target, task.getOperation());
+        String response = infraManagerClient.runTerraform(target, task.getOperation());
         if (response == null || response.isBlank()) {
             throw new InfraManagerClient.CallFailedException(
                     "InfraManager returned no dispatch response for " + task.getOperation());
@@ -104,7 +104,7 @@ public class TerraformTask implements TaskType {
         log.warn("task {} attempt {}: dispatch response missing after dispatch (lost DB write or crash); "
                 + "waiting for executionTimeout before an idempotent re-dispatch",
                 task.getId(), attempt == null ? -1 : attempt.getAttemptNumber());
-        if (TaskSettings.isPastDeadline(task, TaskSettings.resolveExecutionTimeout(task, settings), clock)) {
+        if (TaskSettings.isPastDeadline(task, TaskSettings.resolveExecutionTimeout(task, pipelineSettings), clock)) {
             return TaskProgress.failedRetryable(ErrorCode.EXECUTION_TIMEOUT);
         }
         return TaskProgress.pending(CheckSignal.RUNNING);
@@ -113,7 +113,7 @@ public class TerraformTask implements TaskType {
     private TaskProgress aggregate(Task task, List<TerraformJob> jobs) {
         boolean allFinished = true;
         for (TerraformJob job : jobs) {
-            TerraformPoll poll = job.pollStatus(infraManager);
+            TerraformPoll poll = job.pollStatus(infraManagerClient);
             if (poll.finished()) {
                 if (!poll.succeeded()) {
                     return TaskProgress.failedRetryable(ErrorCode.JOB_FAILED);
@@ -125,7 +125,7 @@ public class TerraformTask implements TaskType {
         if (allFinished) {
             return TaskProgress.SUCCEEDED;
         }
-        if (TaskSettings.isPastDeadline(task, TaskSettings.resolveExecutionTimeout(task, settings), clock)) {
+        if (TaskSettings.isPastDeadline(task, TaskSettings.resolveExecutionTimeout(task, pipelineSettings), clock)) {
             return TaskProgress.failedRetryable(ErrorCode.EXECUTION_TIMEOUT);
         }
         return TaskProgress.pending(CheckSignal.RUNNING);

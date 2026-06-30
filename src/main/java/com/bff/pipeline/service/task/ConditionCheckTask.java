@@ -26,13 +26,13 @@ public class ConditionCheckTask implements TaskType {
 
     public static final String NAME = "CONDITION_CHECK";
 
-    private final InfraManagerClient infraManager;
-    private final PipelineSettings settings;
+    private final InfraManagerClient infraManagerClient;
+    private final PipelineSettings pipelineSettings;
     private final Clock clock;
 
-    public ConditionCheckTask(InfraManagerClient infraManager, PipelineSettings settings, Clock clock) {
-        this.infraManager = infraManager;
-        this.settings = settings;
+    public ConditionCheckTask(InfraManagerClient infraManagerClient, PipelineSettings pipelineSettings, Clock clock) {
+        this.infraManagerClient = infraManagerClient;
+        this.pipelineSettings = pipelineSettings;
         this.clock = clock;
     }
 
@@ -48,10 +48,10 @@ public class ConditionCheckTask implements TaskType {
 
     @Override
     public TaskProgress check(String target, Task task, TaskAttempt attempt) {
-        if (infraManager.checkCondition(target, task.getOperation())) {
+        if (infraManagerClient.checkCondition(target, task.getOperation())) {
             return TaskProgress.SUCCEEDED;
         }
-        if (TaskSettings.isPastDeadline(task, TaskSettings.resolveTimeToLive(task, settings), clock)) {
+        if (TaskSettings.isPastDeadline(task, TaskSettings.resolveTimeToLive(task, pipelineSettings), clock)) {
             return TaskProgress.failedTerminal(ErrorCode.TIME_TO_LIVE_EXPIRED);
         }
         return TaskProgress.pending(CheckSignal.NOT_MET);

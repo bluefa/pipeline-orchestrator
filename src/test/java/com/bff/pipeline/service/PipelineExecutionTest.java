@@ -69,43 +69,43 @@ class PipelineExecutionTest {
     static final Instant START = Instant.parse("2026-06-23T00:00:00Z");
     static final Duration LEASE = Duration.ofSeconds(30);
 
-    @Autowired private PipelineWorker worker;
-    @Autowired private PipelineClaimer claimer;
+    @Autowired private PipelineWorker pipelineWorker;
+    @Autowired private PipelineClaimer pipelineClaimer;
     @Autowired private PipelineCreator creator;
     @Autowired private PipelineControl control;
-    @Autowired private TaskRepository tasks;
-    @Autowired private PipelineRepository pipelines;
-    @Autowired private TaskAttemptRepository attempts;
+    @Autowired private TaskRepository taskRepository;
+    @Autowired private PipelineRepository pipelineRepository;
+    @Autowired private TaskAttemptRepository taskAttemptRepository;
     @Autowired private MutableClock clock;
-    @Autowired private FakeInfraManagerClient infraManager;
+    @Autowired private FakeInfraManagerClient infraManagerClient;
 
     @BeforeEach
     void reset() {
         clock.set(START);
-        infraManager.onDispatch(() -> "[\"job-1\"]");
-        infraManager.onPoll(TerraformPoll::running);
-        infraManager.onCheck(() -> false);
+        infraManagerClient.onDispatch(() -> "[\"job-1\"]");
+        infraManagerClient.onPoll(TerraformPoll::running);
+        infraManagerClient.onCheck(() -> false);
     }
 
     @AfterEach
     void clean() {
-        attempts.deleteAll();
-        tasks.deleteAll();
-        pipelines.deleteAll();
+        taskAttemptRepository.deleteAll();
+        taskRepository.deleteAll();
+        pipelineRepository.deleteAll();
     }
 
-    // ── e2e domain through the two-transaction worker ────────────────────────────────────────────
+    // ── e2e domain through the two-transaction pipelineWorker ────────────────────────────────────────────
 
     @Test
     void terraformHappyPathReachesDoneAndRecordsTheResponse() {
         Pipeline pipeline = creator.create("e-happy", PipelineType.DELETE);
-        infraManager.onPoll(TerraformPoll::success);
+        infraManagerClient.onPoll(TerraformPoll::success);
 
-        worker.pollOnce();   // dispatch → IN_PROGRESS
+        pipelineWorker.pollOnce();   // dispatch → IN_PROGRESS
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
         assertThat(attempt(pipeline, 0).getResponse()).isEqualTo("[\"job-1\"]");
 
-        worker.pollOnce();   // poll → DONE
+        pipelineWorker.pollOnce();   // poll → DONE
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);
         assertThat(status(pipeline)).isEqualTo(PipelineStatus.DONE);
     }
@@ -113,17 +113,17 @@ class PipelineExecutionTest {
     @Test
     void installPromotesTheSuccessorInTheSameReportAndFinishes() {
         Pipeline pipeline = creator.create("e-install", PipelineType.INSTALL);
-        infraManager.onPoll(TerraformPoll::success);
-        infraManager.onCheck(() -> true);
+        infraManagerClient.onPoll(TerraformPoll::success);
+        infraManagerClient.onCheck(() -> true);
         assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.BLOCKED);
 
-        worker.pollOnce();   // dispatch terraform
-        worker.pollOnce();   // poll terraform success → DONE + promote condition BLOCKED→READY (same tx2)
+        pipelineWorker.pollOnce();   // dispatch terraform
+        pipelineWorker.pollOnce();   // poll terraform success → DONE + promote condition BLOCKED→READY (same tx2)
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);
         assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.READY);
 
-        worker.pollOnce();   // dispatch condition (NONE) → IN_PROGRESS
-        worker.pollOnce();   // poll condition met → DONE → pipeline DONE
+        pipelineWorker.pollOnce();   // dispatch condition (NONE) → IN_PROGRESS
+        pipelineWorker.pollOnce();   // poll condition met → DONE → pipeline DONE
         assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.DONE);
         assertThat(status(pipeline)).isEqualTo(PipelineStatus.DONE);
     }
@@ -131,7 +131,7 @@ class PipelineExecutionTest {
     @Test
     void terraformFailureRetriesThenFailsAtMaxAndCascadeCancels() {
         Pipeline pipeline = creator.create("e-fail", PipelineType.INSTALL);
-        infraManager.onPoll(TerraformPoll::failure);
+        infraManagerClient.onPoll(TerraformPoll::failure);
 
         runUntilTerminal(pipeline);
 
@@ -145,14 +145,14 @@ class PipelineExecutionTest {
     @Test
     void aLostDispatchResponseRidesExecutionTimeoutThenSharesTheFailCount() {
         Pipeline pipeline = creator.create("e-lost", PipelineType.DELETE);
-        worker.pollOnce();   // dispatch → IN_PROGRESS, response recorded
+        pipelineWorker.pollOnce();   // dispatch → IN_PROGRESS, response recorded
 
         TaskAttempt attempt = attempt(pipeline, 0);
         attempt.setResponse(null);
-        attempts.saveAndFlush(attempt);
+        taskAttemptRepository.saveAndFlush(attempt);
 
         clock.advance(Duration.ofHours(1));
-        worker.pollOnce();   // response lost → executionTimeout fallthrough → retryable EXECUTION_TIMEOUT
+        pipelineWorker.pollOnce();   // response lost → executionTimeout fallthrough → retryable EXECUTION_TIMEOUT
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
@@ -162,9 +162,9 @@ class PipelineExecutionTest {
     @Test
     void aThrowingDispatchIsCheckErrorAndRetries() {
         Pipeline pipeline = creator.create("e-throw", PipelineType.DELETE);
-        infraManager.onDispatch(() -> { throw new InfraManagerClient.CallFailedException("503"); });
+        infraManagerClient.onDispatch(() -> { throw new InfraManagerClient.CallFailedException("503"); });
 
-        worker.pollOnce();
+        pipelineWorker.pollOnce();
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
@@ -174,10 +174,10 @@ class PipelineExecutionTest {
     @Test
     void aRawRuntimeExceptionFromTheClientPropagatesOutOfProcess() {
         Pipeline pipeline = creator.create("e-bug", PipelineType.DELETE);
-        infraManager.onDispatch(() -> { throw new IllegalStateException("a real bug"); });
-        Claim claim = claimer.claimOneDue().orElseThrow();
+        infraManagerClient.onDispatch(() -> { throw new IllegalStateException("a real bug"); });
+        Claim claim = pipelineClaimer.claimOneDue().orElseThrow();
 
-        assertThatThrownBy(() -> worker.process(claim)).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> pipelineWorker.process(claim)).isInstanceOf(RuntimeException.class);
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(0);
@@ -186,10 +186,10 @@ class PipelineExecutionTest {
     @Test
     void aMalformedDispatchResponseFailsTheTaskOutright() {
         Pipeline pipeline = creator.create("e-malformed", PipelineType.DELETE);
-        infraManager.onDispatch(() -> "not-json");
+        infraManagerClient.onDispatch(() -> "not-json");
 
-        worker.pollOnce();   // dispatch records "not-json"
-        worker.pollOnce();   // check cannot deserialize → CHECK_ERROR outright
+        pipelineWorker.pollOnce();   // dispatch records "not-json"
+        pipelineWorker.pollOnce();   // check cannot deserialize → CHECK_ERROR outright
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.FAILED);
         assertThat(task(pipeline, 0).getErrorCode()).isEqualTo(ErrorCode.CHECK_ERROR);
@@ -201,10 +201,10 @@ class PipelineExecutionTest {
     @ValueSource(strings = {"null", "[]", "[null]", "[\"\"]"})
     void aResponseWithNoUsableJobIdsFailsTheTaskOutright(String response) {
         Pipeline pipeline = creator.create("e-no-jobs", PipelineType.DELETE);
-        infraManager.onDispatch(() -> response);
+        infraManagerClient.onDispatch(() -> response);
 
-        worker.pollOnce();
-        worker.pollOnce();
+        pipelineWorker.pollOnce();
+        pipelineWorker.pollOnce();
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.FAILED);
         assertThat(task(pipeline, 0).getErrorCode()).isEqualTo(ErrorCode.CHECK_ERROR);
@@ -213,11 +213,11 @@ class PipelineExecutionTest {
     @Test
     void nJobsCompleteOnlyWhenAllSucceed() {
         Pipeline pipeline = creator.create("e-n", PipelineType.DELETE);
-        infraManager.onDispatch(() -> "[\"job-1\",\"job-2\",\"job-3\"]");
-        infraManager.onPoll(TerraformPoll::success);
+        infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\",\"job-3\"]");
+        infraManagerClient.onPoll(TerraformPoll::success);
 
-        worker.pollOnce();
-        worker.pollOnce();
+        pipelineWorker.pollOnce();
+        pipelineWorker.pollOnce();
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);
         assertThat(status(pipeline)).isEqualTo(PipelineStatus.DONE);
@@ -228,9 +228,9 @@ class PipelineExecutionTest {
         Pipeline pipeline = creator.create("e-unknown", PipelineType.DELETE);
         Task task = task(pipeline, 0);
         task.setTaskName("NO_SUCH_TYPE");
-        tasks.save(task);
+        taskRepository.save(task);
 
-        worker.pollOnce();
+        pipelineWorker.pollOnce();
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.FAILED);
         assertThat(task(pipeline, 0).getErrorCode()).isEqualTo(ErrorCode.UNKNOWN_TASK);
@@ -242,29 +242,29 @@ class PipelineExecutionTest {
     @Test
     void creationSeedsNextDueAtSoThePipelineIsImmediatelyClaimable() {
         Pipeline pipeline = creator.create("c-seed", PipelineType.DELETE);
-        assertThat(pipelines.findById(pipeline.getId()).orElseThrow().getNextDueAt()).isEqualTo(START);
-        assertThat(claimer.claimOneDue()).isPresent();
+        assertThat(pipelineRepository.findById(pipeline.getId()).orElseThrow().getNextDueAt()).isEqualTo(START);
+        assertThat(pipelineClaimer.claimOneDue()).isPresent();
     }
 
     @Test
     void aClaimStampsAFreshTokenAndLeaseAndBlocksASecondClaim() {
         creator.create("c-claim", PipelineType.DELETE);
 
-        Claim claim = claimer.claimOneDue().orElseThrow();
+        Claim claim = pipelineClaimer.claimOneDue().orElseThrow();
 
-        Pipeline claimed = pipelines.findById(claim.pipelineId()).orElseThrow();
+        Pipeline claimed = pipelineRepository.findById(claim.pipelineId()).orElseThrow();
         assertThat(claimed.getClaimedBy()).isEqualTo(claim.token());
         assertThat(claimed.getClaimedUntil()).isEqualTo(START.plus(LEASE));
-        assertThat(claimer.claimOneDue()).isEmpty();   // live lease → not claimable
+        assertThat(pipelineClaimer.claimOneDue()).isEmpty();   // live lease → not claimable
     }
 
     @Test
     void anExpiredLeaseIsReclaimedWithADifferentToken() {
         creator.create("c-reclaim", PipelineType.DELETE);
-        String first = claimer.claimOneDue().orElseThrow().token();
+        String first = pipelineClaimer.claimOneDue().orElseThrow().token();
 
         clock.advance(LEASE.plusSeconds(1));
-        String second = claimer.claimOneDue().orElseThrow().token();
+        String second = pipelineClaimer.claimOneDue().orElseThrow().token();
 
         assertThat(second).isNotEqualTo(first);
     }
@@ -273,9 +273,9 @@ class PipelineExecutionTest {
     void aSuccessfulDispatchReleasesTheClaimAndAdvancesNextDueAt() {
         Pipeline pipeline = creator.create("c-release", PipelineType.DELETE);
 
-        worker.pollOnce();   // dispatch + report
+        pipelineWorker.pollOnce();   // dispatch + report
 
-        Pipeline after = pipelines.findById(pipeline.getId()).orElseThrow();
+        Pipeline after = pipelineRepository.findById(pipeline.getId()).orElseThrow();
         assertThat(after.getClaimedBy()).isNull();
         assertThat(after.getClaimedUntil()).isNull();
         assertThat(after.getNextDueAt()).isNotNull();
@@ -284,14 +284,14 @@ class PipelineExecutionTest {
     @Test
     void aStaleTokenReportNoOpsAfterReclaim() {
         Pipeline pipeline = creator.create("c-stale", PipelineType.DELETE);
-        String stale = claimer.claimOneDue().orElseThrow().token();
+        String stale = pipelineClaimer.claimOneDue().orElseThrow().token();
         clock.advance(LEASE.plusSeconds(1));
-        String fresh = claimer.claimOneDue().orElseThrow().token();
+        String fresh = pipelineClaimer.claimOneDue().orElseThrow().token();
         assertThat(fresh).isNotEqualTo(stale);
 
-        worker.process(new Claim(pipeline.getId(), stale));   // old token
+        pipelineWorker.process(new Claim(pipeline.getId(), stale));   // old token
 
-        Pipeline after = pipelines.findById(pipeline.getId()).orElseThrow();
+        Pipeline after = pipelineRepository.findById(pipeline.getId()).orElseThrow();
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);   // untouched
         assertThat(after.getClaimedBy()).isEqualTo(fresh);                       // fresh claim intact
     }
@@ -299,10 +299,10 @@ class PipelineExecutionTest {
     @Test
     void aMatchingTokenReportStillAppliesAfterLeaseExpiryWhenNobodyReclaimed() {
         Pipeline pipeline = creator.create("c-token-only", PipelineType.DELETE);
-        Claim claim = claimer.claimOneDue().orElseThrow();
+        Claim claim = pipelineClaimer.claimOneDue().orElseThrow();
         clock.advance(LEASE.plusSeconds(1));   // lease expired, but token unchanged and nobody reclaimed
 
-        worker.process(claim);   // token-only guard → applies
+        pipelineWorker.process(claim);   // token-only guard → applies
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
     }
@@ -318,19 +318,19 @@ class PipelineExecutionTest {
         assertThat(cancelled.getStatus()).isEqualTo(PipelineStatus.CANCELLED);
         assertThat(cancelled.getActiveTarget()).isNull();
         assertThat(cancelled.getClaimedBy()).isNull();
-        assertThat(tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId()))
+        assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()))
                 .extracting(Task::getStatus).containsOnly(TaskStatus.CANCELLED);
     }
 
     @Test
     void cancelCaseAExpiredLeaseStillTerminatesImmediately() {
         Pipeline pipeline = creator.create("x-expired", PipelineType.DELETE);
-        claimer.claimOneDue();
+        pipelineClaimer.claimOneDue();
         clock.advance(LEASE.plusSeconds(1));
 
         control.cancel(pipeline.getId());
 
-        Pipeline after = pipelines.findById(pipeline.getId()).orElseThrow();
+        Pipeline after = pipelineRepository.findById(pipeline.getId()).orElseThrow();
         assertThat(after.getStatus()).isEqualTo(PipelineStatus.CANCELLED);
         assertThat(after.getClaimedBy()).isNull();
     }
@@ -338,18 +338,18 @@ class PipelineExecutionTest {
     @Test
     void cancelCaseBLiveLeaseOnlyRaisesTheFlagThenTheClaimHolderTerminalizes() {
         Pipeline pipeline = creator.create("x-live", PipelineType.DELETE);
-        Claim claim = claimer.claimOneDue().orElseThrow();
+        Claim claim = pipelineClaimer.claimOneDue().orElseThrow();
 
         control.cancel(pipeline.getId());
 
-        Pipeline flagged = pipelines.findById(pipeline.getId()).orElseThrow();
+        Pipeline flagged = pipelineRepository.findById(pipeline.getId()).orElseThrow();
         assertThat(flagged.getStatus()).isEqualTo(PipelineStatus.RUNNING);   // API did not write status
         assertThat(flagged.isCancelRequested()).isTrue();
         assertThat(flagged.getNextDueAt()).isEqualTo(START);
 
-        worker.process(claim);   // claim holder observes the flag at its safe point
+        pipelineWorker.process(claim);   // claim holder observes the flag at its safe point
 
-        Pipeline done = pipelines.findById(pipeline.getId()).orElseThrow();
+        Pipeline done = pipelineRepository.findById(pipeline.getId()).orElseThrow();
         assertThat(done.getStatus()).isEqualTo(PipelineStatus.CANCELLED);
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.CANCELLED);
     }
@@ -357,13 +357,13 @@ class PipelineExecutionTest {
     @Test
     void aStaleStragglerCannotResurrectAfterCaseACancel() {
         Pipeline pipeline = creator.create("x-resurrect", PipelineType.DELETE);
-        Claim straggler = claimer.claimOneDue().orElseThrow();
+        Claim straggler = pipelineClaimer.claimOneDue().orElseThrow();
         clock.advance(LEASE.plusSeconds(1));
         control.cancel(pipeline.getId());   // Case A clears the token
 
-        worker.process(straggler);   // old token → no-op
+        pipelineWorker.process(straggler);   // old token → no-op
 
-        assertThat(pipelines.findById(pipeline.getId()).orElseThrow().getStatus())
+        assertThat(pipelineRepository.findById(pipeline.getId()).orElseThrow().getStatus())
                 .isEqualTo(PipelineStatus.CANCELLED);
     }
 
@@ -371,13 +371,13 @@ class PipelineExecutionTest {
 
     private void runUntilTerminal(Pipeline pipeline) {
         for (int i = 0; i < 20 && status(pipeline) == PipelineStatus.RUNNING; i++) {
-            worker.pollOnce();
+            pipelineWorker.pollOnce();
             clock.advance(Duration.ofHours(1));
         }
     }
 
     private Task task(Pipeline pipeline, int sequence) {
-        return tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).get(sequence);
+        return taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).get(sequence);
     }
 
     private TaskAttempt attempt(Pipeline pipeline, int sequence) {
@@ -385,11 +385,11 @@ class PipelineExecutionTest {
     }
 
     private TaskAttempt attemptNo(Pipeline pipeline, int sequence, int attemptNumber) {
-        return attempts.findByTaskIdAndAttemptNumber(task(pipeline, sequence).getId(), attemptNumber).orElseThrow();
+        return taskAttemptRepository.findByTaskIdAndAttemptNumber(task(pipeline, sequence).getId(), attemptNumber).orElseThrow();
     }
 
     private PipelineStatus status(Pipeline pipeline) {
-        return pipelines.findById(pipeline.getId()).orElseThrow().getStatus();
+        return pipelineRepository.findById(pipeline.getId()).orElseThrow().getStatus();
     }
 
     @TestConfiguration
@@ -400,7 +400,7 @@ class PipelineExecutionTest {
         }
 
         @Bean
-        FakeInfraManagerClient infraManager() {
+        FakeInfraManagerClient infraManagerClient() {
             return new FakeInfraManagerClient();
         }
 

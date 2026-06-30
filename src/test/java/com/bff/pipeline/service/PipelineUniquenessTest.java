@@ -39,13 +39,13 @@ import org.springframework.transaction.annotation.Transactional;
 class PipelineUniquenessTest {
 
     @Autowired private PipelineCreator creator;
-    @Autowired private PipelineRepository pipelines;
-    @Autowired private TaskRepository tasks;
+    @Autowired private PipelineRepository pipelineRepository;
+    @Autowired private TaskRepository taskRepository;
 
     @AfterEach
     void clean() {
-        tasks.deleteAll();
-        pipelines.deleteAll();
+        taskRepository.deleteAll();
+        pipelineRepository.deleteAll();
     }
 
     @Test
@@ -54,7 +54,7 @@ class PipelineUniquenessTest {
         Pipeline again = creator.create("target-a", PipelineType.INSTALL);
 
         assertThat(again.getId()).isEqualTo(first.getId());
-        assertThat(pipelines.findAll()).hasSize(1);
+        assertThat(pipelineRepository.findAll()).hasSize(1);
     }
 
     @Test
@@ -74,13 +74,13 @@ class PipelineUniquenessTest {
         Pipeline second = creator.create("target-c", PipelineType.DELETE);
 
         assertThat(second.getId()).isNotEqualTo(first.getId());
-        assertThat(pipelines.findById(first.getId()).orElseThrow().getActiveTarget()).isNull();
+        assertThat(pipelineRepository.findById(first.getId()).orElseThrow().getActiveTarget()).isNull();
     }
 
     private void terminate(Pipeline pipeline) {
         pipeline.setStatus(PipelineStatus.DONE);
         pipeline.setActiveTarget(null);
-        pipelines.save(pipeline);
+        pipelineRepository.save(pipeline);
     }
 
     @TestConfiguration

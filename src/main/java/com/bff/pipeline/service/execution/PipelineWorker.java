@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
 /**
  * ADR-021 한 사이클의 조립자: claim(tx1, {@link PipelineClaimer}) 이후 외부호출(phase-A,
  * {@link StepRunner}) → report(tx2, {@link StepReporter})를 잇는다. <b>자신은 트랜잭션을 열지 않는다</b> —
- * 외부호출이 어떤 행 락도 보유하지 않게 하기 위함(Decision 3). 트랜잭션은 claimer/reporter에만 있다.
+ * 외부호출이 어떤 행 락도 보유하지 않게 하기 위함(Decision 3). 트랜잭션은 pipelineClaimer/reporter에만 있다.
  *
  * <p>cancel은 두 안전지점에서 관찰된다: claim 직후({@link #loadStepContext}에서 {@code cancel_requested}
  * 또는 현재 task 없음 → 외부호출 생략하고 report로 수렴/해제) 그리고 tx2 안({@link StepReporter#report}).
@@ -30,29 +30,29 @@ public class PipelineWorker {
     private record StepContext(String target, Task currentTask, TaskAttempt attempt,
             boolean cancelRequested, boolean terraformDispatch) { }
 
-    private final PipelineClaimer claimer;
-    private final PipelineRepository pipelines;
-    private final TaskRepository tasks;
+    private final PipelineClaimer pipelineClaimer;
+    private final PipelineRepository pipelineRepository;
+    private final TaskRepository taskRepository;
     private final ObservationRecorder observationRecorder;
     private final StepRunner stepRunner;
-    private final StepReporter reporter;
-    private final ExecutionSettings settings;
+    private final StepReporter stepReporter;
+    private final ExecutionSettings executionSettings;
 
-    public PipelineWorker(PipelineClaimer claimer, PipelineRepository pipelines, TaskRepository tasks,
-            ObservationRecorder observationRecorder, StepRunner stepRunner, StepReporter reporter,
-            ExecutionSettings settings) {
-        this.claimer = claimer;
-        this.pipelines = pipelines;
-        this.tasks = tasks;
+    public PipelineWorker(PipelineClaimer pipelineClaimer, PipelineRepository pipelineRepository, TaskRepository taskRepository,
+            ObservationRecorder observationRecorder, StepRunner stepRunner, StepReporter stepReporter,
+            ExecutionSettings executionSettings) {
+        this.pipelineClaimer = pipelineClaimer;
+        this.pipelineRepository = pipelineRepository;
+        this.taskRepository = taskRepository;
         this.observationRecorder = observationRecorder;
         this.stepRunner = stepRunner;
-        this.reporter = reporter;
-        this.settings = settings;
+        this.stepReporter = stepReporter;
+        this.executionSettings = executionSettings;
     }
 
     /** 편의: 한 건 claim 후 처리하고, 처리한 pipeline id를 반환한다(없으면 empty). */
     public Optional<Long> pollOnce() {
-        return claimer.claimOneDue().map(claim -> {
+        return pipelineClaimer.claimOneDue().map(claim -> {
             process(claim);
             return claim.pipelineId();
         });
@@ -64,23 +64,23 @@ public class PipelineWorker {
             return;
         }
         if (context.cancelRequested() || context.currentTask() == null) {
-            reporter.report(claim.pipelineId(), claim.token(), null);
+            stepReporter.report(claim.pipelineId(), claim.token(), null);
             return;
         }
         if (context.terraformDispatch() && !slotAvailable()) {
-            reporter.reschedule(claim.pipelineId(), claim.token(), settings.slotRetry());
+            stepReporter.reschedule(claim.pipelineId(), claim.token(), executionSettings.slotRetry());
             return;
         }
         StepOutcome outcome = stepRunner.runStep(context.target(), context.currentTask(), context.attempt());
-        reporter.report(claim.pipelineId(), claim.token(), outcome);
+        stepReporter.report(claim.pipelineId(), claim.token(), outcome);
     }
 
     private StepContext loadStepContext(long pipelineId) {
-        Pipeline pipeline = pipelines.findById(pipelineId).orElse(null);
+        Pipeline pipeline = pipelineRepository.findById(pipelineId).orElse(null);
         if (pipeline == null) {
             return null;
         }
-        List<Task> chain = tasks.findByPipelineIdOrderBySequenceAsc(pipelineId);
+        List<Task> chain = taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId);
         Task current = chain.stream().filter(task -> !task.getStatus().isTerminal()).findFirst().orElse(null);
         TaskAttempt attempt = current == null ? null : observationRecorder.currentAttempt(current).orElse(null);
         boolean terraformDispatch = current != null
@@ -90,6 +90,6 @@ public class PipelineWorker {
     }
 
     private boolean slotAvailable() {
-        return tasks.countByTaskNameAndStatus(TerraformTask.NAME, TaskStatus.IN_PROGRESS) < settings.slotCap();
+        return taskRepository.countByTaskNameAndStatus(TerraformTask.NAME, TaskStatus.IN_PROGRESS) < executionSettings.slotCap();
     }
 }

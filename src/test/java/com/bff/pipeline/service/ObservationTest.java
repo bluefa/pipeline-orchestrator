@@ -57,55 +57,55 @@ class ObservationTest {
 
     private static final Instant START = Instant.parse("2026-06-23T00:00:00Z");
 
-    @Autowired private PipelineWorker worker;
+    @Autowired private PipelineWorker pipelineWorker;
     @Autowired private PipelineCreator creator;
-    @Autowired private TaskRepository tasks;
-    @Autowired private PipelineRepository pipelines;
-    @Autowired private TaskAttemptRepository attempts;
-    @Autowired private TaskCheckRepository checks;
+    @Autowired private TaskRepository taskRepository;
+    @Autowired private PipelineRepository pipelineRepository;
+    @Autowired private TaskAttemptRepository taskAttemptRepository;
+    @Autowired private TaskCheckRepository taskCheckRepository;
     @Autowired private MutableClock clock;
-    @Autowired private FakeInfraManagerClient infraManager;
+    @Autowired private FakeInfraManagerClient infraManagerClient;
 
     @BeforeEach
     void reset() {
         clock.set(START);
-        infraManager.onDispatch(() -> "[\"job-1\"]");
-        infraManager.onPoll(TerraformPoll::running);
-        infraManager.onCheck(() -> false);
+        infraManagerClient.onDispatch(() -> "[\"job-1\"]");
+        infraManagerClient.onPoll(TerraformPoll::running);
+        infraManagerClient.onCheck(() -> false);
     }
 
     @AfterEach
     void clean() {
-        checks.deleteAll();
-        attempts.deleteAll();
-        tasks.deleteAll();
-        pipelines.deleteAll();
+        taskCheckRepository.deleteAll();
+        taskAttemptRepository.deleteAll();
+        taskRepository.deleteAll();
+        pipelineRepository.deleteAll();
     }
 
     @Test
     void aHappyTerraformTaskRecordsOneDoneAttemptWithItsResponse() {
         Pipeline pipeline = creator.create("obs-happy", PipelineType.DELETE);
-        infraManager.onPoll(TerraformPoll::success);
-        worker.pollOnce();
-        worker.pollOnce();
+        infraManagerClient.onPoll(TerraformPoll::success);
+        pipelineWorker.pollOnce();
+        pipelineWorker.pollOnce();
 
-        var recorded = attempts.findByTaskIdOrderByAttemptNumberAsc(taskId(pipeline, 0));
+        var recorded = taskAttemptRepository.findByTaskIdOrderByAttemptNumberAsc(taskId(pipeline, 0));
         assertThat(recorded).singleElement().satisfies(attempt -> {
             assertThat(attempt.getAttemptNumber()).isEqualTo(1);
             assertThat(attempt.getStatus()).isEqualTo(TaskStatus.DONE);
             assertThat(attempt.getResponse()).isEqualTo("[\"job-1\"]");
         });
-        assertThat(checks.findByTaskAttemptId(recorded.getFirst().getId())).isEmpty();
+        assertThat(taskCheckRepository.findByTaskAttemptId(recorded.getFirst().getId())).isEmpty();
     }
 
     @Test
     void aRetryingTaskRecordsOneAttemptRowPerAttemptWithIncreasingAttemptNo() {
         Pipeline pipeline = creator.create("obs-retry", PipelineType.DELETE);
-        infraManager.onPoll(TerraformPoll::failure);
+        infraManagerClient.onPoll(TerraformPoll::failure);
 
         runUntilTerminal(pipeline);
 
-        var recorded = attempts.findByTaskIdOrderByAttemptNumberAsc(taskId(pipeline, 0));
+        var recorded = taskAttemptRepository.findByTaskIdOrderByAttemptNumberAsc(taskId(pipeline, 0));
         assertThat(recorded).extracting(TaskAttempt::getAttemptNumber).containsExactly(1, 2);
         assertThat(recorded).allSatisfy(attempt -> {
             assertThat(attempt.getStatus()).isEqualTo(TaskStatus.FAILED);
@@ -119,40 +119,40 @@ class ObservationTest {
         Long conditionTaskId = taskId(pipeline, 1);
 
         for (int i = 0; i < 3; i++) {
-            worker.pollOnce();
+            pipelineWorker.pollOnce();
             clock.advance(Duration.ofMinutes(11));
         }
 
-        TaskAttempt attempt = attempts.findByTaskIdAndAttemptNumber(conditionTaskId, 1).orElseThrow();
-        assertThat(checks.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
+        TaskAttempt attempt = taskAttemptRepository.findByTaskIdAndAttemptNumber(conditionTaskId, 1).orElseThrow();
+        assertThat(taskCheckRepository.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
             assertThat(check.getCallCount()).isEqualTo(3);
             assertThat(check.getNotMetCount()).isEqualTo(3);
         });
-        assertThat(checks.findAll()).hasSize(1);
+        assertThat(taskCheckRepository.findAll()).hasSize(1);
     }
 
     private Pipeline createInstallAtConditionInProgress() {
         Pipeline pipeline = creator.create("obs-cond", PipelineType.INSTALL);
-        infraManager.onPoll(TerraformPoll::success);
-        worker.pollOnce();   // dispatch terraform
-        worker.pollOnce();   // poll terraform → DONE + promote condition READY
-        worker.pollOnce();   // dispatch condition → IN_PROGRESS
-        assertThat(tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).get(1).getStatus())
+        infraManagerClient.onPoll(TerraformPoll::success);
+        pipelineWorker.pollOnce();   // dispatch terraform
+        pipelineWorker.pollOnce();   // poll terraform → DONE + promote condition READY
+        pipelineWorker.pollOnce();   // dispatch condition → IN_PROGRESS
+        assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).get(1).getStatus())
                 .isEqualTo(TaskStatus.IN_PROGRESS);
         return pipeline;
     }
 
     private void runUntilTerminal(Pipeline pipeline) {
         for (int i = 0; i < 20; i++) {
-            worker.pollOnce();
+            pipelineWorker.pollOnce();
             clock.advance(Duration.ofHours(1));
-            if (pipelines.findById(pipeline.getId()).orElseThrow().getStatus() != PipelineStatus.RUNNING) {
+            if (pipelineRepository.findById(pipeline.getId()).orElseThrow().getStatus() != PipelineStatus.RUNNING) {
                 return;
             }
         }
     }
 
     private Long taskId(Pipeline pipeline, int sequence) {
-        return tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).get(sequence).getId();
+        return taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).get(sequence).getId();
     }
 }

@@ -28,21 +28,21 @@ import org.springframework.transaction.annotation.Transactional;
 public class PipelineInserter {
 
     private final Recipes recipes;
-    private final PipelineRepository pipelines;
-    private final TaskRepository tasks;
+    private final PipelineRepository pipelineRepository;
+    private final TaskRepository taskRepository;
     private final Clock clock;
 
-    public PipelineInserter(Recipes recipes, PipelineRepository pipelines, TaskRepository tasks, Clock clock) {
+    public PipelineInserter(Recipes recipes, PipelineRepository pipelineRepository, TaskRepository taskRepository, Clock clock) {
         this.recipes = recipes;
-        this.pipelines = pipelines;
-        this.tasks = tasks;
+        this.pipelineRepository = pipelineRepository;
+        this.taskRepository = taskRepository;
         this.clock = clock;
     }
 
     @Transactional
     public Pipeline insert(String target, PipelineType type) {
         Instant now = clock.instant();
-        Pipeline pipeline = pipelines.saveAndFlush(Pipeline.builder()
+        Pipeline pipeline = pipelineRepository.saveAndFlush(Pipeline.builder()
                 .type(type)
                 .target(target)
                 .status(PipelineStatus.RUNNING)
@@ -52,7 +52,7 @@ public class PipelineInserter {
                 .nextDueAt(now)            // ADR-021 Decision 4: 생성 시 즉시 claim 가능하도록 시딩(없으면 영원히 unclaimed)
                 .cancelRequested(false)
                 .build());
-        tasks.saveAll(buildChain(pipeline.getId(), recipes.forType(type).steps(), now));
+        taskRepository.saveAll(buildChain(pipeline.getId(), recipes.forType(type).steps(), now));
         return pipeline;
     }
 
