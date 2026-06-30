@@ -7,6 +7,8 @@ import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.pipeline.PipelineCreator;
+import com.bff.pipeline.service.pipeline.PipelineInserter;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -31,18 +33,18 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineCreator.class, PipelineInserter.class, Recipes.class, PipelineUniquenessTest.Wiring.class})
+@Import({PipelineCreator.class, PipelineInserter.class, PipelineUniquenessTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineUniquenessTest {
 
     @Autowired private PipelineCreator creator;
-    @Autowired private PipelineRepository pipelines;
-    @Autowired private TaskRepository tasks;
+    @Autowired private PipelineRepository pipelineRepository;
+    @Autowired private TaskRepository taskRepository;
 
     @AfterEach
     void clean() {
-        tasks.deleteAll();
-        pipelines.deleteAll();
+        taskRepository.deleteAll();
+        pipelineRepository.deleteAll();
     }
 
     @Test
@@ -51,7 +53,7 @@ class PipelineUniquenessTest {
         Pipeline again = creator.create("target-a", PipelineType.INSTALL);
 
         assertThat(again.getId()).isEqualTo(first.getId());
-        assertThat(pipelines.findAll()).hasSize(1);
+        assertThat(pipelineRepository.findAll()).hasSize(1);
     }
 
     @Test
@@ -71,13 +73,13 @@ class PipelineUniquenessTest {
         Pipeline second = creator.create("target-c", PipelineType.DELETE);
 
         assertThat(second.getId()).isNotEqualTo(first.getId());
-        assertThat(pipelines.findById(first.getId()).orElseThrow().getActiveTarget()).isNull();
+        assertThat(pipelineRepository.findById(first.getId()).orElseThrow().getActiveTarget()).isNull();
     }
 
     private void terminate(Pipeline pipeline) {
         pipeline.setStatus(PipelineStatus.DONE);
         pipeline.setActiveTarget(null);
-        pipelines.save(pipeline);
+        pipelineRepository.save(pipeline);
     }
 
     @TestConfiguration

@@ -5,7 +5,7 @@ import com.bff.pipeline.enums.ErrorCode;
 import java.util.Objects;
 
 /**
- * {@link TaskType#check} 폴 한 번의 결과를 나타내는 봉인(sealed) 결과 타입이며,
+ * {@code TaskType.check} 폴 한 번의 결과를 나타내는 봉인(sealed) 결과 타입이며,
  * 엔진이 다음 행동의 근거로 삼는 값이다. 비즈니스 실패는 여기서 데이터이며 —
  * 영속화된 {@code ErrorCode} — 절대 던져지는 예외가 아니다({@code docs/exception-strategy.md} 참조).
  * 엔진은 세 가지 변형(variant)을 완전 열거(exhaustive)하여 분기한다.

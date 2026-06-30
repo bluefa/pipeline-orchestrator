@@ -1,4 +1,4 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.pipeline;
 
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.enums.PipelineType;
@@ -14,7 +14,7 @@ import org.springframework.stereotype.Service;
  * 이미 활성 실행이 존재하면 오류를 발생시키는 대신 해당 실행을 반환한다. 이는 트리거 계약을
  * 충족한다: 어떤 타입이든 중복 생성 요청은 진행 중인 실행을 반환하는 안전한 no-op이다.
  *
- * <p>의도적으로 {@code @Transactional}을 붙이지 않는다: inserter의 트랜잭션이 유니크 제약
+ * <p>의도적으로 {@code @Transactional}을 붙이지 않는다: pipelineInserter의 트랜잭션이 유니크 제약
  * 위반으로 롤백될 때, 복구 조회는 커밋된 기존 실행을 읽기 위해 새 트랜잭션에서 실행되어야 한다.
  * {@link DataIntegrityViolationException} 캐치는 도메인 응답으로 변환하는 유일한
  * 외부/인프라 실패이다({@code docs/exception-strategy.md} 참조).
@@ -31,24 +31,24 @@ public class PipelineCreator {
 
     private static final int DUPLICATE_CREATE_RETRY_LIMIT = 3;
 
-    private final PipelineInserter inserter;
-    private final PipelineRepository pipelines;
+    private final PipelineInserter pipelineInserter;
+    private final PipelineRepository pipelineRepository;
 
-    public PipelineCreator(PipelineInserter inserter, PipelineRepository pipelines) {
-        this.inserter = inserter;
-        this.pipelines = pipelines;
+    public PipelineCreator(PipelineInserter pipelineInserter, PipelineRepository pipelineRepository) {
+        this.pipelineInserter = pipelineInserter;
+        this.pipelineRepository = pipelineRepository;
     }
 
     public Pipeline create(String target, PipelineType type) {
         DataIntegrityViolationException lastViolation = null;
         for (int attempt = 0; attempt < DUPLICATE_CREATE_RETRY_LIMIT; attempt++) {
             try {
-                return inserter.insert(target, type);
+                return pipelineInserter.insert(target, type);
             } catch (DataIntegrityViolationException duplicate) {
                 if (!isActiveTargetViolation(duplicate)) {
                     throw duplicate;
                 }
-                Optional<Pipeline> active = pipelines.findByActiveTarget(target);
+                Optional<Pipeline> active = pipelineRepository.findByActiveTarget(target);
                 if (active.isPresent()) {
                     return active.get();
                 }

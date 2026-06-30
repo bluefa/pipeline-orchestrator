@@ -11,6 +11,9 @@ import com.bff.pipeline.client.InfraManagerClient;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.pipeline.PipelineControl;
+import com.bff.pipeline.service.pipeline.PipelineCreator;
+import com.bff.pipeline.service.pipeline.PipelineEngine;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
@@ -34,8 +37,8 @@ class PipelineEngineTransactionTest {
     @Autowired private PipelineCreator creator;
     @Autowired private PipelineControl control;
     @Autowired private PipelineEngine engine;
-    @Autowired private PipelineRepository pipelines;
-    @Autowired private TaskRepository tasks;
+    @Autowired private PipelineRepository pipelineRepository;
+    @Autowired private TaskRepository taskRepository;
     @Autowired private GatedInfraManagerClient infraManager;
 
     @Test
@@ -44,7 +47,7 @@ class PipelineEngineTransactionTest {
 
         engine.advance(pipeline.getId());
 
-        assertThat(tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).getFirst().getStatus())
+        assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).getFirst().getStatus())
                 .isEqualTo(TaskStatus.IN_PROGRESS);
     }
 
@@ -73,7 +76,7 @@ class PipelineEngineTransactionTest {
         }
         worker.join(5_000);
 
-        assertThat(pipelines.findById(pipeline.getId()).orElseThrow().getStatus())
+        assertThat(pipelineRepository.findById(pipeline.getId()).orElseThrow().getStatus())
                 .isEqualTo(PipelineStatus.CANCELLED);
     }
 

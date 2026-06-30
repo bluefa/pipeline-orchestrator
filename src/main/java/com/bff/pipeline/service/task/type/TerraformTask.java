@@ -1,4 +1,4 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.task.type;
 
 import com.bff.pipeline.PipelineSettings;
 import com.bff.pipeline.client.InfraManagerClient;
@@ -7,7 +7,6 @@ import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.CheckSignal;
 import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.model.TaskProgress;
-import com.bff.pipeline.model.TaskType;
 import com.bff.pipeline.utils.TaskSettings;
 import java.time.Clock;
 import org.springframework.stereotype.Component;
@@ -30,13 +29,13 @@ public class TerraformTask implements TaskType {
 
     public static final String NAME = "TERRAFORM_JOB";
 
-    private final InfraManagerClient infraManager;
-    private final PipelineSettings settings;
+    private final InfraManagerClient infraManagerClient;
+    private final PipelineSettings pipelineSettings;
     private final Clock clock;
 
-    public TerraformTask(InfraManagerClient infraManager, PipelineSettings settings, Clock clock) {
-        this.infraManager = infraManager;
-        this.settings = settings;
+    public TerraformTask(InfraManagerClient infraManagerClient, PipelineSettings pipelineSettings, Clock clock) {
+        this.infraManagerClient = infraManagerClient;
+        this.pipelineSettings = pipelineSettings;
         this.clock = clock;
     }
 
@@ -47,7 +46,7 @@ public class TerraformTask implements TaskType {
 
     @Override
     public void execute(String target, Task task) {
-        String jobId = infraManager.runTerraform(target, task.getOperation());
+        String jobId = infraManagerClient.runTerraform(target, task.getOperation());
         if (jobId == null || jobId.isBlank()) {
             throw new InfraManagerClient.CallFailedException(
                     "InfraManager returned no job id for " + task.getOperation());
@@ -57,7 +56,7 @@ public class TerraformTask implements TaskType {
 
     @Override
     public TaskProgress check(String target, Task task) {
-        TerraformPoll poll = infraManager.terraformJobStatus(task.getJobId());
+        TerraformPoll poll = infraManagerClient.terraformJobStatus(task.getJobId());
         if (poll == null) {
             throw new InfraManagerClient.CallFailedException(
                     "InfraManager returned no status for job " + task.getJobId());
@@ -65,7 +64,7 @@ public class TerraformTask implements TaskType {
         if (poll.finished()) {
             return poll.succeeded() ? TaskProgress.SUCCEEDED : TaskProgress.failedRetryable(ErrorCode.JOB_FAILED);
         }
-        if (TaskSettings.isPastDeadline(task, TaskSettings.resolveExecutionTimeout(task, settings), clock)) {
+        if (TaskSettings.isPastDeadline(task, TaskSettings.resolveExecutionTimeout(task, pipelineSettings), clock)) {
             return TaskProgress.failedRetryable(ErrorCode.EXECUTION_TIMEOUT);
         }
         return TaskProgress.pending(CheckSignal.RUNNING);

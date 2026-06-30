@@ -19,6 +19,16 @@ import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.pipeline.PipelineControl;
+import com.bff.pipeline.service.pipeline.PipelineCreator;
+import com.bff.pipeline.service.pipeline.PipelineEngine;
+import com.bff.pipeline.service.pipeline.PipelineInserter;
+import com.bff.pipeline.service.task.TaskAuditWriter;
+import com.bff.pipeline.service.task.TaskCanceller;
+import com.bff.pipeline.service.task.TaskStateMachine;
+import com.bff.pipeline.service.task.TaskTypeRegistry;
+import com.bff.pipeline.service.task.type.ConditionCheckTask;
+import com.bff.pipeline.service.task.type.TerraformTask;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -48,9 +58,9 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineEngine.class, TaskMachine.class, TaskTypeRegistry.class, TerraformTask.class,
-        ConditionCheckTask.class, Observations.class, TaskCanceller.class, PipelineCreator.class,
-        PipelineInserter.class, PipelineControl.class, Recipes.class, PipelineEngineTest.Wiring.class,
+@Import({PipelineEngine.class, TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class,
+        ConditionCheckTask.class, TaskAuditWriter.class, TaskCanceller.class, PipelineCreator.class,
+        PipelineInserter.class, PipelineControl.class, PipelineEngineTest.Wiring.class,
         PipelineEngineTest.PostCheckWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineEngineTest {
@@ -60,10 +70,10 @@ class PipelineEngineTest {
     @Autowired private PipelineEngine engine;
     @Autowired private PipelineCreator creator;
     @Autowired private PipelineControl control;
-    @Autowired private TaskRepository tasks;
-    @Autowired private PipelineRepository pipelines;
-    @Autowired private TaskAttemptRepository attempts;
-    @Autowired private TaskCheckRepository checks;
+    @Autowired private TaskRepository taskRepository;
+    @Autowired private PipelineRepository pipelineRepository;
+    @Autowired private TaskAttemptRepository taskAttemptRepository;
+    @Autowired private TaskCheckRepository taskCheckRepository;
     @Autowired private MutableClock clock;
     @Autowired private FakeInfraManagerClient infraManager;
     @Autowired private PostCheckProbeTask postCheckProbe;
@@ -79,10 +89,10 @@ class PipelineEngineTest {
 
     @AfterEach
     void clean() {
-        checks.deleteAll();
-        attempts.deleteAll();
-        tasks.deleteAll();
-        pipelines.deleteAll();
+        taskCheckRepository.deleteAll();
+        taskAttemptRepository.deleteAll();
+        taskRepository.deleteAll();
+        pipelineRepository.deleteAll();
     }
 
     @Test
@@ -170,7 +180,7 @@ class PipelineEngineTest {
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
-        assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
+        assertThat(taskAttemptRepository.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
                 .isEqualTo(ErrorCode.CALL_TIMEOUT);
     }
 
@@ -184,7 +194,7 @@ class PipelineEngineTest {
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
         assertThat(task(pipeline, 0).getJobId()).isNull();
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
-        assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
+        assertThat(taskAttemptRepository.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
                 .isEqualTo(ErrorCode.CHECK_ERROR);
     }
 
@@ -199,9 +209,9 @@ class PipelineEngineTest {
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
-        TaskAttempt attempt = attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow();
+        TaskAttempt attempt = taskAttemptRepository.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow();
         assertThat(attempt.getErrorCode()).isEqualTo(ErrorCode.CALL_TIMEOUT);
-        assertThat(checks.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
+        assertThat(taskCheckRepository.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
             assertThat(check.getCallTimeoutCount()).isEqualTo(1);
             assertThat(check.getCallCount()).isEqualTo(1);
         });
@@ -285,7 +295,7 @@ class PipelineEngineTest {
         Pipeline pipeline = creator.create("t-unknown", PipelineType.DELETE);
         Task task = task(pipeline, 0);
         task.setTaskName("NO_SUCH_TYPE");
-        tasks.save(task);
+        taskRepository.save(task);
 
         advance(pipeline);
 
@@ -299,7 +309,7 @@ class PipelineEngineTest {
         Pipeline pipeline = creator.create("t-pc-fail", PipelineType.DELETE);
         Task task0 = task(pipeline, 0);
         task0.setTaskName(PostCheckProbeTask.NAME);
-        tasks.save(task0);
+        taskRepository.save(task0);
         postCheckProbe.onPostCheck(() -> TaskProgress.failedTerminal(ErrorCode.JOB_FAILED));
 
         advance(pipeline);
@@ -316,7 +326,7 @@ class PipelineEngineTest {
         Pipeline pipeline = creator.create("t-pc-callfail", PipelineType.DELETE);
         Task task0 = task(pipeline, 0);
         task0.setTaskName(PostCheckProbeTask.NAME);
-        tasks.save(task0);
+        taskRepository.save(task0);
         postCheckProbe.onPostCheck(() -> { throw new InfraManagerClient.CallFailedException("post-check call failed"); });
 
         advance(pipeline);
@@ -325,7 +335,7 @@ class PipelineEngineTest {
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
-        assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
+        assertThat(taskAttemptRepository.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
                 .isEqualTo(ErrorCode.CHECK_ERROR);
     }
 
@@ -334,7 +344,7 @@ class PipelineEngineTest {
         Pipeline pipeline = creator.create("t-pc-pending", PipelineType.DELETE);
         Task task0 = task(pipeline, 0);
         task0.setTaskName(PostCheckProbeTask.NAME);
-        tasks.save(task0);
+        taskRepository.save(task0);
         postCheckProbe.onPostCheck(() -> TaskProgress.pending(CheckSignal.NOT_MET));
 
         advance(pipeline);
@@ -371,12 +381,12 @@ class PipelineEngineTest {
     }
 
     private Task task(Pipeline pipeline, int sequence) {
-        List<Task> chain = tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId());
+        List<Task> chain = taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId());
         return chain.get(sequence);
     }
 
     private PipelineStatus status(Pipeline pipeline) {
-        return pipelines.findById(pipeline.getId()).orElseThrow().getStatus();
+        return pipelineRepository.findById(pipeline.getId()).orElseThrow().getStatus();
     }
 
     @TestConfiguration
@@ -440,7 +450,7 @@ class PipelineEngineTest {
         }
     }
 
-    static final class PostCheckProbeTask implements com.bff.pipeline.model.TaskType {
+    static final class PostCheckProbeTask implements com.bff.pipeline.service.task.type.TaskType {
         static final String NAME = "POST_CHECK_PROBE";
         private java.util.function.Supplier<TaskProgress> postCheckBehavior = () -> TaskProgress.SUCCEEDED;
         void onPostCheck(java.util.function.Supplier<TaskProgress> behavior) { this.postCheckBehavior = behavior; }

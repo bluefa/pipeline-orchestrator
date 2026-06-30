@@ -1,4 +1,4 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.pipeline;
 
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
@@ -6,6 +6,7 @@ import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.model.RecipeStep;
+import com.bff.pipeline.recipe.Recipes;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import java.time.Clock;
@@ -27,22 +28,20 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 public class PipelineInserter {
 
-    private final Recipes recipes;
-    private final PipelineRepository pipelines;
-    private final TaskRepository tasks;
+    private final PipelineRepository pipelineRepository;
+    private final TaskRepository taskRepository;
     private final Clock clock;
 
-    public PipelineInserter(Recipes recipes, PipelineRepository pipelines, TaskRepository tasks, Clock clock) {
-        this.recipes = recipes;
-        this.pipelines = pipelines;
-        this.tasks = tasks;
+    public PipelineInserter(PipelineRepository pipelineRepository, TaskRepository taskRepository, Clock clock) {
+        this.pipelineRepository = pipelineRepository;
+        this.taskRepository = taskRepository;
         this.clock = clock;
     }
 
     @Transactional
     public Pipeline insert(String target, PipelineType type) {
         Instant now = clock.instant();
-        Pipeline pipeline = pipelines.saveAndFlush(Pipeline.builder()
+        Pipeline pipeline = pipelineRepository.saveAndFlush(Pipeline.builder()
                 .type(type)
                 .target(target)
                 .status(PipelineStatus.RUNNING)
@@ -50,7 +49,7 @@ public class PipelineInserter {
                 .createdAt(now)
                 .lastActivityAt(now)
                 .build());
-        tasks.saveAll(buildChain(pipeline.getId(), recipes.forType(type).steps(), now));
+        taskRepository.saveAll(buildChain(pipeline.getId(), Recipes.forType(type).steps(), now));
         return pipeline;
     }
 

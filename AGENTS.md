@@ -23,23 +23,29 @@ Java 21 / MySQL.
    or hand-written SQL migrations. If a constraint cannot be expressed in JPA, stop and
    raise it rather than reaching for raw SQL.
 4. **Separate the two failure kinds.** External-call failures are exceptions caught at the
-   one engine boundary (`TaskMachine`) and translated to a persisted `ErrorCode`;
+   one engine boundary (`TaskStateMachine`) and translated to a persisted `ErrorCode`;
    business-rule outcomes are values (`ErrorCode`, sealed result types), never thrown. See
    `docs/exception-strategy.md`.
 5. **Keep the file count down.** An `interface` is justified only by a real external boundary
    (`InfraManagerClient`, prod + test fake) or genuine multi-implementation polymorphism
    (`TaskType` → Terraform/Condition, resolved by `TaskTypeRegistry`) — never a single-impl
    indirection. Prefer a static utility to a one-method bean.
-6. **Layered packages.** `entity / enums / dto / model / service / client / controller / repository / utils`
+6. **Packages by layer, with feature sub-packages inside `service`.**
+   `entity / enums / dto / model / recipe / service / client / controller / repository / utils`
    (app wiring — `PipelineApplication`/`PipelineConfig`/`PipelineSettings` — sits at the root package):
    - `entity` — JPA entities · `enums` — all enums · `dto` — external transport values (TerraformPoll,
      ErrorResponse) · `model` — domain value/contract types that are neither a bean nor transport
-     (TaskType, TaskProgress, Recipe) · `service` — **only** `@Component`/`@Service` beans (no enum,
-     record, or plain interface lives here) · `client` — the InfraManager boundary · `controller` — REST
-     advice · `repository` — Spring Data · `utils` — static helpers.
+     (Recipe, RecipeStep, TaskProgress) · `recipe` — the code-default recipes (`Recipes`, a static
+     definition, not a bean) · `client` — the InfraManager boundary · `controller` — REST advice ·
+     `repository` — Spring Data · `utils` — static helpers.
+   - `service` holds the `@Component`/`@Service` beans, grouped by feature:
+     `service/pipeline` (PipelineEngine, PipelineControl, PipelineCreator, PipelineInserter),
+     `service/task` (TaskStateMachine, TaskCanceller, TaskTypeRegistry, TaskAuditWriter), and
+     `service/task/type` — the `TaskType` SPI (execution-strategy interface) and its implementations
+     (TerraformTask, ConditionCheckTask).
    Names reveal purpose — **no abbreviations** anywhere (class, method, field, variable): e.g.
    `InfraManagerClient` not `ImClient`, `sequence` not `seq`, `timeToLive` not `ttl`, `attemptNumber`
-   not `attemptNo`.
+   not `attemptNo`. Constructor-injected dependency fields and parameters are named after their declared type in lowerCamelCase (e.g. `PipelineRepository pipelineRepository`), except collections which retain their descriptive plural names.
 7. **Comments in Korean, on the class header.** Avoid inline comments; put a **detailed Korean**
    Javadoc on each major component's class declaration so its behavior and invariants are clear from the
    header alone. Identifiers and code stay in English; only the prose comments are Korean.

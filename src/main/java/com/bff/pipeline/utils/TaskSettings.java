@@ -8,7 +8,7 @@ import java.time.Duration;
 /**
  * 태스크별 파라미터 해석 및 데드라인 계산을 담당하는 순수 정적 유틸리티 클래스이다.
  * 모든 메서드는 (task, settings) → value 형태로 상태를 갖지 않으므로,
- * {@code TaskMachine} 외부에 위치하며 빈(bean)으로 등록할 필요가 없다.
+ * {@code TaskStateMachine} 외부에 위치하며 빈(bean)으로 등록할 필요가 없다.
  * 태스크 자체의 오버라이드 값이 우선 적용되며, 없을 경우 전역 {@link PipelineSettings} 기본값이 사용된다.
  *
  * <p>{@code isPastDeadline}은 현재 attempt의 {@code startedAt}을 기준으로 태스크가 데드라인을

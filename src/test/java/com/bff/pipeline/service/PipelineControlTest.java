@@ -9,6 +9,11 @@ import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.pipeline.PipelineControl;
+import com.bff.pipeline.service.pipeline.PipelineCreator;
+import com.bff.pipeline.service.pipeline.PipelineInserter;
+import com.bff.pipeline.service.task.TaskAuditWriter;
+import com.bff.pipeline.service.task.TaskCanceller;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -33,20 +38,20 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineControl.class, TaskCanceller.class, Observations.class, PipelineCreator.class,
-        PipelineInserter.class, Recipes.class, PipelineControlTest.Wiring.class})
+@Import({PipelineControl.class, TaskCanceller.class, TaskAuditWriter.class, PipelineCreator.class,
+        PipelineInserter.class, PipelineControlTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineControlTest {
 
     @Autowired private PipelineControl control;
     @Autowired private PipelineCreator creator;
-    @Autowired private PipelineRepository pipelines;
-    @Autowired private TaskRepository tasks;
+    @Autowired private PipelineRepository pipelineRepository;
+    @Autowired private TaskRepository taskRepository;
 
     @AfterEach
     void clean() {
-        tasks.deleteAll();
-        pipelines.deleteAll();
+        taskRepository.deleteAll();
+        pipelineRepository.deleteAll();
     }
 
     @Test
@@ -57,7 +62,7 @@ class PipelineControlTest {
 
         assertThat(cancelled.getStatus()).isEqualTo(PipelineStatus.CANCELLED);
         assertThat(cancelled.getActiveTarget()).isNull();
-        assertThat(tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId()))
+        assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()))
                 .extracting(Task::getStatus)
                 .containsOnly(TaskStatus.CANCELLED);
     }
@@ -85,15 +90,15 @@ class PipelineControlTest {
     @Test
     void cancelDoesNotResurrectAPipelineThatAlreadyConvergedToTerminal() {
         Pipeline pipeline = creator.create("c-4", PipelineType.DELETE);
-        Pipeline converged = pipelines.findById(pipeline.getId()).orElseThrow();
+        Pipeline converged = pipelineRepository.findById(pipeline.getId()).orElseThrow();
         converged.setStatus(PipelineStatus.DONE);
         converged.setActiveTarget(null);
-        pipelines.save(converged);
+        pipelineRepository.save(converged);
 
         Pipeline result = control.cancel(pipeline.getId());
 
         assertThat(result.getStatus()).isEqualTo(PipelineStatus.DONE);
-        assertThat(tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId()))
+        assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()))
                 .noneMatch(task -> task.getStatus() == TaskStatus.CANCELLED);
     }
 

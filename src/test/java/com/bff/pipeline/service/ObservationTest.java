@@ -14,6 +14,15 @@ import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.pipeline.PipelineCreator;
+import com.bff.pipeline.service.pipeline.PipelineEngine;
+import com.bff.pipeline.service.pipeline.PipelineInserter;
+import com.bff.pipeline.service.task.TaskAuditWriter;
+import com.bff.pipeline.service.task.TaskCanceller;
+import com.bff.pipeline.service.task.TaskStateMachine;
+import com.bff.pipeline.service.task.TaskTypeRegistry;
+import com.bff.pipeline.service.task.type.ConditionCheckTask;
+import com.bff.pipeline.service.task.type.TerraformTask;
 import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.AfterEach;
@@ -35,9 +44,9 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineEngine.class, TaskMachine.class, TaskTypeRegistry.class, TerraformTask.class,
-        ConditionCheckTask.class, Observations.class, TaskCanceller.class, PipelineCreator.class,
-        PipelineInserter.class, Recipes.class, PipelineEngineTest.Wiring.class})
+@Import({PipelineEngine.class, TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class,
+        ConditionCheckTask.class, TaskAuditWriter.class, TaskCanceller.class, PipelineCreator.class,
+        PipelineInserter.class, PipelineEngineTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class ObservationTest {
 
@@ -45,10 +54,10 @@ class ObservationTest {
 
     @Autowired private PipelineEngine engine;
     @Autowired private PipelineCreator creator;
-    @Autowired private TaskRepository tasks;
-    @Autowired private PipelineRepository pipelines;
-    @Autowired private TaskAttemptRepository attempts;
-    @Autowired private TaskCheckRepository checks;
+    @Autowired private TaskRepository taskRepository;
+    @Autowired private PipelineRepository pipelineRepository;
+    @Autowired private TaskAttemptRepository taskAttemptRepository;
+    @Autowired private TaskCheckRepository taskCheckRepository;
     @Autowired private PipelineEngineTest.MutableClock clock;
     @Autowired private FakeInfraManagerClient infraManager;
 
@@ -62,10 +71,10 @@ class ObservationTest {
 
     @AfterEach
     void clean() {
-        checks.deleteAll();
-        attempts.deleteAll();
-        tasks.deleteAll();
-        pipelines.deleteAll();
+        taskCheckRepository.deleteAll();
+        taskAttemptRepository.deleteAll();
+        taskRepository.deleteAll();
+        pipelineRepository.deleteAll();
     }
 
     @Test
@@ -75,14 +84,14 @@ class ObservationTest {
         engine.advance(pipeline.getId());
         engine.advance(pipeline.getId());
 
-        var recorded = attempts.findByTaskIdOrderByAttemptNumberAsc(taskId(pipeline, 0));
+        var recorded = taskAttemptRepository.findByTaskIdOrderByAttemptNumberAsc(taskId(pipeline, 0));
 
         assertThat(recorded).singleElement().satisfies(attempt -> {
             assertThat(attempt.getAttemptNumber()).isEqualTo(1);
             assertThat(attempt.getStatus()).isEqualTo(TaskStatus.DONE);
             assertThat(attempt.getJobId()).isEqualTo("job-1");
         });
-        assertThat(checks.findByTaskAttemptId(recorded.getFirst().getId())).isEmpty();
+        assertThat(taskCheckRepository.findByTaskAttemptId(recorded.getFirst().getId())).isEmpty();
     }
 
     @Test
@@ -92,7 +101,7 @@ class ObservationTest {
 
         runUntilTerminal(pipeline);
 
-        var recorded = attempts.findByTaskIdOrderByAttemptNumberAsc(taskId(pipeline, 0));
+        var recorded = taskAttemptRepository.findByTaskIdOrderByAttemptNumberAsc(taskId(pipeline, 0));
         assertThat(recorded).extracting(TaskAttempt::getAttemptNumber).containsExactly(1, 2);
         assertThat(recorded).allSatisfy(attempt -> {
             assertThat(attempt.getStatus()).isEqualTo(TaskStatus.FAILED);
@@ -110,12 +119,12 @@ class ObservationTest {
             clock.advance(Duration.ofMinutes(11));
         }
 
-        TaskAttempt attempt = attempts.findByTaskIdAndAttemptNumber(conditionTaskId, 1).orElseThrow();
-        assertThat(checks.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
+        TaskAttempt attempt = taskAttemptRepository.findByTaskIdAndAttemptNumber(conditionTaskId, 1).orElseThrow();
+        assertThat(taskCheckRepository.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
             assertThat(check.getCallCount()).isEqualTo(3);
             assertThat(check.getNotMetCount()).isEqualTo(3);
         });
-        assertThat(checks.findAll()).hasSize(1);
+        assertThat(taskCheckRepository.findAll()).hasSize(1);
     }
 
     private Pipeline createInstallAtConditionInProgress() {
@@ -132,13 +141,13 @@ class ObservationTest {
         for (int i = 0; i < 20; i++) {
             engine.advance(pipeline.getId());
             clock.advance(Duration.ofHours(1));
-            if (pipelines.findById(pipeline.getId()).orElseThrow().getStatus() != PipelineStatus.RUNNING) {
+            if (pipelineRepository.findById(pipeline.getId()).orElseThrow().getStatus() != PipelineStatus.RUNNING) {
                 return;
             }
         }
     }
 
     private Long taskId(Pipeline pipeline, int sequence) {
-        return tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).get(sequence).getId();
+        return taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).get(sequence).getId();
     }
 }

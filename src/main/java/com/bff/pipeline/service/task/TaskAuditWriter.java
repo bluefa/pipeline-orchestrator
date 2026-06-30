@@ -1,4 +1,4 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.task;
 
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
@@ -30,20 +30,20 @@ import org.springframework.stereotype.Component;
  * 각자의 서브 카운터를 증가시킨다). {@code endAttempt}는 시도의 최종 결과를 기록한다.
  */
 @Component
-public class Observations {
+public class TaskAuditWriter {
 
-    private final TaskAttemptRepository attempts;
-    private final TaskCheckRepository checks;
+    private final TaskAttemptRepository taskAttemptRepository;
+    private final TaskCheckRepository taskCheckRepository;
     private final Clock clock;
 
-    public Observations(TaskAttemptRepository attempts, TaskCheckRepository checks, Clock clock) {
-        this.attempts = attempts;
-        this.checks = checks;
+    public TaskAuditWriter(TaskAttemptRepository taskAttemptRepository, TaskCheckRepository taskCheckRepository, Clock clock) {
+        this.taskAttemptRepository = taskAttemptRepository;
+        this.taskCheckRepository = taskCheckRepository;
         this.clock = clock;
     }
 
     public void beginAttempt(Task task) {
-        attempts.save(TaskAttempt.builder()
+        taskAttemptRepository.save(TaskAttempt.builder()
                 .taskId(task.getId())
                 .attemptNumber(attemptNumber(task))
                 .jobId(task.getJobId())
@@ -55,7 +55,7 @@ public class Observations {
     public void recordJobId(Task task, String jobId) {
         currentAttempt(task).ifPresent(attempt -> {
             attempt.setJobId(jobId);
-            attempts.save(attempt);
+            taskAttemptRepository.save(attempt);
         });
     }
 
@@ -75,7 +75,7 @@ public class Observations {
         }
         check.setLastExternalStatus(signal.name());
         check.setLastCheckedAt(clock.instant());
-        checks.save(check);
+        taskCheckRepository.save(check);
     }
 
     public void endAttempt(Task task, TaskStatus outcome, ErrorCode errorCode) {
@@ -83,16 +83,16 @@ public class Observations {
             attempt.setStatus(outcome);
             attempt.setErrorCode(errorCode);
             attempt.setFinishedAt(clock.instant());
-            attempts.save(attempt);
+            taskAttemptRepository.save(attempt);
         });
     }
 
     private Optional<TaskAttempt> currentAttempt(Task task) {
-        return attempts.findByTaskIdAndAttemptNumber(task.getId(), attemptNumber(task));
+        return taskAttemptRepository.findByTaskIdAndAttemptNumber(task.getId(), attemptNumber(task));
     }
 
     private TaskCheck currentCheck(TaskAttempt attempt) {
-        return checks.findByTaskAttemptId(attempt.getId())
+        return taskCheckRepository.findByTaskAttemptId(attempt.getId())
                 .orElseGet(() -> TaskCheck.builder().taskAttemptId(attempt.getId()).build());
     }
 
