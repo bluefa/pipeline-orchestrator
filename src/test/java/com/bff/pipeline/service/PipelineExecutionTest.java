@@ -146,6 +146,18 @@ class PipelineExecutionTest {
                 .isEqualTo(TaskStatus.CANCELLED);
     }
 
+    @Test
+    void aReportFromAStragglerWhoseLeaseExpiredNoOpsEvenIfItsTokenStillMatches() {
+        Pipeline p = creator.create("t-expired-straggler", PipelineType.DELETE);
+        PipelineClaimer.Claim claim = claimer.claimOneDue().orElseThrow();   // token T, lease START+30s
+        clock.advance(Duration.ofSeconds(31));                                // lease expired, NOT reclaimed → token still T
+        reporter.report(p.getId(), claim.token(), StepOutcome.dispatched("job-straggler"));
+        Task task = tasks.findByPipelineIdOrderBySequenceAsc(p.getId()).get(0);
+        assertThat(task.getStatus()).isEqualTo(TaskStatus.READY);             // NOT advanced to IN_PROGRESS
+        assertThat(task.getJobId()).isNull();
+        assertThat(pipelines.findById(p.getId()).orElseThrow().getClaimedBy()).isEqualTo(claim.token());  // claim untouched (report no-op'd)
+    }
+
     @TestConfiguration
     static class Wiring {
 

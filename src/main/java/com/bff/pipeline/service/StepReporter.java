@@ -17,10 +17,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * ADR-021 phase-B: tx2 가드 라이트백(guarded write-back, ADR Decision 4). 파이프라인 행을
- * 비관적 쓰기 잠금({@code FOR UPDATE})으로 조회하고, 클레임 소유권({@code claimedBy == token})을
- * 검증한 뒤 {@link StepOutcome}을 관리 엔티티에 적용한다.
+ * 비관적 쓰기 잠금({@code FOR UPDATE})으로 조회하고, 클레임 소유권(매칭 토큰 AND 유효 리스,
+ * matching token AND live lease)을 검증한 뒤 {@link StepOutcome}을 관리 엔티티에 적용한다.
  *
- * <p>소유권 검증 실패(스테일 스트래글러)는 전체 report를 no-op으로 처리한다. {@code cancelRequested}는
+ * <p>소유권 검증 실패(스테일 스트래글러 또는 만료 리스 스트래글러)는 전체 report를 no-op으로 처리한다.
+ * 리스 만료 스트래글러는 토큰이 여전히 일치하더라도 리스가 만료되면 쓰기가 거부된다(ADR Decision 5:
+ * leaseDuration &gt; apiCallTimeout이므로 정상 tx2는 항상 유효 리스 안에서 실행됨). {@code cancelRequested}는
  * 잠금을 획득한 직후 확인되므로 협력적 취소 플래그가 경합 없이 관찰된다(ADR Decision 6).
  * 관리 엔티티 필드 직접 설정 + dirty-check flush — CAS 없음
  * (ADR Decision 4/6: FOR UPDATE + 검증된 단일 쓰기자이므로 별도 상태 가드 불필요).
@@ -52,7 +54,7 @@ public class StepReporter {
     @Transactional
     public void report(long pipelineId, String claimToken, StepOutcome outcome) {
         Pipeline pipeline = pipelines.findByIdForUpdate(pipelineId).orElse(null);
-        if (pipeline == null || !claimToken.equals(pipeline.getClaimedBy())) return;
+        if (pipeline == null || !ownsLiveClaim(pipeline, claimToken)) return;
         List<Task> chain = tasks.findByPipelineIdOrderBySequenceAsc(pipelineId);
         if (pipeline.isCancelRequested()) { cancel(pipeline, chain); return; }
         if (outcome != null) {
@@ -66,14 +68,14 @@ public class StepReporter {
     @Transactional
     public void reportCancel(long pipelineId, String claimToken) {
         Pipeline pipeline = pipelines.findByIdForUpdate(pipelineId).orElse(null);
-        if (pipeline == null || !claimToken.equals(pipeline.getClaimedBy())) return;
+        if (pipeline == null || !ownsLiveClaim(pipeline, claimToken)) return;
         cancel(pipeline, tasks.findByPipelineIdOrderBySequenceAsc(pipelineId));
     }
 
     @Transactional
     public void reschedule(long pipelineId, String claimToken, Duration delay) {
         Pipeline pipeline = pipelines.findByIdForUpdate(pipelineId).orElse(null);
-        if (pipeline == null || !claimToken.equals(pipeline.getClaimedBy())) return;
+        if (pipeline == null || !ownsLiveClaim(pipeline, claimToken)) return;
         if (pipeline.isCancelRequested()) {
             cancel(pipeline, tasks.findByPipelineIdOrderBySequenceAsc(pipelineId));
             return;
@@ -81,6 +83,16 @@ public class StepReporter {
         pipeline.setNextDueAt(clock.instant().plus(delay));
         pipeline.setClaimedBy(null);
         pipeline.setClaimedUntil(null);
+    }
+
+    /**
+     * 소유권 검증: 매칭 토큰 AND 유효 리스(matching token AND live lease).
+     * 만료 리스 스트래글러는 토큰이 일치하더라도 쓰기가 거부된다(ADR Decision 5 펜싱 전제).
+     */
+    private boolean ownsLiveClaim(Pipeline pipeline, String claimToken) {
+        return claimToken.equals(pipeline.getClaimedBy())
+                && pipeline.getClaimedUntil() != null
+                && pipeline.getClaimedUntil().isAfter(clock.instant());
     }
 
     private void cancel(Pipeline pipeline, List<Task> chain) {
@@ -99,6 +111,10 @@ public class StepReporter {
             terminalize(pipeline, PipelineStatus.FAILED, now);
         } else if (chain.stream().allMatch(t -> t.getStatus() == TaskStatus.DONE)) {
             terminalize(pipeline, PipelineStatus.DONE, now);
+        } else if (chain.stream().allMatch(t -> t.getStatus().isTerminal())) {
+            // 방어적 생존성 가드: 모든 태스크가 종료 상태이나 all-DONE·any-FAILED가 아닌 경우
+            // (예: 전체 CANCELLED 체인) — RUNNING 파이프라인이 재클레임 루프에 갇히는 것을 방지한다.
+            terminalize(pipeline, PipelineStatus.CANCELLED, now);
         }
     }
 

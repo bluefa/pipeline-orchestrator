@@ -127,6 +127,7 @@ public class PipelineScheduler {
                     anyFound = true;
                 }
             } catch (InterruptedException interruptedException) {
+                futures.forEach(f -> f.cancel(true));
                 Thread.currentThread().interrupt();
                 throw interruptedException;
             } catch (ExecutionException executionException) {
@@ -135,6 +136,7 @@ public class PipelineScheduler {
                     Thread.currentThread().interrupt();
                     throw new InterruptedException("shutdown interrupt during sweep");
                 }
+                if (executionException.getCause() instanceof Error error) { throw error; }
                 log.warn("worker drain failed", executionException.getCause());
             }
         }
@@ -157,6 +159,7 @@ public class PipelineScheduler {
     boolean drain() {
         boolean anyFound = false;
         while (true) {
+            if (Thread.currentThread().isInterrupted()) { throw new InfraManagerClient.CallInterruptedException(); }
             Optional<PipelineClaimer.Claim> claimed;
             try {
                 claimed = claimer.claimOneDue();
