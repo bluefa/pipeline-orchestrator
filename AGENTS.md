@@ -43,9 +43,15 @@ Java 21 / MySQL.
      `service/task` (TaskStateMachine, TaskCanceller, TaskTypeRegistry, TaskAuditWriter), and
      `service/task/type` — the `TaskType` SPI (execution-strategy interface) and its implementations
      (TerraformTask, ConditionCheckTask).
-   Names reveal purpose — **no abbreviations** anywhere (class, method, field, variable): e.g.
-   `InfraManagerClient` not `ImClient`, `sequence` not `seq`, `timeToLive` not `ttl`, `attemptNumber`
-   not `attemptNo`. Constructor-injected dependency fields and parameters are named after their declared type in lowerCamelCase (e.g. `PipelineRepository pipelineRepository`), except collections which retain their descriptive plural names.
+   Names reveal purpose — the role is clear from the name alone:
+   - **No abbreviations** (class, method, field, variable): `InfraManagerClient` not `ImClient`,
+     `sequence` not `seq`, `timeToLive` not `ttl`, `attemptNumber` not `attemptNo`, `exception` not `e`.
+   - **Name the role, not a vague category**: `TaskStateMachine` not `TaskMachine`, `TaskAuditWriter`
+     not `Observations`; avoid weak heads (`Manager`/`Handler`/`Helper`/`Processor`) and bare plurals.
+   - **A conditional method names its guard**: `finishIfRunning` not `finish` (the CAS fires only from RUNNING).
+   - **Injected dependencies are type-following**: `pipelineRepository` not `pipelines`, `taskStateMachine`
+     not `machine`, `infraManagerClient` not `infraManager`; a collection keeps a descriptive plural
+     (`List<TaskType> taskTypes`), `Clock` stays `clock`.
 7. **Comments in Korean, on the class header.** Avoid inline comments; put a **detailed Korean**
    Javadoc on each major component's class declaration so its behavior and invariants are clear from the
    header alone. Identifiers and code stay in English; only the prose comments are Korean.

@@ -59,7 +59,13 @@ This is the standard for the `test-spring/` module (ADR-016 reference impl) and 
 
 These are the rules most often violated. Treat each as a review gate.
 
-1. **Intention-revealing names.** Classes = nouns (`PipelineCreationService`); methods = verbs (`resolveRecipe`, `derivePipelineStatus`); booleans read as predicates (`isTerminal`, `occupiesSlot`). No abbreviations except universally-known ones. A name that needs a comment to explain it is the wrong name.
+1. **Intention-revealing names — the role is clear from the name alone** (the owner's standard; the canonical fixes below come from this repo's own rename history — `ebac21f`/`ce76635`/`82d6ece`/`a2dc0a6`):
+   - **Nouns for types, verbs for methods, predicates for booleans** — `PipelineCreator`; `resolveRecipe`, `derivePipelineStatus`; `isTerminal`, `occupiesSlot`.
+   - **No abbreviations** — spell every identifier out: `ImClient`→`InfraManagerClient`, `seq`→`sequence`, `ttl`→`timeToLive`, `cve`→`constraintViolation`, `attemptNo`→`attemptNumber`, catch `e`→`exception`, `Throwable t`→`cause`. Allowed: `id`, `main(String[] args)`.
+   - **Name the role, not a vague category** — `TaskMachine`→`TaskStateMachine`, `Observations`→`TaskAuditWriter`. Avoid weak heads (`Machine`/`Manager`/`Handler`/`Helper`/`Processor`/`Util`/`Data`/`Info`) and bare plurals.
+   - **Put the guard in a conditional method's name** — `finish`→`finishIfRunning` (the CAS fires only from RUNNING; 0 rows = no-op). Also `…IfAbsent`, `…OrFail`.
+   - **Type-following names for injected dependencies** — `pipelines`→`pipelineRepository`, `machine`→`taskStateMachine`, `observations`→`taskAuditWriter`, `infraManager`→`infraManagerClient`, `settings`→`pipelineSettings`. A collection keeps a descriptive plural (`List<TaskType> taskTypes`); `Clock` stays `clock`.
+   A name that needs a comment to explain it is the wrong name.
 2. **Small methods, one thing.** Target ≤ 15 lines; > 30 lines is a defect — extract well-named helpers. A method does one level of abstraction. If you must scroll, split.
 3. **Single Responsibility.** A class has one reason to change. The reconciler tick orchestrates; per-transition logic, observation writing, and derivation are separate units — do not fuse them into a 300-line method.
 4. **No magic numbers / strings.** Name them (`DEFAULT_MAX_FAIL_COUNT`, `HANDLER_RESOLVE_OP = "orchestrator.handler.resolve"`). Settings come from `PipelineSettings`, not inline literals.
