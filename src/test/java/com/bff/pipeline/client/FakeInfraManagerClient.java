@@ -25,7 +25,7 @@ public final class FakeInfraManagerClient implements InfraManagerClient {
         boolean run();
     }
 
-    private Dispatch dispatch = () -> "job-1";
+    private Dispatch dispatch = () -> "[\"job-1\"]";
     private Poll poll = TerraformPoll::running;
     private Check check = () -> false;
 

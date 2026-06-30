@@ -64,9 +64,9 @@ pipeline's recipe (its ordered task list) is a code default per `(type, provider
 ### 3. Observation is separate from state
 
 Two **observation tables** — `task_attempt` (per-retry-attempt outcome) and `task_check`
-(per-attempt poll summary) — carry what an operator needs to first-diagnose a failure: the raw
-dispatch `response` per attempt, the final outcome, whether a TTL-expired condition was NOT_MET vs
-API-failed, poll counts, the last external response. They also hold the **result the completion
+(per-attempt poll summary) — carry what an operator needs to first-diagnose a failure: which job
+ran per attempt, the final outcome, whether a TTL-expired condition was NOT_MET vs API-failed,
+poll counts, the last external response. They also hold the **result the completion
 `check(attempt, task)` reads** to decide a task is done — the reconciler reads only the *latest*
 attempt row, and only for that; claim, scheduling, and pipeline transitions never read them.
 Losing a row never corrupts state: a missing latest result falls through to `executionTimeout`
@@ -87,10 +87,9 @@ Every dispatch is idempotent: a duplicate submit still leaves the infrastructure
 recorded the attempt result" is healed by re-dispatch — and lets the state machine drop a
 `DISPATCHING` state. InfraManager does not de-duplicate (Constraint 1), so a re-dispatch may
 create *harmless duplicate* jobs. A single `TERRAFORM_JOB` dispatch produces a set of **`N` job
-ids**; the attempt's raw `response` (which carries those job ids) is recorded in `task_attempt`,
-and task completion is a **code-level check** over that result — `check(attempt, task) → done?`,
-each `TaskKind` deserializing its own `response` — not a domain job column. If the result is lost,
-the task does not stall: the per-task
+ids**; the attempt's result (the job-id set and responses) is recorded in `task_attempt`, and
+task completion is a **code-level check** over that result — `check(attempt, task) → done?` — not
+a domain job column. If the result is lost, the task does not stall: the per-task
 `executionTimeout` fires and the task re-dispatches as a fresh run (idempotent), so correctness
 never depends on retaining the job ids. We never "reclaim" prior jobs; `(task_id, attempt_no)` is
 a logical attempt identity, not an InfraManager key.
@@ -144,16 +143,17 @@ cancel is applied against a live worker is an execution concern (ADR-021).
   `next_due_at, claimed_by, claimed_until, cancel_requested` (see ADR-021).
 - `task(id, pipeline_id, seq, kind, operation, status, fail_count, error_code,
   started_at, ready_at, finished_at, next_check_at, ttl, polling_interval, execution_timeout,
-  max_fail_count)` — no job-id column: one dispatch's `N` job ids live inside the `task_attempt`
-  `response`, and completion is a code-level `check(attempt, task)` over the latest attempt result.
+  max_fail_count)` — no job-id column: one dispatch's `N` job ids live in `task_attempt`, and
+  completion is a code-level `check(attempt, task)` over the latest attempt result.
 
 **Observation tables** (per attempt; only the *latest* row is read — by the completion `check` — nothing else)
 
-- `task_attempt(id, task_id, attempt_no, response, status, error_code, started_at, finished_at)`
-  — one row per retry attempt; `attempt_no = task.fail_count + 1`. `response` (text) holds the raw
-  InfraManager dispatch response — for a `TERRAFORM_JOB` it carries the **set** of `N` job ids
-  (one dispatch → `N` jobs); each `TaskKind` deserializes its own `response`. The latest attempt
-  row is the input to the completion `check`.
+- `task_attempt(id, task_id, attempt_no, job_ids, status, error_code, dispatch_response_code,
+  dispatch_response_summary, started_at, finished_at)` — one row per retry attempt;
+  `attempt_no = task.fail_count + 1`. `job_ids` holds the **set** of InfraManager job ids from
+  that dispatch (one dispatch → `N` jobs); `dispatch_response_code` / `dispatch_response_summary`
+  carry the HTTP status and a bounded response summary. The latest attempt row is the input to
+  the completion `check`.
 - `task_check(id, task_attempt_id, call_count, not_met_count, api_error_count,
   call_timeout_count, last_external_status, last_response_code, last_response_summary,
   last_checked_at)` — at most one row per attempt (1:0..1), UPDATE-in-place; row count grows

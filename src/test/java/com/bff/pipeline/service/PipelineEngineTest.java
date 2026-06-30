@@ -28,6 +28,8 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
@@ -50,8 +52,7 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineEngine.class, TaskMachine.class, TaskTypeRegistry.class, TerraformTask.class,
         ConditionCheckTask.class, Observations.class, TaskCanceller.class, PipelineCreator.class,
-        PipelineInserter.class, PipelineControl.class, Recipes.class, PipelineEngineTest.Wiring.class,
-        PipelineEngineTest.PostCheckWiring.class})
+        PipelineInserter.class, PipelineControl.class, Recipes.class, PipelineEngineTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineEngineTest {
 
@@ -66,15 +67,13 @@ class PipelineEngineTest {
     @Autowired private TaskCheckRepository checks;
     @Autowired private MutableClock clock;
     @Autowired private FakeInfraManagerClient infraManager;
-    @Autowired private PostCheckProbeTask postCheckProbe;
 
     @BeforeEach
     void reset() {
         clock.set(START);
-        infraManager.onDispatch(() -> "job-1");
+        infraManager.onDispatch(() -> "[\"job-1\"]");
         infraManager.onPoll(TerraformPoll::running);
         infraManager.onCheck(() -> false);
-        postCheckProbe.onPostCheck(() -> TaskProgress.SUCCEEDED);
     }
 
     @AfterEach
@@ -92,7 +91,8 @@ class PipelineEngineTest {
 
         advance(pipeline);
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
-        assertThat(task(pipeline, 0).getJobId()).isEqualTo("job-1");
+        assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getResponse())
+                .isEqualTo("[\"job-1\"]");
 
         advance(pipeline);
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);
@@ -182,7 +182,6 @@ class PipelineEngineTest {
         advance(pipeline);
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
-        assertThat(task(pipeline, 0).getJobId()).isNull();
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
         assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
                 .isEqualTo(ErrorCode.CHECK_ERROR);
@@ -268,10 +267,11 @@ class PipelineEngineTest {
     }
 
     @Test
-    void crashResumeRePollsAnInProgressTerraformJobByItsStoredJobId() {
+    void crashResumeRePollsAnInProgressTerraformJobByItsStoredResponse() {
         Pipeline pipeline = creator.create("t-crash", PipelineType.DELETE);
         advance(pipeline);
-        assertThat(task(pipeline, 0).getJobId()).isEqualTo("job-1");
+        assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getResponse())
+                .isEqualTo("[\"job-1\"]");
 
         infraManager.onPoll(TerraformPoll::success);
         advance(pipeline);
@@ -294,59 +294,85 @@ class PipelineEngineTest {
         assertThat(status(pipeline)).isEqualTo(PipelineStatus.FAILED);
     }
 
+
+
     @Test
-    void postCheckFailureFailsTheTask() {
-        Pipeline pipeline = creator.create("t-pc-fail", PipelineType.DELETE);
-        Task task0 = task(pipeline, 0);
-        task0.setTaskName(PostCheckProbeTask.NAME);
-        tasks.save(task0);
-        postCheckProbe.onPostCheck(() -> TaskProgress.failedTerminal(ErrorCode.JOB_FAILED));
+    void aTerraformDispatchOfNJobIdsCompletesOnlyWhenAllJobsSucceed() {
+        Pipeline pipeline = creator.create("t-n-jobs", PipelineType.DELETE);
+        infraManager.onDispatch(() -> "[\"job-1\",\"job-2\",\"job-3\"]");
+        infraManager.onPoll(TerraformPoll::success);
 
         advance(pipeline);
-        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
-        advance(pipeline);
+        assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getResponse())
+                .isEqualTo("[\"job-1\",\"job-2\",\"job-3\"]");
 
-        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.FAILED);
-        assertThat(task(pipeline, 0).getErrorCode()).isEqualTo(ErrorCode.JOB_FAILED);
-        assertThat(status(pipeline)).isEqualTo(PipelineStatus.FAILED);
+        advance(pipeline);
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);
+        assertThat(status(pipeline)).isEqualTo(PipelineStatus.DONE);
     }
 
     @Test
-    void postCheckCallFailureBecomesCheckErrorAndRetries() {
-        Pipeline pipeline = creator.create("t-pc-callfail", PipelineType.DELETE);
-        Task task0 = task(pipeline, 0);
-        task0.setTaskName(PostCheckProbeTask.NAME);
-        tasks.save(task0);
-        postCheckProbe.onPostCheck(() -> { throw new InfraManagerClient.CallFailedException("post-check call failed"); });
+    void aFailedJobAmongTheNDispatchedFailsRetryableWithJobFailed() {
+        Pipeline pipeline = creator.create("t-n-fail", PipelineType.DELETE);
+        infraManager.onDispatch(() -> "[\"job-1\",\"job-2\"]");
+        infraManager.onPoll(TerraformPoll::failure);
 
         advance(pipeline);
-        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
         advance(pipeline);
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
         assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
-                .isEqualTo(ErrorCode.CHECK_ERROR);
+                .isEqualTo(ErrorCode.JOB_FAILED);
     }
 
     @Test
-    void postCheckPendingReschedulesAndKeepsRunning() {
-        Pipeline pipeline = creator.create("t-pc-pending", PipelineType.DELETE);
-        Task task0 = task(pipeline, 0);
-        task0.setTaskName(PostCheckProbeTask.NAME);
-        tasks.save(task0);
-        postCheckProbe.onPostCheck(() -> TaskProgress.pending(CheckSignal.NOT_MET));
+    void aMalformedDispatchResponseFailsTheTaskOutright() {
+        Pipeline pipeline = creator.create("t-malformed", PipelineType.DELETE);
+        infraManager.onDispatch(() -> "not-json");
 
         advance(pipeline);
-        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
-
         advance(pipeline);
 
-        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
-        assertThat(task(pipeline, 0).getNextCheckAt()).isAfter(clock.instant());
-        assertThat(status(pipeline)).isEqualTo(PipelineStatus.RUNNING);
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.FAILED);
+        assertThat(task(pipeline, 0).getErrorCode()).isEqualTo(ErrorCode.CHECK_ERROR);
+        assertThat(task(pipeline, 0).getFailCount()).isEqualTo(0);
+        assertThat(status(pipeline)).isEqualTo(PipelineStatus.FAILED);
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"null", "[]", "[null]", "[\"\"]", "[\"  \"]"})
+    void aResponseWithNoUsableJobIdsFailsTheTaskOutright(String response) {
+        Pipeline pipeline = creator.create("t-no-jobs", PipelineType.DELETE);
+        infraManager.onDispatch(() -> response);
+
+        advance(pipeline);
+        advance(pipeline);
+
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.FAILED);
+        assertThat(task(pipeline, 0).getErrorCode()).isEqualTo(ErrorCode.CHECK_ERROR);
+        assertThat(task(pipeline, 0).getFailCount()).isEqualTo(0);
+        assertThat(status(pipeline)).isEqualTo(PipelineStatus.FAILED);
+    }
+
+    @Test
+    void aLostDispatchResponseRidesExecutionTimeoutThenSharesTheFailCount() {
+        Pipeline pipeline = creator.create("t-lost", PipelineType.DELETE);
+        infraManager.onPoll(TerraformPoll::running);
+        advance(pipeline);
+
+        TaskAttempt attempt = attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow();
+        attempt.setResponse(null);
+        attempts.saveAndFlush(attempt);
+
+        clock.advance(Duration.ofHours(1));
+        advance(pipeline);
+
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
+        assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
+        assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
+                .isEqualTo(ErrorCode.EXECUTION_TIMEOUT);
+    }
 
     private void advance(Pipeline pipeline) {
         engine.advance(pipeline.getId());
@@ -402,12 +428,6 @@ class PipelineEngineTest {
         }
     }
 
-    @TestConfiguration
-    static class PostCheckWiring {
-        @Bean
-        PostCheckProbeTask postCheckProbe() { return new PostCheckProbeTask(); }
-    }
-
     /** 테스트용 {@link Clock} 구현체로, instant를 명시적으로 설정하거나 진행시킬 수 있어 테스트 추적에서 시간을 제어한다. */
     static final class MutableClock extends Clock {
         private Instant now;
@@ -440,13 +460,4 @@ class PipelineEngineTest {
         }
     }
 
-    static final class PostCheckProbeTask implements com.bff.pipeline.model.TaskType {
-        static final String NAME = "POST_CHECK_PROBE";
-        private java.util.function.Supplier<TaskProgress> postCheckBehavior = () -> TaskProgress.SUCCEEDED;
-        void onPostCheck(java.util.function.Supplier<TaskProgress> behavior) { this.postCheckBehavior = behavior; }
-        public String taskName() { return NAME; }
-        public void execute(String target, Task task) { }
-        public TaskProgress check(String target, Task task) { return TaskProgress.SUCCEEDED; }
-        public TaskProgress postCheck(String target, Task task) { return postCheckBehavior.get(); }
-    }
 }

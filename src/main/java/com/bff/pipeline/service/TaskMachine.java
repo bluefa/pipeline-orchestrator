@@ -3,9 +3,11 @@ package com.bff.pipeline.service;
 import com.bff.pipeline.PipelineSettings;
 import com.bff.pipeline.client.InfraManagerClient;
 import com.bff.pipeline.entity.Task;
+import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.enums.CheckSignal;
 import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.TaskStatus;
+import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
 import com.bff.pipeline.repository.TaskRepository;
@@ -28,7 +30,7 @@ import org.springframework.stereotype.Component;
  * <pre>
  *   BLOCKED      → unblock → READY                         (선행 태스크가 DONE 도달)
  *   READY        → type.execute (멱등 디스패치)             → IN_PROGRESS
- *   IN_PROGRESS  → type.check → Succeeded → type.postCheck → DONE (실패 시 재예약/재시도)
+ *   IN_PROGRESS  → type.check → Succeeded → DONE            (실패 시 재예약/재시도)
  *                              Pending   → reschedule
  *                              Failed    → retry-or-fail (or fail outright if not retryable)
  * </pre>
@@ -46,7 +48,7 @@ import org.springframework.stereotype.Component;
  * 재시도 불가 실패(예: TTL이 만료되어 대기 구간이 소멸된 경우)는 추가 시도 없이 즉시 태스크를
  * 실패 처리한다.
  *
- * <p><b>예외 전략:</b> {@link TaskType}의 {@code execute}, {@code check}, {@code postCheck}가 수행하는
+ * <p><b>예외 전략:</b> {@link TaskType}의 {@code execute}, {@code check}가 수행하는
  * 모든 외부 호출은 단일 {@code runExternalCall} 경계를 통해 변환된다
  * ({@link InfraManagerClient.CallTimeoutException} → CALL_TIMEOUT,
  * {@link InfraManagerClient.CallFailedException} → CHECK_ERROR). 변환 전에 반드시
@@ -93,31 +95,26 @@ public class TaskMachine {
         TaskType type = typeOrFail(task);
         if (type == null) return;
         observations.beginAttempt(task);
-        runExternalCall(task, () -> { type.execute(target, task); return TaskProgress.SUCCEEDED; }, false)
+        runExternalCall(task, () -> { recordDispatch(task, type.execute(target, task)); return TaskProgress.SUCCEEDED; }, false)
                 .ifPresent(ignored -> markInProgress(task));
+    }
+
+    private void recordDispatch(Task task, DispatchResult dispatchResult) {
+        switch (dispatchResult) {
+            case DispatchResult.WithResponse withResponse -> observations.recordResponse(task, withResponse.response());
+            case DispatchResult.None ignored -> { }
+        }
     }
 
     private void poll(String target, Task task) {
         TaskType type = typeOrFail(task);
         if (type == null) return;
-        runExternalCall(task, () -> type.check(target, task), true)
-                .ifPresent(progress -> applyCheck(type, target, task, progress));
+        TaskAttempt attempt = observations.currentAttempt(task).orElse(null);
+        runExternalCall(task, () -> type.check(target, task, attempt), true)
+                .ifPresent(progress -> applyCheck(task, progress));
     }
 
-    private void applyCheck(TaskType type, String target, Task task, TaskProgress progress) {
-        switch (progress) {
-            case TaskProgress.Succeeded ignored -> afterCheckSucceeded(type, target, task);
-            case TaskProgress.Pending pending -> recordPendingAndReschedule(task, pending);
-            case TaskProgress.Failed failed -> applyFailure(task, failed);
-        }
-    }
-
-    private void afterCheckSucceeded(TaskType type, String target, Task task) {
-        runExternalCall(task, () -> type.postCheck(target, task), true)
-                .ifPresent(progress -> applyPostCheck(task, progress));
-    }
-
-    private void applyPostCheck(Task task, TaskProgress progress) {
+    private void applyCheck(Task task, TaskProgress progress) {
         switch (progress) {
             case TaskProgress.Succeeded ignored -> complete(task);
             case TaskProgress.Pending pending -> recordPendingAndReschedule(task, pending);
@@ -167,9 +164,6 @@ public class TaskMachine {
     }
 
     private void markInProgress(Task task) {
-        if (task.getJobId() != null) {
-            observations.recordJobId(task, task.getJobId());
-        }
         task.setStatus(TaskStatus.IN_PROGRESS);
         Instant now = clock.instant();
         task.setStartedAt(now);
@@ -186,7 +180,6 @@ public class TaskMachine {
         }
         task.setStatus(TaskStatus.READY);
         task.setReadyAt(clock.instant());
-        task.setJobId(null);
         task.setNextCheckAt(null);
         tasks.save(task);
     }

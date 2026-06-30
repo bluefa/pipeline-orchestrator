@@ -25,7 +25,11 @@ import com.bff.pipeline.enums.TaskOperation;
  */
 public interface InfraManagerClient {
 
-    /** operation에 대한 Terraform 잡을 디스패치하고 job id를 반환한다. */
+    /**
+     * operation에 대한 Terraform 잡(들)을 디스패치하고 <b>원시 dispatch response</b>를 반환한다(ADR-016 ed97ec0 §5).
+     * 한 번의 dispatch는 {@code N}개 job id를 만들 수 있으며, 그 집합이 이 응답에 담긴다. 엔진은 이 원시 응답을
+     * {@code task_attempt.response}에 기록하고, {@code TerraformTask}가 이를 역직렬화해 각 job을 폴링한다.
+     */
     String runTerraform(String target, TaskOperation operation);
 
     /** job id 핸들로 Terraform 잡 상태를 읽는다. */
