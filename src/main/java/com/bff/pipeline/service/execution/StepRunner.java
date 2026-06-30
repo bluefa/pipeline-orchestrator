@@ -36,10 +36,12 @@ public class StepRunner {
     }
 
     public StepOutcome runStep(String target, Task task, TaskAttempt attempt) {
-        TaskType type = taskTypeRegistry.find(task.getTaskName()).orElse(null);
-        if (type == null) {
-            return StepOutcome.unknownTask();
-        }
+        return taskTypeRegistry.find(task.getTaskName())
+                .map(type -> run(target, task, attempt, type))
+                .orElseGet(StepOutcome::unknownTask);
+    }
+
+    private StepOutcome run(String target, Task task, TaskAttempt attempt, TaskType type) {
         return switch (task.getStatus()) {
             case BLOCKED -> StepOutcome.unblock();
             case READY -> runExternalCall(task, true, () -> StepOutcome.dispatched(type.execute(target, task)));

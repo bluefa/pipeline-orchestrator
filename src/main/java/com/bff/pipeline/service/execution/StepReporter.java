@@ -50,29 +50,35 @@ public class StepReporter {
 
     @Transactional
     public void report(long pipelineId, String claimToken, StepOutcome outcome) {
-        Pipeline pipeline = pipelineRepository.findByIdForUpdate(pipelineId).orElse(null);
-        if (pipeline == null || !ownsClaim(pipeline, claimToken)) return;
-        List<Task> chain = taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId);
-        if (pipeline.isCancelRequested()) { cancel(pipeline, chain); return; }
-        if (outcome != null) {
-            currentTask(chain).ifPresent(task -> taskStateMachine.applyOutcome(task, outcome));
-        }
-        converge(pipeline, chain);
-        promoteBlockedSuccessor(pipeline, chain);
-        releaseClaim(pipeline, chain);
+        claimedPipeline(pipelineId, claimToken).ifPresent(pipeline -> {
+            List<Task> chain = taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId);
+            if (pipeline.isCancelRequested()) { cancel(pipeline, chain); return; }
+            if (outcome != null) {
+                currentTask(chain).ifPresent(task -> taskStateMachine.applyOutcome(task, outcome));
+            }
+            converge(pipeline, chain);
+            promoteBlockedSuccessor(pipeline, chain);
+            releaseClaim(pipeline, chain);
+        });
     }
 
     @Transactional
     public void reschedule(long pipelineId, String claimToken, Duration delay) {
-        Pipeline pipeline = pipelineRepository.findByIdForUpdate(pipelineId).orElse(null);
-        if (pipeline == null || !ownsClaim(pipeline, claimToken)) return;
-        if (pipeline.isCancelRequested()) {
-            cancel(pipeline, taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId));
-            return;
-        }
-        pipeline.setNextDueAt(clock.instant().plus(delay));
-        pipeline.setClaimedBy(null);
-        pipeline.setClaimedUntil(null);
+        claimedPipeline(pipelineId, claimToken).ifPresent(pipeline -> {
+            if (pipeline.isCancelRequested()) {
+                cancel(pipeline, taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId));
+                return;
+            }
+            pipeline.setNextDueAt(clock.instant().plus(delay));
+            pipeline.setClaimedBy(null);
+            pipeline.setClaimedUntil(null);
+        });
+    }
+
+    /** 행을 FOR UPDATE로 잠그고, 토큰이 일치할 때만(소유권) 돌려준다 — 불일치/부재면 empty(전체 no-op). */
+    private Optional<Pipeline> claimedPipeline(long pipelineId, String claimToken) {
+        return pipelineRepository.findByIdForUpdate(pipelineId)
+                .filter(pipeline -> ownsClaim(pipeline, claimToken));
     }
 
     /**

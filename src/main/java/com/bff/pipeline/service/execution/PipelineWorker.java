@@ -59,10 +59,10 @@ public class PipelineWorker {
     }
 
     public void process(Claim claim) {
-        StepContext context = loadStepContext(claim.pipelineId());
-        if (context == null) {
-            return;
-        }
+        loadStepContext(claim.pipelineId()).ifPresent(context -> processStep(claim, context));
+    }
+
+    private void processStep(Claim claim, StepContext context) {
         if (context.cancelRequested() || context.currentTask() == null) {
             stepReporter.report(claim.pipelineId(), claim.token(), null);
             return;
@@ -75,18 +75,20 @@ public class PipelineWorker {
         stepReporter.report(claim.pipelineId(), claim.token(), outcome);
     }
 
-    private StepContext loadStepContext(long pipelineId) {
-        Pipeline pipeline = pipelineRepository.findById(pipelineId).orElse(null);
-        if (pipeline == null) {
-            return null;
-        }
-        List<Task> chain = taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId);
-        Task current = chain.stream().filter(task -> !task.getStatus().isTerminal()).findFirst().orElse(null);
-        TaskAttempt attempt = current == null ? null : observationRecorder.currentAttempt(current).orElse(null);
-        boolean terraformDispatch = current != null
-                && current.getStatus() == TaskStatus.READY
-                && TerraformTask.NAME.equals(current.getTaskName());
-        return new StepContext(pipeline.getTarget(), current, attempt, pipeline.isCancelRequested(), terraformDispatch);
+    private Optional<StepContext> loadStepContext(long pipelineId) {
+        return pipelineRepository.findById(pipelineId).map(pipeline -> {
+            List<Task> chain = taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId);
+            Task current = currentTask(chain).orElse(null);
+            TaskAttempt attempt = current == null ? null : observationRecorder.currentAttempt(current).orElse(null);
+            boolean terraformDispatch = current != null
+                    && current.getStatus() == TaskStatus.READY
+                    && TerraformTask.NAME.equals(current.getTaskName());
+            return new StepContext(pipeline.getTarget(), current, attempt, pipeline.isCancelRequested(), terraformDispatch);
+        });
+    }
+
+    private Optional<Task> currentTask(List<Task> chain) {
+        return chain.stream().filter(task -> !task.getStatus().isTerminal()).findFirst();
     }
 
     private boolean slotAvailable() {
