@@ -271,7 +271,7 @@ ErrorCode-discriminating retry + poll-phase timeout-observation tests).
 
 ## ADR-021 review campaign
 
-A multi-round codex (gpt-5.5 xhigh) + opus review campaign on the execution layer; every round's P0/P1 fixed before the next. 51 tests green.
+A multi-round codex (gpt-5.5 xhigh) + opus review campaign on the execution layer; every round's P0/P1 fixed before the next. 53 tests green.
 
 | Round | Reviewers | Verdict | Key findings → fixes |
 |---|---|---|---|
@@ -280,4 +280,14 @@ A multi-round codex (gpt-5.5 xhigh) + opus review campaign on the execution laye
 | 3 | codex + adversarial opus | fixes | tx2 ownership requires a LIVE lease, not just a matching token (P1, closes the expired-straggler-vs-Case-A window); sweepOnce cancels outstanding futures on every interrupt path; drain interrupt-at-top; converge all-terminal defensive guard |
 | 4 | codex + persistence/JPA opus | docs only | MERGE-READY (both); MySQL-8 schema/index/lock mappings verified against generated Hibernate DDL; doc wording sync + recorded MySQL-CI/schema-freeze operational notes |
 | 5 | codex + test-engineer opus | tests | MERGE-READY (codex); added the two previously-untested components — TimeBoundedInfraManagerClient decorator + PipelineScheduler drain — plus retry-spacing / Case-A-expired / claim-release / Case-B discriminating asserts (41→51 tests) |
-| 6 | codex + holistic opus | APPROVE | 0 P0 / 0 P1; holistic cold-read APPROVE; only cosmetic polish (this round) |
+| 6 | codex + holistic opus | APPROVE | 0 P0 / 0 P1; holistic cold-read APPROVE; cosmetic polish (renamed the now-misnamed `PipelineEngineTest*`, lease-Javadoc accuracy, doc inconsistencies) |
+| 7 | codex (ADR-completeness gate) + ponytail/over-engineering opus | fixes | implemented the last ADR gap — the §280 `nextDueAt`-aware idle sleep (cap the idle sleep so it never overshoots the nearest due pipeline); removed the redundant `reportCancel` (DRY — `cancel_requested` is monotonic, so `report(…,null)` reaches the same under-lock cancel path); fixed stale doc refs left by the round-6 rename |
+| 8 | codex | fix | the round-7 nearest-due DB read sat inside `runSweep`'s `finally` before `schedule(…)`; a transient DB outage there would kill the self-rescheduling loop until restart (P1) → made it best-effort (`cappedIdleDelay` catches + falls back to the uncapped delay) + a regression test |
+| 9 | codex | MERGE-READY | 0 P0 / 0 P1; the round-8 loop-safe fix confirmed; flagged + removed a stray build artifact |
+| 10 | codex + holistic opus | APPROVE | 0 P0 / 0 P1; both final gates MERGE-READY on the final state; `runSweep` always reschedules, `capToNearestDue` never overshoots, cooperative cancel preserved; 2 non-blocking cosmetic P2 notes recorded (jitter discarded when clamping to `nextDueAt`, mitigated by SKIP-LOCKED; the all-terminal `report(…,null)` liveness path tested only indirectly) |
+
+**Outcome.** 10 rounds, ~23 independent reviews (codex ×10 + opus ×13: two-tx race, ADR faithfulness, clean-code,
+docs/observation, adversarial concurrency, JPA/MySQL persistence, test-coverage, two holistic cold-reads, and an
+over-engineering pass). Every round's P0/P1 was fixed before the next; the final round returned **0 P0 / 0 P1** from
+both codex and a holistic opus, **MERGE-READY: yes**. **53 tests green.** No correctness or design blocker survived
+the campaign; the residual notes are documented operational/MySQL-CI deferrals.
