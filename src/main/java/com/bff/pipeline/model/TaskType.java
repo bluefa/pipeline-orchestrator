@@ -37,8 +37,9 @@ public interface TaskType {
     /**
      * 외부 작업을 멱등하게 시작하고(ADR-016 §5) dispatch 결과를 {@link DispatchResult}로 반환한다. 엔진은 이 값을 보고
      * {@code task_attempt.response}에 무엇을 기록할지 결정한다 — {@link DispatchResult.WithResponse}는 그 원시 텍스트를
-     * 저장하고(TERRAFORM_JOB은 {@code N}개 job id를 담은 응답), {@link DispatchResult#NONE}은 응답 없음(void)으로
-     * 기록하지 않는다. <em>호출 실패</em>만 {@code RuntimeException}으로 신호한다.
+     * (형식을 해석하지 않고) 그대로 저장하고, {@link DispatchResult#NONE}은 응답 없음(void)으로 기록하지 않는다.
+     * 응답의 스키마는 전적으로 이 task type의 사적 계약이며, 엔진은 그 모양을 가정하지 않는다.
+     * <em>호출 실패</em>만 {@code RuntimeException}으로 신호한다.
      */
     DispatchResult execute(String target, Task task);
 

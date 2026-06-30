@@ -22,7 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 파이프라인을 FAILED로 전환하고 나머지 비종료 태스크들을 CANCEL 처리한다 (ADR-016 §7);
  * 모든 태스크가 DONE이면 파이프라인을 DONE으로 전환한다. 두 경우 모두 RUNNING 상태를 전제로 하는
  * {@code finish()} CAS를 통해 종료되므로, 동시에 실행된 취소 요청이 파이프라인을 이미 CANCELLED로
- * 전환했다면 수렴이 그것을 덮어쓸 수 없다. {@code machine.advance}는 인메모리 체인에서 현재
+ * 전환했다면 수렴이 그것을 덮어쓸 수 없다. {@code taskStateMachine.advance}는 인메모리 체인에서 현재
  * 관리 태스크를 직접 변경하므로 수렴 단계는 DB를 재조회하지 않고도 새 상태를 읽을 수 있다;
  * {@code finish()}의 flush가 그 변경을 영구적으로 반영한다.
  *
@@ -42,15 +42,15 @@ public class PipelineEngine {
 
     private final PipelineRepository pipelines;
     private final TaskRepository tasks;
-    private final TaskMachine machine;
+    private final TaskStateMachine taskStateMachine;
     private final TaskCanceller taskCanceller;
     private final Clock clock;
 
-    public PipelineEngine(PipelineRepository pipelines, TaskRepository tasks, TaskMachine machine,
+    public PipelineEngine(PipelineRepository pipelines, TaskRepository tasks, TaskStateMachine taskStateMachine,
             TaskCanceller taskCanceller, Clock clock) {
         this.pipelines = pipelines;
         this.tasks = tasks;
-        this.machine = machine;
+        this.taskStateMachine = taskStateMachine;
         this.taskCanceller = taskCanceller;
         this.clock = clock;
     }
@@ -62,7 +62,7 @@ public class PipelineEngine {
         if (pipeline.getStatus().isTerminal()) { return; }
         List<Task> chain = tasks.findByPipelineIdOrderBySequenceAsc(pipelineId);
         Optional<Task> current = currentTask(chain);
-        current.filter(this::isDue).ifPresent(task -> machine.advance(pipeline.getTarget(), task));
+        current.filter(this::isDue).ifPresent(task -> taskStateMachine.advance(pipeline.getTarget(), task));
         converge(pipelineId, chain);
     }
 

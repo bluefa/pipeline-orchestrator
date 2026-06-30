@@ -20,14 +20,14 @@ documented).
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
 | A1 | Progress lives only in DB rows; each `advance` re-reads the rows and resumes — no in-memory authority | `PipelineEngine.advance` re-reads the pipeline + chain on every call | ✅ |
-| A2 | A restart re-polls an IN_PROGRESS terraform job by its stored `job_id` (crash recovery) | `PipelineEngineTest.crashResumeRePollsAnInProgressTerraformJobByItsStoredJobId` | ✅ |
+| A2 | A restart re-polls an IN_PROGRESS terraform job by the dispatch `response` stored on its latest `task_attempt` (crash recovery) | `PipelineEngineTest.crashResumeRePollsAnInProgressTerraformJobByItsStoredResponse` | ✅ |
 | A3 | A committed `advance` is visible to a fresh read (own transaction) | `PipelineEngineTransactionTest.advanceCommitsInItsOwnTransactionVisibleToAFreshRead` | ✅ |
 
 ## B. Decision 2 — two domain tables, a small durable state machine
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
-| B1 | Task lifecycle is BLOCKED→READY→IN_PROGRESS→DONE\|FAILED\|CANCELLED | `TaskStatus`, `TaskMachine.advance` | ✅ |
+| B1 | Task lifecycle is BLOCKED→READY→IN_PROGRESS→DONE\|FAILED\|CANCELLED | `TaskStatus`, `TaskStateMachine.advance` | ✅ |
 | B2 | Pipeline lifecycle is RUNNING→DONE\|FAILED\|CANCELLED | `PipelineStatus`, `PipelineEngine.converge` | ✅ |
 | B3 | First task starts READY; the rest start BLOCKED and flip to READY when the predecessor is DONE | `PipelineInserter.insert` + `PipelineEngineTest.anInstallRunsBothTasksThroughBlockedAndUnblockToDone` | ✅ |
 | B4 | The current task is the lowest-sequence non-terminal task | `PipelineEngine.currentTask` | ✅ |
@@ -40,9 +40,9 @@ documented).
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
-| C1 | `task_attempt` = one row per attempt, `attempt_no = failCount + 1` | `Observations` + `ObservationTest.aRetryingTaskRecordsOneAttemptRowPerAttemptWithIncreasingAttemptNo` | ✅ |
+| C1 | `task_attempt` = one row per attempt, `attempt_no = failCount + 1` | `ObservationRecorder` + `ObservationTest.aRetryingTaskRecordsOneAttemptRowPerAttemptWithIncreasingAttemptNo` | ✅ |
 | C2 | `task_check` is UPDATE-in-place (one row per attempt; counters grow, not rows) | `ObservationTest.aConditionPolledNotMetUpdatesOneCheckRowInPlace` | ✅ |
-| C3 | The engine never **reads** the observation tables for correctness | `Observations` only writes; `PipelineEngine`/`TaskMachine` never query them | ✅ |
+| C3 | The engine never **reads** the observation tables for correctness | `ObservationRecorder` only writes; `PipelineEngine`/`TaskStateMachine` never query them | ✅ |
 | C4 | Losing observations degrades debuggability only, never correctness — they can never roll back task progress | observations ride the `advance` tx (ADR Option B); a failed write retries the whole `advance`, which cannot corrupt the atomic task row — see Deferred | ✅ |
 
 ## D. Decision 4 — one active pipeline per target
@@ -58,16 +58,16 @@ documented).
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
-| E1 | Dispatch is idempotent / at-least-once safe; a crash before storing `job_id` heals by re-dispatch | `TaskMachine.dispatch` (re-dispatch on READY); A2 crash-resume test | ✅ |
-| E2 | No `DISPATCHING` state; the latest `job_id` is recorded | `TaskStatus` has no DISPATCHING; `dispatch` sets `job_id` | ✅ |
+| E1 | Dispatch is idempotent / at-least-once safe; a crash before storing the dispatch `response` heals by re-dispatch | `TaskStateMachine.dispatch` (re-dispatch on READY); A2 crash-resume test | ✅ |
+| E2 | No `DISPATCHING` state; the dispatch `response` is recorded on the latest `task_attempt` | `TaskStatus` has no DISPATCHING; `dispatch` records the `response` via `ObservationRecorder.recordResponse` | ✅ |
 | E3 | `(task_id, attempt_no)` is our logical attempt identity, not an InfraManager key | `TaskAttempt` unique `(task_id, attempt_no)` | ✅ |
 
 ## F. Decision 6 — bounded waiting and retry
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
-| F1 | `fail_count` per task; below `maxFailCount` → fresh re-run, at/above → FAILED | `TaskMachine.retryOrFail` + `PipelineEngineTest.terraformJobFailureRetriesThenFailsAtMaxAndFailsThePipeline` | ✅ |
-| F2 | Per-call timeout → `CALL_TIMEOUT` (the ADR-021 runner owns the timeout; `TaskMachine` maps `InfraManagerClient.CallTimeoutException`) | `PipelineEngineTest.aCallTimeoutFromTheInfraManagerClientIsCallTimeoutAndRetries` | ✅ |
+| F1 | `fail_count` per task; below `maxFailCount` → fresh re-run, at/above → FAILED | `TaskStateMachine.retryOrFail` + `PipelineEngineTest.terraformJobFailureRetriesThenFailsAtMaxAndFailsThePipeline` | ✅ |
+| F2 | Per-call timeout → `CALL_TIMEOUT` (the ADR-021 runner owns the timeout; `TaskStateMachine` maps `InfraManagerClient.CallTimeoutException`) | `PipelineEngineTest.aCallTimeoutFromTheInfraManagerClientIsCallTimeoutAndRetries` | ✅ |
 | F3 | Per-task `executionTimeout` (TF) → `EXECUTION_TIMEOUT` | `PipelineEngineTest.terraformJobRunningPastExecutionTimeoutFailsWithExecutionTimeout` | ✅ |
 | F4 | Per-task `timeToLive` (condition) → `TIME_TO_LIVE_EXPIRED` (no retry) | `PipelineEngineTest.conditionPastTimeToLiveExpiresToFailedWithTimeToLiveExpired` | ✅ |
 | F5 | Both deadlines map to canonical `ErrorCode` values, not separate states | `ErrorCode`; no extra `TaskStatus` | ✅ |
@@ -77,12 +77,12 @@ documented).
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
 | G1 | Two task kinds today (TERRAFORM_JOB, CONDITION_CHECK); the set is open via new `TaskType` impls | `TerraformTask`/`ConditionCheckTask` (a third kind is a new file, not an enum edit) | ✅ |
-| G2 | Retry is a fresh run (no terminal resurrection) | `TaskMachine.retryOrFail` resets to READY | ✅ |
+| G2 | Retry is a fresh run (no terminal resurrection) | `TaskStateMachine.retryOrFail` resets to READY | ✅ |
 | G3 | Cancel converges directly to CANCELLED (no CANCELLING) and terminalizes every non-terminal task | `PipelineControl.cancel` + `PipelineControlTest` | ✅ |
 | G4 | Cancel is a RUNNING-guarded transition — it can never resurrect a pipeline a converge already terminalized | `PipelineControl.cancel` uses the guarded `finish(..., CANCELLED, ...)` CAS, 0-row = no-op | ✅ |
 | G5 | A FAILED pipeline marks the failing task FAILED and CANCELS the rest | `PipelineEngine.cancelRemaining` + `PipelineEngineTest.aFailedPipelineCancelsItsRemainingBlockedTasks` | ✅ |
 | G6 | A terminal state is never resurrected | guarded CAS on every pipeline terminalization (finish/cancel); `Task.@Version` on the task race | ✅ |
-| G7 | A task whose stored `taskName` resolves to no `TaskType` fails with `UNKNOWN_TASK` (a value, no NPE) | `TaskMachine` resolve→`fail(UNKNOWN_TASK)` + `PipelineEngineTest.aTaskWhoseStoredNameHasNoRegisteredTypeFailsAsUnknownTask` | ✅ |
+| G7 | A task whose stored `taskName` resolves to no `TaskType` fails with `UNKNOWN_TASK` (a value, no NPE) | `TaskStateMachine` resolve→`fail(UNKNOWN_TASK)` + `PipelineEngineTest.aTaskWhoseStoredNameHasNoRegisteredTypeFailsAsUnknownTask` | ✅ |
 
 ## H. Schema & persistence (JPA-generated, MySQL)
 
@@ -98,8 +98,8 @@ documented).
 
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
-| I1 | Business failures are `ErrorCode` values on the row, never thrown | `TaskMachine.fail`/`retryOrFail` | ✅ |
-| I2 | External-call failures are exceptions caught at exactly one boundary and translated to `ErrorCode` | the single `TaskMachine.runExternalCall` helper (wrapping execute/check) + `PipelineEngineTest.aThrowingDispatchIsTreatedAsCheckErrorAndRetriedThenFailed` (+ the CALL_TIMEOUT tests) | ✅ |
+| I1 | Business failures are `ErrorCode` values on the row, never thrown | `TaskStateMachine.fail`/`retryOrFail` | ✅ |
+| I2 | External-call failures are exceptions caught at exactly one boundary and translated to `ErrorCode` | the single `TaskStateMachine.runExternalCall` helper (wrapping execute/check) + `PipelineEngineTest.aThrowingDispatchIsTreatedAsCheckErrorAndRetriedThenFailed` (+ the CALL_TIMEOUT tests) | ✅ |
 | I3 | Interruption is a fail-fast runtime signal, NOT mapped to a business `ErrorCode` | `InfraManagerClient.CallInterruptedException`; `runExternalCall` catches only `CallTimeout`/`CallFailed`, so an interrupt is **not caught** — it propagates out of `advance` (absorbed by the ADR-021 runner's per-pipeline catch) | ✅ |
 | I4 | The duplicate-create catch is targeted (constraint-checked) and rethrows other violations | see D3 | ✅ |
 | I5 | Strategy is documented | `docs/exception-strategy.md` | ✅ |
@@ -110,14 +110,14 @@ documented).
 | # | Criterion | Verified by | Status |
 |---|---|---|---|
 | J1 | Constructor injection only; `Clock` injected; no direct `now()` in logic | all beans | ✅ |
-| J2 | Closed-set switches are exhaustive, no `default` swallow | `TaskMachine.advance` enumerates terminal states | ✅ |
+| J2 | Closed-set switches are exhaustive, no `default` swallow | `TaskStateMachine.advance` enumerates terminal states | ✅ |
 | J3 | Interfaces are justified — `InfraManagerClient` (external boundary, prod + fake) and `TaskType` (genuine N-impl polymorphism, registry-resolved); static utility (`TaskSettings`) over a one-method bean | package scan | ✅ |
 | J4 | Tests behavior-named, fixed `Clock`, fakes not mocks | test suite | ✅ |
 | J5 | Extension seams (more task kinds / outbox) documented, not pre-built | `docs/extensibility.md` | ✅ |
 
 ## Deferred / accepted limitations (📦)
 
-- **Observations ride the engine's `advance` transaction** (no `REQUIRES_NEW` / separate bean). The
+- **ObservationRecorder ride the engine's `advance` transaction** (no `REQUIRES_NEW` / separate bean). The
   async observation split was rejected (ADR Option B); a failed observation write rolls back and
   retries the whole `advance`, which cannot corrupt state, so this honors the ADR's correctness-only
   guarantee. The `REQUIRES_NEW` boundary is the documented upgrade. 📦
@@ -224,12 +224,12 @@ A focused readability + exception campaign over the final code: **21 independent
 |---|---|---|---|
 | 1 | 4 | broad readability + exception sweep | DRY/naming/magic-literal findings; exception-narrowing case raised |
 | 2 | 6 | exception/postCheck, service per-method, Korean-comment clarity, naming/structure/JPA, model/dto/enums, codex | **P1: postCheck sat outside the exception boundary** (codex+opus) → fixed |
-| 3 | 6 | TaskMachine correctness, service fixes, test quality, docs accuracy, holistic, codex | **P1: constraint-name literal duplicated** → single-sourced; under-asserting tests strengthened |
+| 3 | 6 | TaskStateMachine correctness, service fixes, test quality, docs accuracy, holistic, codex | **P1: constraint-name literal duplicated** → single-sourced; under-asserting tests strengthened |
 | 4 | 5 | adversarial correctness, holistic readability, docs+Korean consistency, test suite, codex | **0 P0 / 0 P1 — MERGE-READY** (codex "yes"); only P2 polish |
 
 **What the campaign changed.** (1) The InfraManager boundary was **narrowed** to a closed vocabulary —
 `CallTimeoutException` / `CallFailedException` / `CallInterruptedException` — and unified into one
-`TaskMachine.runExternalCall` helper wrapping `execute`/`check`; it catches only Timeout/Failed
+`TaskStateMachine.runExternalCall` helper wrapping `execute`/`check`; it catches only Timeout/Failed
 (logs, translates), while an interrupt and any other `RuntimeException` (a genuine bug) propagate fail-fast
 instead of being mis-recorded as `CHECK_ERROR`. Every throw/catch site is catalogued in
 [exception-cases.md](exception-cases.md). (2) Cancel now ends the open attempt as `CANCELLED` via the shared

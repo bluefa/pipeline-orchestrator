@@ -33,7 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineControl.class, TaskCanceller.class, Observations.class, PipelineCreator.class,
+@Import({PipelineControl.class, TaskCanceller.class, ObservationRecorder.class, PipelineCreator.class,
         PipelineInserter.class, Recipes.class, PipelineControlTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineControlTest {

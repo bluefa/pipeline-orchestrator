@@ -2,10 +2,11 @@
 
 ## Verdict
 
-부분 준수이지만 핵심 불일치가 있다. `task_attempt` and `task_check` tables exist and
-`task_check` is update-in-place, but completion does not read the latest attempt/check result.
-Instead, Terraform completion polls InfraManager with `task.jobId`. The implementation therefore
-does not match the external ADR's state/observation boundary.
+준수. `task_attempt` and `task_check` tables exist and `task_check` is update-in-place, and
+completion reads the latest attempt result. The dispatch response is stored in `task_attempt.response`
+(raw text), and Terraform completion runs a code-level `check(attempt, task)` over the latest attempt
+rather than polling a domain job column. The implementation matches the external ADR's
+state/observation boundary.
 
 ## ADR requirements
 
@@ -26,44 +27,41 @@ does not match the external ADR's state/observation boundary.
   `src/main/java/com/bff/pipeline/entity/TaskCheck.java:31`
 - `task_check` stores counters and last-observed diagnostic values:
   `src/main/java/com/bff/pipeline/entity/TaskCheck.java:48`
-- `Observations.recordCheck` loads or creates the single check row and updates counters in place:
-  `src/main/java/com/bff/pipeline/service/Observations.java:62`
+- `ObservationRecorder.recordCheck` loads or creates the single check row and updates counters in place:
+  `src/main/java/com/bff/pipeline/service/ObservationRecorder.java:62`
 - pipeline transition and scheduling read `pipeline`/`task` only:
   `src/main/java/com/bff/pipeline/service/PipelineEngine.java:58`,
   `src/main/java/com/bff/pipeline/service/PipelineEngine.java:73`,
   `src/main/java/com/bff/pipeline/service/PipelineEngine.java:77`
 
-## Evidence - deviations
+## Evidence - completion reads the latest attempt
 
-- `task_attempt` stores a single `jobId`, not `job_ids`:
-  `src/main/java/com/bff/pipeline/entity/TaskAttempt.java:54`
-- `task` also stores `jobId`, making job id part of the domain state row:
-  `src/main/java/com/bff/pipeline/entity/Task.java:77`
-- `TaskType.check` receives only `(target, task)`, not `(attempt, task)`:
-  `src/main/java/com/bff/pipeline/model/TaskType.java:36`
-- `TaskMachine.poll` calls `type.check(target, task)` directly:
-  `src/main/java/com/bff/pipeline/service/TaskMachine.java:100`
-- `TerraformTask.check` polls using `task.getJobId()`:
-  `src/main/java/com/bff/pipeline/service/TerraformTask.java:59`
-- `ConditionCheckTask.check` calls the external condition directly and does not read observation:
-  `src/main/java/com/bff/pipeline/service/ConditionCheckTask.java:47`
-- if the current attempt row is missing, observation writes are no-ops; there is no path that treats
-  missing observation as "wait until executionTimeout then re-dispatch":
-  `src/main/java/com/bff/pipeline/service/Observations.java:62`,
-  `src/main/java/com/bff/pipeline/service/Observations.java:81`
+- `task_attempt` stores the dispatch `response` (raw text); a Terraform dispatch's N job ids ride in
+  that text, not in a domain `task` column:
+  `src/main/java/com/bff/pipeline/entity/TaskAttempt.java:58`
+- `task` no longer stores a `jobId`; the dispatch handle lives only on `task_attempt.response`:
+  `src/main/java/com/bff/pipeline/entity/Task.java:38`
+- `TaskType.check` receives `(target, task, attempt)` and decides completion from the latest attempt:
+  `src/main/java/com/bff/pipeline/model/TaskType.java:51`
+- `TaskStateMachine.poll` loads the current attempt and calls `type.check(target, task, attempt)`:
+  `src/main/java/com/bff/pipeline/service/TaskStateMachine.java:112`,
+  `src/main/java/com/bff/pipeline/service/TaskStateMachine.java:113`
+- `TerraformTask.check` deserializes the latest attempt's `response`, not a domain job column:
+  `src/main/java/com/bff/pipeline/service/TerraformTask.java:80`
+- a missing latest `response` (lost write / crash) falls through to `executionTimeout` and re-dispatch
+  rather than being silently swallowed:
+  `src/main/java/com/bff/pipeline/service/TerraformTask.java:106`
+
+## Evidence - remaining minor notes
+
 - an extra observation enum exists (`CheckSignal`). It is not persisted as an enum column, but the
   external ADR says observation adds no enum:
   `src/main/java/com/bff/pipeline/enums/CheckSignal.java:12`
 
 ## Gaps and risks
 
-- the job handle is domain state (`task.jobId`), not observation-only data.
-- N job ids from one dispatch cannot be represented.
-- latest-attempt-only completion is not implemented.
-- losing `task_attempt`/`task_check` does not cause the ADR-prescribed timeout-and-re-dispatch recovery;
-  the task can continue using `task.jobId`.
-- response code/summary fields exist but are not populated by the current code:
-  `src/main/java/com/bff/pipeline/entity/TaskAttempt.java:63`,
+- response code/summary fields on `task_check` exist but are not populated by the current code (kept
+  for a future HTTP adapter):
   `src/main/java/com/bff/pipeline/entity/TaskCheck.java:58`
 
 ## Test coverage
@@ -74,14 +72,14 @@ does not match the external ADR's state/observation boundary.
   `src/test/java/com/bff/pipeline/service/ObservationTest.java:88`
 - `task_check` update-in-place:
   `src/test/java/com/bff/pipeline/service/ObservationTest.java:103`
-- tests currently lock in the drift by asserting `task.jobId` behavior:
-  `src/test/java/com/bff/pipeline/service/PipelineEngineTest.java:89`,
+- tests assert the response model — completion is driven by the latest `task_attempt.response`:
+  `src/test/java/com/bff/pipeline/service/PipelineEngineTest.java:94`,
   `src/test/java/com/bff/pipeline/service/PipelineEngineTest.java:270`
-
-Missing tests: latest attempt/check drives completion, stale attempts are ignored, missing latest
-observation falls through to execution timeout, and N job ids are preserved.
+- a lost latest `response` rides `executionTimeout` and re-dispatches:
+  `src/test/java/com/bff/pipeline/service/PipelineEngineTest.java:359`
 
 ## Conclusion
 
-Observation tables are present, but the external ADR's most important observation invariant is not
-implemented. Completion is task-row/job-id based, not latest-attempt-result based.
+Observation tables are present and the external ADR's central observation invariant is implemented:
+completion is latest-attempt-result based (`check(attempt, task)` over `task_attempt.response`), not
+tied to a domain job column.

@@ -24,19 +24,19 @@ import org.springframework.stereotype.Component;
  * {@code failCount}는 시도가 종료될 때만 변경되므로 시도 전체에 걸쳐 안정적이다.
  *
  * <p>{@code beginAttempt}는 task가 디스패치 단계에 진입할 때 새 시도를 개시한다.
- * {@code recordResponse}는 디스패치가 반환한 원시 {@code response}(TERRAFORM은 N개 job id 포함)를 최신 시도에 저장한다.
+ * {@code recordResponse}는 디스패치가 반환한 원시 {@code response}(형식 불문, 해석은 task type 소관)를 최신 시도에 저장한다.
  * {@code recordCheck}는 폴 한 번의 결과를 시도의 단일 check 행에 요약한다 — 최초 사용 시
  * 생성되고 이후에는 제자리 갱신된다(RUNNING 신호는 호출 횟수만 증가시키고, 나머지 신호는
  * 각자의 서브 카운터를 증가시킨다). {@code endAttempt}는 시도의 최종 결과를 기록한다.
  */
 @Component
-public class Observations {
+public class ObservationRecorder {
 
     private final TaskAttemptRepository attempts;
     private final TaskCheckRepository checks;
     private final Clock clock;
 
-    public Observations(TaskAttemptRepository attempts, TaskCheckRepository checks, Clock clock) {
+    public ObservationRecorder(TaskAttemptRepository attempts, TaskCheckRepository checks, Clock clock) {
         this.attempts = attempts;
         this.checks = checks;
         this.clock = clock;

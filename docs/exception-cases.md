@@ -9,10 +9,10 @@
 > Each row is a real site in `src/main/java/com/bff/pipeline/`. "Business failures" (which are *values*,
 > never exceptions) are listed last for contrast.
 
-## 1. External-call failures — a closed exception vocabulary, translated once in `TaskMachine`
+## 1. External-call failures — a closed exception vocabulary, translated once in `TaskStateMachine`
 
 `InfraManagerClient` signals a call failure with one of three nested exceptions — a closed vocabulary.
-The only `try/catch` in the business layer is `TaskMachine.runExternalCall`, the single helper that wraps
+The only `try/catch` in the business layer is `TaskStateMachine.runExternalCall`, the single helper that wraps
 **every** InfraManager-backed call — `TaskType.execute` and `TaskType.check`. It
 catches **only `CallTimeoutException` and `CallFailedException`** and translates them; `CallInterruptedException`
 and any *other* `RuntimeException` (a genuine bug) are not caught and propagate (fail-fast — cases 6/7).
@@ -20,8 +20,8 @@ and any *other* `RuntimeException` (a genuine bug) are not caught and propagate 
 | # | Exception | Thrown by | Caught at | Handling | Becomes |
 |---|---|---|---|---|---|
 | 1 | `InfraManagerClient.CallInterruptedException` | production adapter when the calling thread is interrupted (e.g. shutdown) | **not caught** (a distinct `final` type, not matched by the timeout/failed catches) | propagates out of `advance` — fail-fast, never recorded as a business outcome | _(propagates; see §4 / case 7)_ |
-| 2 | `InfraManagerClient.CallTimeoutException` | production adapter when one call exceeds the per-call timeout | `TaskMachine.runExternalCall` | **logged** (WARN), then `retryOrFail`; on a `check` (not `execute`) also records a `CALL_TIMEOUT` check observation | `ErrorCode.CALL_TIMEOUT` (retryable) |
-| 3 | `InfraManagerClient.CallFailedException` | production adapter (HTTP 5xx/4xx, connection reset, rejection, malformed/empty response) **or** a `TaskType` guard (§2) | `TaskMachine.runExternalCall` | **logged** (WARN), then `retryOrFail`; on a `check` also records an `API_ERROR` check observation | `ErrorCode.CHECK_ERROR` (retryable) |
+| 2 | `InfraManagerClient.CallTimeoutException` | production adapter when one call exceeds the per-call timeout | `TaskStateMachine.runExternalCall` | **logged** (WARN), then `retryOrFail`; on a `check` (not `execute`) also records a `CALL_TIMEOUT` check observation | `ErrorCode.CALL_TIMEOUT` (retryable) |
+| 3 | `InfraManagerClient.CallFailedException` | production adapter (HTTP 5xx/4xx, connection reset, rejection, malformed/empty response) **or** a `TaskType` guard (§2) | `TaskStateMachine.runExternalCall` | **logged** (WARN), then `retryOrFail`; on a `check` also records an `API_ERROR` check observation | `ErrorCode.CHECK_ERROR` (retryable) |
 
 Because the same `runExternalCall` wraps both `execute` and `check`, an `execute` that calls the
 InfraManager is translated exactly like a check — its timeout/failure becomes
@@ -60,7 +60,7 @@ operation (or application startup) immediately.
 
 | # | Exception | Thrown by | Condition | Reaches |
 |---|---|---|---|---|
-| 6 | any non-`CallException` `RuntimeException` (e.g. `NullPointerException`, `IllegalStateException`) | a bug in a `TaskType` / engine / `Observations` while servicing an advance | a real defect, not an external failure | propagates out of `advance` → case 7 (fail-fast, never `CHECK_ERROR`) |
+| 6 | any non-`CallException` `RuntimeException` (e.g. `NullPointerException`, `IllegalStateException`) | a bug in a `TaskType` / engine / `ObservationRecorder` while servicing an advance | a real defect, not an external failure | propagates out of `advance` → case 7 (fail-fast, never `CHECK_ERROR`) |
 | 7 | _(any of the above propagating)_ | `PipelineEngine.advance` | — | absorbed by the **ADR-021 runner's** per-pipeline `catch (RuntimeException)` (out of scope here): logged, that pipeline skipped for the sweep; its transaction rolled back, so nothing is half-written |
 | 8 | `IllegalStateException` | `TaskTypeRegistry` constructor | a `TaskType` bean has a `null`/blank `taskName()`, or two beans claim the same name | **application startup fails** (a misconfiguration must not boot) |
 | 9 | `IllegalArgumentException` | `PipelineSettings` compact constructor | a required `pipeline.*` key is missing, or a duration is zero/negative, or `max-fail-count < 1` | **application startup fails** (incomplete/invalid config must not boot — pre-empts a later NPE/busy-loop in `TaskSettings`) |
@@ -98,16 +98,16 @@ The seam for the REST layer added later. No exception is swallowed: the catch-al
 
 These are the expected outcomes of running infrastructure work. They are written to the task row as an
 `ErrorCode` and **never thrown**. They are decided by `TaskType.check` (as a `TaskProgress.Failed` value)
-or by the engine, then persisted by `TaskMachine`.
+or by the engine, then persisted by `TaskStateMachine`.
 
 | `ErrorCode` | Decided by | Retryable? |
 |---|---|---|
 | `JOB_FAILED` | `TerraformTask.check` — the Terraform poll reported the job FAILED | yes |
 | `EXECUTION_TIMEOUT` | `TerraformTask.check` — the job ran past its per-task execution timeout | yes |
 | `TIME_TO_LIVE_EXPIRED` | `ConditionCheckTask.check` — the condition was never met within its TTL | **no** (the wait window is gone) |
-| `UNKNOWN_TASK` | `TaskMachine.failUnknownTask` — the stored `taskName` resolves to no registered `TaskType` | **no** |
-| `CALL_TIMEOUT` | `TaskMachine` translating case 2 | yes |
-| `CHECK_ERROR` | `TaskMachine` translating case 3 | yes |
+| `UNKNOWN_TASK` | `TaskStateMachine.failUnknownTask` — the stored `taskName` resolves to no registered `TaskType` | **no** |
+| `CALL_TIMEOUT` | `TaskStateMachine` translating case 2 | yes |
+| `CHECK_ERROR` | `TaskStateMachine` translating case 3 | yes |
 
 `CALL_TIMEOUT` and `CHECK_ERROR` originate as exceptions (§1) but are *persisted as values*: once
 translated they are ordinary business failures and drive the same retry-or-fail accounting.
@@ -115,7 +115,7 @@ translated they are ordinary business failures and drive the same retry-or-fail 
 ## Invariant a reviewer can check
 
 - Exactly **one external-call translation** `try/catch` exists in the business/service layer:
-  `TaskMachine.runExternalCall`, which wraps every InfraManager-backed call (`execute`/`check`)
+  `TaskStateMachine.runExternalCall`, which wraps every InfraManager-backed call (`execute`/`check`)
   and catches only `CallTimeoutException` and `CallFailedException`. The only other `catch` in the service
   layer is `PipelineCreator`'s targeted `DataIntegrityViolationException` control-signal catch (§4, case
   11), which *recovers* rather than translates; every other service method is exception-free straight-line

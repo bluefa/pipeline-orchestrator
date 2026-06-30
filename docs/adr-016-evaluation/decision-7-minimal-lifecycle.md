@@ -31,7 +31,7 @@ are guarded from resurrection. The main caveat is that "two task kinds" is not c
 - recipes currently use only those two task names:
   `src/main/java/com/bff/pipeline/service/Recipes.java:23`
 - retry resets to a fresh dispatch-ready state:
-  `src/main/java/com/bff/pipeline/service/TaskMachine.java:180`
+  `src/main/java/com/bff/pipeline/service/TaskStateMachine.java:180`
 - cancel goes directly to `PipelineStatus.CANCELLED` through `finish`:
   `src/main/java/com/bff/pipeline/service/PipelineControl.java:40`
 - non-terminal tasks are cancelled by `TaskCanceller`:

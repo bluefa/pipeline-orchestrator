@@ -15,7 +15,7 @@ import com.bff.pipeline.enums.TaskOperation;
  * 인터럽트 시 {@link CallInterruptedException}을, 그 외 실패한 호출(HTTP 오류, 거부,
  * 잘못된/빈 응답)에는 {@link CallFailedException}을 발생시켜야 한다. 프로덕션 어댑터는
  * 자신의 전송 예외를 반드시 이 세 가지 중 하나로 변환해야 하며, 날 것의 {@code RuntimeException}을
- * 누출해서는 안 된다. 도메인({@code TaskMachine})은 이 예외들을 캐치하여 영속된 {@code ErrorCode}로
+ * 누출해서는 안 된다. 도메인({@code TaskStateMachine})은 이 예외들을 캐치하여 영속된 {@code ErrorCode}로
  * 변환하는 단일 경계이다 — CallTimeout → CALL_TIMEOUT, CallFailed → CHECK_ERROR.
  * CallInterrupted는 캐치하지 않고 그대로 전파되어 fail-fast로 처리된다. 자세한 내용은
  * {@code docs/exception-strategy.md} 참조.

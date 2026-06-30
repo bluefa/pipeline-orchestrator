@@ -46,9 +46,9 @@
 - `service/TerraformTask.java:49-72` — `execute`는 `task.setJobId` 대신 raw response를 attempt에 기록; `check`는 최신
   `response`를 Jackson 파싱해 N ids 폴링. null/blank guard 유지.
 - `service/ConditionCheckTask.java:47` — 새 signature만 반영(폴링 대상 response 없음).
-- `service/Observations.java:49,55-60` — `recordJobId`→`recordResponse`; `beginAttempt`가 `task.getJobId()` 복사 중단;
+- `service/ObservationRecorder.java:49,55-60` — `recordJobId`→`recordResponse`; `beginAttempt`가 `task.getJobId()` 복사 중단;
   완료용 "최신 attempt 조회" read 경로 추가(write-only 계약 완화).
-- `service/TaskMachine.java` — `poll`(:100-105)이 최신 attempt 로드 후 `check`에 전달; **유실/없음 → 즉시 `CHECK_ERROR`가
+- `service/TaskStateMachine.java` — `poll`(:100-105)이 최신 attempt 로드 후 `check`에 전달; **유실/없음 → 즉시 `CHECK_ERROR`가
   아니라 `executionTimeout` fallthrough**(Q 핵심); `markInProgress`(:170-171)의 jobId 미러링 제거; `retryOrFail`(:189)
   `setJobId(null)` 제거(필드 소멸 — 단 fresh-run 리셋 자체는 유지).
 - `service/TaskCanceller.java:33` — **유지**. cancel이 열린 attempt를 `CANCELLED`로 먼저 종료 → 이후 "최신 attempt" 읽기가
