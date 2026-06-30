@@ -125,10 +125,8 @@ public class StepReporter {
         pipeline.setClaimedBy(null);
         pipeline.setClaimedUntil(null);
         if (pipeline.getStatus() == PipelineStatus.RUNNING) {
-            pipeline.setNextDueAt(currentTask(chain)
-                    .map(Task::getNextCheckAt)
-                    .map(at -> at == null ? clock.instant() : at)
-                    .orElse(clock.instant()));
+            // Optional.map(getNextCheckAt)는 nextCheckAt이 null이면 empty가 되므로 orElseGet이 now로 메운다.
+            pipeline.setNextDueAt(currentTask(chain).map(Task::getNextCheckAt).orElseGet(clock::instant));
         }
     }
 

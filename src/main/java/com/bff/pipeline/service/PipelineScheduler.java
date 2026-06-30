@@ -160,10 +160,12 @@ public class PipelineScheduler {
             idleBackoff = settings.backoffBase();
             return settings.pollInterval();
         }
-        Duration doubled = idleBackoff.multipliedBy(2);
-        idleBackoff = doubled.compareTo(settings.backoffMax()) > 0 ? settings.backoffMax() : doubled;
-        Duration capped = idleBackoff.compareTo(settings.maxIdleSleep()) > 0 ? settings.maxIdleSleep() : idleBackoff;
-        return applyJitter(capped);
+        idleBackoff = min(idleBackoff.multipliedBy(2), settings.backoffMax());
+        return applyJitter(min(idleBackoff, settings.maxIdleSleep()));
+    }
+
+    private static Duration min(Duration a, Duration b) {
+        return a.compareTo(b) <= 0 ? a : b;
     }
 
     Duration applyJitter(Duration base) {
@@ -185,7 +187,6 @@ public class PipelineScheduler {
         if (nearestDueAt.isEmpty() || !nearestDueAt.get().isAfter(now)) {
             return delay;
         }
-        Duration untilDue = Duration.between(now, nearestDueAt.get());
-        return untilDue.compareTo(delay) < 0 ? untilDue : delay;
+        return min(Duration.between(now, nearestDueAt.get()), delay);
     }
 }
