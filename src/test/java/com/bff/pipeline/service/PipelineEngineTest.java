@@ -28,6 +28,8 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
@@ -71,7 +73,7 @@ class PipelineEngineTest {
     @BeforeEach
     void reset() {
         clock.set(START);
-        infraManager.onDispatch(() -> "job-1");
+        infraManager.onDispatch(() -> "[\"job-1\"]");
         infraManager.onPoll(TerraformPoll::running);
         infraManager.onCheck(() -> false);
         postCheckProbe.onPostCheck(() -> TaskProgress.SUCCEEDED);
@@ -92,7 +94,8 @@ class PipelineEngineTest {
 
         advance(pipeline);
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
-        assertThat(task(pipeline, 0).getJobId()).isEqualTo("job-1");
+        assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getResponse())
+                .isEqualTo("[\"job-1\"]");
 
         advance(pipeline);
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);
@@ -182,7 +185,6 @@ class PipelineEngineTest {
         advance(pipeline);
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
-        assertThat(task(pipeline, 0).getJobId()).isNull();
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
         assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
                 .isEqualTo(ErrorCode.CHECK_ERROR);
@@ -268,10 +270,11 @@ class PipelineEngineTest {
     }
 
     @Test
-    void crashResumeRePollsAnInProgressTerraformJobByItsStoredJobId() {
+    void crashResumeRePollsAnInProgressTerraformJobByItsStoredResponse() {
         Pipeline pipeline = creator.create("t-crash", PipelineType.DELETE);
         advance(pipeline);
-        assertThat(task(pipeline, 0).getJobId()).isEqualTo("job-1");
+        assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getResponse())
+                .isEqualTo("[\"job-1\"]");
 
         infraManager.onPoll(TerraformPoll::success);
         advance(pipeline);
@@ -347,6 +350,84 @@ class PipelineEngineTest {
         assertThat(status(pipeline)).isEqualTo(PipelineStatus.RUNNING);
     }
 
+
+    @Test
+    void aTerraformDispatchOfNJobIdsCompletesOnlyWhenAllJobsSucceed() {
+        Pipeline pipeline = creator.create("t-n-jobs", PipelineType.DELETE);
+        infraManager.onDispatch(() -> "[\"job-1\",\"job-2\",\"job-3\"]");
+        infraManager.onPoll(TerraformPoll::success);
+
+        advance(pipeline);
+        assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getResponse())
+                .isEqualTo("[\"job-1\",\"job-2\",\"job-3\"]");
+
+        advance(pipeline);
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);
+        assertThat(status(pipeline)).isEqualTo(PipelineStatus.DONE);
+    }
+
+    @Test
+    void aFailedJobAmongTheNDispatchedFailsRetryableWithJobFailed() {
+        Pipeline pipeline = creator.create("t-n-fail", PipelineType.DELETE);
+        infraManager.onDispatch(() -> "[\"job-1\",\"job-2\"]");
+        infraManager.onPoll(TerraformPoll::failure);
+
+        advance(pipeline);
+        advance(pipeline);
+
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
+        assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
+        assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
+                .isEqualTo(ErrorCode.JOB_FAILED);
+    }
+
+    @Test
+    void aMalformedDispatchResponseFailsTheTaskOutright() {
+        Pipeline pipeline = creator.create("t-malformed", PipelineType.DELETE);
+        infraManager.onDispatch(() -> "not-json");
+
+        advance(pipeline);
+        advance(pipeline);
+
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.FAILED);
+        assertThat(task(pipeline, 0).getErrorCode()).isEqualTo(ErrorCode.CHECK_ERROR);
+        assertThat(task(pipeline, 0).getFailCount()).isEqualTo(0);
+        assertThat(status(pipeline)).isEqualTo(PipelineStatus.FAILED);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"null", "[]", "[null]", "[\"\"]", "[\"  \"]"})
+    void aResponseWithNoUsableJobIdsFailsTheTaskOutright(String response) {
+        Pipeline pipeline = creator.create("t-no-jobs", PipelineType.DELETE);
+        infraManager.onDispatch(() -> response);
+
+        advance(pipeline);
+        advance(pipeline);
+
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.FAILED);
+        assertThat(task(pipeline, 0).getErrorCode()).isEqualTo(ErrorCode.CHECK_ERROR);
+        assertThat(task(pipeline, 0).getFailCount()).isEqualTo(0);
+        assertThat(status(pipeline)).isEqualTo(PipelineStatus.FAILED);
+    }
+
+    @Test
+    void aLostDispatchResponseRidesExecutionTimeoutThenSharesTheFailCount() {
+        Pipeline pipeline = creator.create("t-lost", PipelineType.DELETE);
+        infraManager.onPoll(TerraformPoll::running);
+        advance(pipeline);
+
+        TaskAttempt attempt = attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow();
+        attempt.setResponse(null);
+        attempts.saveAndFlush(attempt);
+
+        clock.advance(Duration.ofHours(1));
+        advance(pipeline);
+
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
+        assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
+        assertThat(attempts.findByTaskIdAndAttemptNumber(task(pipeline, 0).getId(), 1).orElseThrow().getErrorCode())
+                .isEqualTo(ErrorCode.EXECUTION_TIMEOUT);
+    }
 
     private void advance(Pipeline pipeline) {
         engine.advance(pipeline.getId());
@@ -445,8 +526,14 @@ class PipelineEngineTest {
         private java.util.function.Supplier<TaskProgress> postCheckBehavior = () -> TaskProgress.SUCCEEDED;
         void onPostCheck(java.util.function.Supplier<TaskProgress> behavior) { this.postCheckBehavior = behavior; }
         public String taskName() { return NAME; }
-        public void execute(String target, Task task) { }
-        public TaskProgress check(String target, Task task) { return TaskProgress.SUCCEEDED; }
-        public TaskProgress postCheck(String target, Task task) { return postCheckBehavior.get(); }
+        public com.bff.pipeline.model.DispatchResult execute(String target, Task task) {
+            return com.bff.pipeline.model.DispatchResult.NONE;
+        }
+        public TaskProgress check(String target, Task task, com.bff.pipeline.entity.TaskAttempt attempt) {
+            return TaskProgress.SUCCEEDED;
+        }
+        public TaskProgress postCheck(String target, Task task, com.bff.pipeline.entity.TaskAttempt attempt) {
+            return postCheckBehavior.get();
+        }
     }
 }

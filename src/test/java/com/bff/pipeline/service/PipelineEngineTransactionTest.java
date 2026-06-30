@@ -91,7 +91,7 @@ class PipelineEngineTransactionTest {
 
         @Override
         public String runTerraform(String target, TaskOperation operation) {
-            return "job-rtx";
+            return "[\"job-rtx\"]";
         }
 
         @Override

@@ -3,8 +3,10 @@ package com.bff.pipeline.service;
 import com.bff.pipeline.PipelineSettings;
 import com.bff.pipeline.client.InfraManagerClient;
 import com.bff.pipeline.entity.Task;
+import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.enums.CheckSignal;
 import com.bff.pipeline.enums.ErrorCode;
+import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
 import com.bff.pipeline.utils.TaskSettings;
@@ -40,11 +42,12 @@ public class ConditionCheckTask implements TaskType {
     }
 
     @Override
-    public void execute(String target, Task task) {
+    public DispatchResult execute(String target, Task task) {
+        return DispatchResult.NONE;
     }
 
     @Override
-    public TaskProgress check(String target, Task task) {
+    public TaskProgress check(String target, Task task, TaskAttempt attempt) {
         if (infraManager.checkCondition(target, task.getOperation())) {
             return TaskProgress.SUCCEEDED;
         }

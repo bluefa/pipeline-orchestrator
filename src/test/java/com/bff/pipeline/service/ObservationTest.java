@@ -55,7 +55,7 @@ class ObservationTest {
     @BeforeEach
     void reset() {
         clock.set(START);
-        infraManager.onDispatch(() -> "job-1");
+        infraManager.onDispatch(() -> "[\"job-1\"]");
         infraManager.onPoll(TerraformPoll::running);
         infraManager.onCheck(() -> false);
     }
@@ -80,7 +80,7 @@ class ObservationTest {
         assertThat(recorded).singleElement().satisfies(attempt -> {
             assertThat(attempt.getAttemptNumber()).isEqualTo(1);
             assertThat(attempt.getStatus()).isEqualTo(TaskStatus.DONE);
-            assertThat(attempt.getJobId()).isEqualTo("job-1");
+            assertThat(attempt.getResponse()).isEqualTo("[\"job-1\"]");
         });
         assertThat(checks.findByTaskAttemptId(recorded.getFirst().getId())).isEmpty();
     }

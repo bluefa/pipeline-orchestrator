@@ -3,9 +3,11 @@ package com.bff.pipeline.service;
 import com.bff.pipeline.PipelineSettings;
 import com.bff.pipeline.client.InfraManagerClient;
 import com.bff.pipeline.entity.Task;
+import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.enums.CheckSignal;
 import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.TaskStatus;
+import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
 import com.bff.pipeline.repository.TaskRepository;
@@ -93,27 +95,35 @@ public class TaskMachine {
         TaskType type = typeOrFail(task);
         if (type == null) return;
         observations.beginAttempt(task);
-        runExternalCall(task, () -> { type.execute(target, task); return TaskProgress.SUCCEEDED; }, false)
+        runExternalCall(task, () -> { recordDispatch(task, type.execute(target, task)); return TaskProgress.SUCCEEDED; }, false)
                 .ifPresent(ignored -> markInProgress(task));
+    }
+
+    private void recordDispatch(Task task, DispatchResult dispatchResult) {
+        switch (dispatchResult) {
+            case DispatchResult.WithResponse withResponse -> observations.recordResponse(task, withResponse.response());
+            case DispatchResult.None ignored -> { }
+        }
     }
 
     private void poll(String target, Task task) {
         TaskType type = typeOrFail(task);
         if (type == null) return;
-        runExternalCall(task, () -> type.check(target, task), true)
-                .ifPresent(progress -> applyCheck(type, target, task, progress));
+        TaskAttempt attempt = observations.currentAttempt(task).orElse(null);
+        runExternalCall(task, () -> type.check(target, task, attempt), true)
+                .ifPresent(progress -> applyCheck(type, target, task, attempt, progress));
     }
 
-    private void applyCheck(TaskType type, String target, Task task, TaskProgress progress) {
+    private void applyCheck(TaskType type, String target, Task task, TaskAttempt attempt, TaskProgress progress) {
         switch (progress) {
-            case TaskProgress.Succeeded ignored -> afterCheckSucceeded(type, target, task);
+            case TaskProgress.Succeeded ignored -> afterCheckSucceeded(type, target, task, attempt);
             case TaskProgress.Pending pending -> recordPendingAndReschedule(task, pending);
             case TaskProgress.Failed failed -> applyFailure(task, failed);
         }
     }
 
-    private void afterCheckSucceeded(TaskType type, String target, Task task) {
-        runExternalCall(task, () -> type.postCheck(target, task), true)
+    private void afterCheckSucceeded(TaskType type, String target, Task task, TaskAttempt attempt) {
+        runExternalCall(task, () -> type.postCheck(target, task, attempt), true)
                 .ifPresent(progress -> applyPostCheck(task, progress));
     }
 
@@ -167,9 +177,6 @@ public class TaskMachine {
     }
 
     private void markInProgress(Task task) {
-        if (task.getJobId() != null) {
-            observations.recordJobId(task, task.getJobId());
-        }
         task.setStatus(TaskStatus.IN_PROGRESS);
         Instant now = clock.instant();
         task.setStartedAt(now);
@@ -186,7 +193,6 @@ public class TaskMachine {
         }
         task.setStatus(TaskStatus.READY);
         task.setReadyAt(clock.instant());
-        task.setJobId(null);
         task.setNextCheckAt(null);
         tasks.save(task);
     }

@@ -20,15 +20,17 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
- * task의 재시도 시도(retry attempt)당 하나의 행(row)을 저장하는 <b>쓰기 전용 관찰(write-only observation)</b>
- * 테이블이다(ADR-016 §3). 엔진은 이 테이블을 절대 읽지 않으며, 이 데이터를 잃더라도 디버그 가능성(debuggability)만
- * 손실될 뿐 정확성(correctness)에는 영향이 없다. 시도가 시작되는 순간
- * {@code attemptNumber = task.failCount + 1}이므로, 두 번 재시도한 후 실패한 task는 세 개의 행(1, 2, 3)을 남긴다.
- * {@code status}는 시도의 결과(outcome)이다: 실행 중에는 IN_PROGRESS이며, 이후 DONE, FAILED, 또는 CANCELLED가
- * 된다(cancel 시점에 열려 있던 시도는 CANCELLED로 종료된다).
+ * task의 재시도 시도(retry attempt)당 하나의 행(row)을 저장하는 관찰(observation) 테이블이다(ADR-016 §3).
+ * 시도가 시작되는 순간 {@code attemptNumber = task.failCount + 1}이므로, 두 번 재시도한 후 실패한 task는
+ * 세 개의 행(1, 2, 3)을 남긴다. {@code status}는 시도의 결과(outcome)이다: 실행 중에는 IN_PROGRESS이며,
+ * 이후 DONE, FAILED, 또는 CANCELLED가 된다(cancel 시점에 열려 있던 시도는 CANCELLED로 종료된다).
  *
- * <p>{@code dispatchResponseCode}/{@code dispatchResponseSummary}는 향후 HTTP InfraManager 어댑터에 의해
- * 채워질 필드이며, 그 전까지는 null이다.
+ * <p>{@code response}는 dispatch가 반환한 <b>원시 외부 응답(text)</b>이다(ADR-016 ed97ec0 §3/§5). TERRAFORM_JOB의
+ * 경우 한 번의 dispatch가 만든 {@code N}개 job id를 담으며, 각 task 종류({@code TaskType})가 자기 {@code response}를
+ * 역직렬화한다. 완료 판정은 도메인 컬럼이 아니라 이 <b>최신 attempt 행의 {@code response}</b>를 입력으로 하는
+ * {@code check(attempt, task)}로 이뤄진다 — 엔진은 관찰 테이블을 오직 완료 목적으로, 그것도 최신 행만 읽는다
+ * (§3 invariant 1). claim/스케줄링/pipeline 전이는 여전히 {@code pipeline}/{@code task}만 본다. 최신 {@code response}가
+ * 유실되면(dispatch 후 기록 실패) 정확성이 깨지지 않는다: per-task {@code executionTimeout}이 만료되어 멱등 재dispatch된다.
  */
 @Entity
 @Table(
@@ -51,7 +53,8 @@ public class TaskAttempt {
     @Column(name = "attempt_number", nullable = false)
     private int attemptNumber;
 
-    private String jobId;
+    @Column(columnDefinition = "text")
+    private String response;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -59,9 +62,6 @@ public class TaskAttempt {
 
     @Enumerated(EnumType.STRING)
     private ErrorCode errorCode;
-
-    private Integer dispatchResponseCode;
-    private String dispatchResponseSummary;
 
     @Column(nullable = false)
     private Instant startedAt;
