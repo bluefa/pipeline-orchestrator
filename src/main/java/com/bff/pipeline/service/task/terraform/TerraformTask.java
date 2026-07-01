@@ -7,6 +7,7 @@ import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.enums.CheckSignal;
 import com.bff.pipeline.enums.ErrorCode;
+import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
@@ -44,7 +45,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class TerraformTask implements TaskType {
 
-    public static final String NAME = "TERRAFORM_JOB";
+    public static final String NAME = TaskOperation.Mechanism.TERRAFORM_JOB;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final TypeReference<List<String>> JOB_IDS = new TypeReference<>() { };
 

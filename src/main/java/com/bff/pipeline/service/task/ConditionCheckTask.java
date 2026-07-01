@@ -6,6 +6,7 @@ import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.enums.CheckSignal;
 import com.bff.pipeline.enums.ErrorCode;
+import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
@@ -22,7 +23,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class ConditionCheckTask implements TaskType {
 
-    public static final String NAME = "CONDITION_CHECK";
+    public static final String NAME = TaskOperation.Mechanism.CONDITION_CHECK;
 
     private final InfraManagerClient infraManagerClient;
     private final PipelineSettings pipelineSettings;

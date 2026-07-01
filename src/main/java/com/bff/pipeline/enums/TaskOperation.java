@@ -1,18 +1,52 @@
 package com.bff.pipeline.enums;
 
 /**
- * 태스크가 수행하는 도메인 액션을 담는 열거형으로, ADR의 조건부 여섯 번째 열거형이다. v1 작업 집합이
- * <em>폐쇄형(closed)</em>이라 일급 타입으로 남겨 둔다(ADR-016 §2). 태스크 유형({@code taskName})이
- * dispatch/poll 방식을 결정하고, operation은 그 안에서 세부 액션을 고른다.
+ * 태스크가 수행하는 도메인 액션이다(ADR-016 §2). 각 operation은 자기를 실행할 mechanism(=TaskType 이름)을 소유한다 —
+ * operation이 mechanism을 유일하게 결정하기 때문이다(mechanism이 다른데 operation이 같은 경우는 없다). 그래서 라우팅의
+ * 근원은 operation이고, TaskDefinition은 operation에서 mechanism/slot을 파생만 한다.
  *
- * <p>나중에 작업 집합이 개방형/구성형으로 바뀌면 이 열거형은 레지스트리 패턴으로 대체된다
- * ({@code docs/extensibility.md} 참조). 그전까지는 폐쇄형 열거형이 타입 안전성을 지켜 준다.
+ * operation 자체는 데이터다 — 실제 dispatch/poll 동작은 TaskType 구현(TerraformTask/ConditionCheckTask)에 있고,
+ * operation은 (a) 어느 mechanism으로 갈지 라우팅하고 (b) InfraManager 호출 때 구체 액션 값으로 전달된다.
+ *
+ * mechanism은 String이라 TaskType의 열린 집합을 유지한다(새 TaskType은 이름으로 자기등록, 중앙 enum 수정 없음).
+ * 값은 각 TaskType.NAME과 일치해야 하며 부팅 시 TaskTypeRegistry가 검증한다. slot은 mechanism의 속성이라 여기 캐시하고
+ * 부팅 때 실제 TaskType.consumesTerraformSlot()과 일치하는지 검증한다.
  */
 public enum TaskOperation {
+
+    // ── TERRAFORM_JOB mechanism ──
     /** 네트워크 인프라를 구성(apply)하는 액션. */
-    APPLY_NETWORK,
-    /** 네트워크가 준비됐는지 확인(condition check)하는 액션. */
-    NETWORK_READY,
+    APPLY_NETWORK(Mechanism.TERRAFORM_JOB, true),
     /** 네트워크 인프라를 철거(destroy)하는 액션. */
-    DESTROY_NETWORK
+    DESTROY_NETWORK(Mechanism.TERRAFORM_JOB, true),
+
+    // ── CONDITION_CHECK mechanism ──
+    /** 네트워크가 준비됐는지 확인(condition check)하는 액션. */
+    NETWORK_READY(Mechanism.CONDITION_CHECK, false);
+
+    /** mechanism 이름 리터럴 — 값은 각 TaskType.NAME과 일치해야 하며 부팅 시 검증된다. */
+    public static final class Mechanism {
+        public static final String TERRAFORM_JOB = "TERRAFORM_JOB";
+        public static final String CONDITION_CHECK = "CONDITION_CHECK";
+
+        private Mechanism() {
+        }
+    }
+
+    private final String mechanism;
+    private final boolean consumesTerraformSlot;
+
+    TaskOperation(String mechanism, boolean consumesTerraformSlot) {
+        this.mechanism = mechanism;
+        this.consumesTerraformSlot = consumesTerraformSlot;
+    }
+
+    /** 이 operation을 실행할 TaskType의 이름(=taskName). */
+    public String mechanism() {
+        return mechanism;
+    }
+
+    public boolean consumesTerraformSlot() {
+        return consumesTerraformSlot;
+    }
 }

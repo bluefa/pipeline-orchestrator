@@ -1,6 +1,6 @@
 package com.bff.pipeline.service.task;
 
-import com.bff.pipeline.enums.TaskDefinition;
+import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.model.TaskType;
 import java.util.HashMap;
 import java.util.List;
@@ -14,9 +14,9 @@ import org.springframework.stereotype.Component;
  * 더 이상 정의된 타입이 아니라는 뜻이고, 이때 엔진은 넘겨짚지 않고 {@code ErrorCode.UNKNOWN_TASK}로 실패 처리한다.
  *
  * 맵은 생성 시점에 검증한다. 이름이 null이거나 빈 {@code TaskType}이 있거나 같은 이름을 주장하는 두 타입이 있으면,
- * 위반한 타입 이름을 담은 메시지와 함께 애플리케이션 기동이 실패한다. 나아가 모든 {@link TaskDefinition}의 mechanism이
- * 실제 등록된 {@code TaskType}을 가리키는지도 검증한다 — 카탈로그가 광고하는 정의가 런타임 확정 실패로 부팅되지 않게
- * (설계 §2). 조회는 null-safe하며, 등록된 이름이면 그 타입을, 미등록 이름이면 empty를 돌려준다.
+ * 위반한 타입 이름을 담은 메시지와 함께 애플리케이션 기동이 실패한다. 나아가 모든 {@link TaskOperation}의 mechanism이
+ * 실제 등록된 {@code TaskType}을 가리키고 slot flag가 일치하는지도 검증한다 — operation이 광고하는 mechanism이
+ * 런타임 확정 실패로 부팅되지 않게(설계 §2). 조회는 null-safe하며, 등록된 이름이면 그 타입을, 미등록 이름이면 empty를 돌려준다.
  */
 @Component
 public class TaskTypeRegistry {
@@ -38,15 +38,15 @@ public class TaskTypeRegistry {
             }
         }
         this.byName = Map.copyOf(map);
-        for (TaskDefinition definition : TaskDefinition.values()) {
-            TaskType type = byName.get(definition.mechanism());
+        for (TaskOperation operation : TaskOperation.values()) {
+            TaskType type = byName.get(operation.mechanism());
             if (type == null) {
-                throw new IllegalStateException("TaskDefinition " + definition.name() + " names mechanism '"
-                        + definition.mechanism() + "' but no TaskType is registered under it");
+                throw new IllegalStateException("TaskOperation " + operation.name() + " names mechanism '"
+                        + operation.mechanism() + "' but no TaskType is registered under it");
             }
-            if (type.consumesTerraformSlot() != definition.consumesTerraformSlot()) {
-                throw new IllegalStateException("TaskDefinition " + definition.name() + " declares consumesTerraformSlot="
-                        + definition.consumesTerraformSlot() + " but its TaskType '" + definition.mechanism()
+            if (type.consumesTerraformSlot() != operation.consumesTerraformSlot()) {
+                throw new IllegalStateException("TaskOperation " + operation.name() + " declares consumesTerraformSlot="
+                        + operation.consumesTerraformSlot() + " but its TaskType '" + operation.mechanism()
                         + "' declares " + type.consumesTerraformSlot());
             }
         }

@@ -19,8 +19,8 @@ import org.junit.jupiter.api.Test;
 class StepRunnerTest {
 
     private final StepRunner stepRunner = new StepRunner(new TaskTypeRegistry(List.of(
-            fake(TaskDefinition.Mechanism.TERRAFORM_JOB, true),
-            fake(TaskDefinition.Mechanism.CONDITION_CHECK, false))));
+            fake(TaskOperation.Mechanism.TERRAFORM_JOB, true),
+            fake(TaskOperation.Mechanism.CONDITION_CHECK, false))));
 
     @Test
     void dispatchesWhenTheRowAgreesWithItsDefinition() {
