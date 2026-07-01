@@ -2,8 +2,11 @@ package com.bff.pipeline.repository;
 
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.TaskStatus;
+import java.util.Collection;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 /**
  * {@link Task} 행의 영속성 계층이다. {@code findByPipelineIdOrderBySequenceAsc}는 pipeline의 task를 체인 순서로
@@ -19,4 +22,12 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
     List<Task> findByPipelineIdOrderBySequenceAsc(Long pipelineId);
 
     int countByConsumesTerraformSlotIsTrueAndStatus(TaskStatus status);
+
+    /**
+     * 목록 진행 N/M(P3/P7): 페이지에 실린 pipeline id들의 task를 (pipelineId, status)별로 한 번에 집계한다.
+     * 행마다 task를 다시 읽는 N+1을 피한다. done = status DONE 합, total = 전체 합.
+     */
+    @Query("select t.pipelineId as pipelineId, t.status as status, count(t) as count "
+            + "from Task t where t.pipelineId in :pipelineIds group by t.pipelineId, t.status")
+    List<PipelineTaskStatusCount> countByPipelineIdInGroupByStatus(@Param("pipelineIds") Collection<Long> pipelineIds);
 }
