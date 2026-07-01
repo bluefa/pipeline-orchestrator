@@ -13,17 +13,18 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
- * ADR-021 phase-A: 외부 호출 경계이다. tx1(claim)과 tx2(report) <b>사이</b>에서, 어떤 트랜잭션에도
- * 속하지 않은 채 실행된다(Decision 3 — 외부호출 동안 행 락을 보유하지 않기 위함). 이 모듈에서
- * InfraManager 외부 호출({@link TaskType#execute}/{@link TaskType#check})이 실제로 일어나는 유일한 곳이다.
+ * phase-A — 외부 호출 경계다. tx1(claim)과 tx2(report) <b>사이</b>에서 어떤 트랜잭션에도 속하지 않은 채
+ * 실행된다(Decision 3 — 외부 호출 동안에는 행 락을 쥐지 않는다). InfraManager 외부 호출
+ * ({@link TaskType#execute}/{@link TaskType#check})이 실제로 일어나는 곳은 이 모듈뿐이다.
  *
- * <p>닫힌 어휘({@link InfraManagerClient.CallTimeoutException}/{@link InfraManagerClient.CallFailedException})만
- * {@link StepOutcome}으로 번역한다. {@link InfraManagerClient.CallInterruptedException}과 그 외 순수
- * {@code RuntimeException}(진짜 버그)은 캐치하지 않고 전파한다(fail-fast; 스케줄러가 pipeline 단위로 격리).
- * 비즈니스 실패는 예외가 아니라 {@code TaskProgress}/{@code StepOutcome} 값이다({@code docs/exception-strategy.md}).
+ * <p>{@link StepOutcome}으로 번역하는 것은 닫힌 어휘
+ * ({@link InfraManagerClient.CallTimeoutException}/{@link InfraManagerClient.CallFailedException})뿐이다.
+ * {@link InfraManagerClient.CallInterruptedException}과 그 밖의 순수 {@code RuntimeException}(진짜 버그)은
+ * 잡지 않고 그대로 전파한다(fail-fast — 스케줄러가 pipeline 단위로 격리한다). 비즈니스 실패는 예외가 아니라
+ * {@code TaskProgress}/{@code StepOutcome} 값으로 표현한다({@code docs/exception-strategy.md}).
  *
- * <p>결과 {@link StepOutcome}은 phase-B({@link StepReporter}→{@link TaskStateMachine})가 tx2 안에서
- * 태스크 전환으로 적용한다. {@code @Transactional}이 없다 — 트랜잭션 밖 실행이 이 클래스의 핵심 계약이다.
+ * <p>결과 {@link StepOutcome}은 phase-B({@link StepReporter}→{@link TaskStateMachine})가 tx2 안에서 태스크
+ * 전환으로 적용한다. {@code @Transactional}이 없다 — 트랜잭션 밖에서 도는 것이 이 클래스의 핵심 계약이다.
  */
 @Slf4j
 @Component

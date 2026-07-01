@@ -5,16 +5,15 @@ import lombok.Builder;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * application.yml의 {@code pipeline.*} 키로부터 바인딩되는 전역 태스크 데드라인 기본값 설정이다
- * ({@code @ConfigurationProperties(prefix = "pipeline")} 적용). 태스크는 이 값들 중 어느 것이든
- * 오버라이드할 수 있으며, 오버라이드하지 않은 경우 여기서 정의한 값이 적용된다.
- * (실행 케이던스 — 틱 간격, 호출별 타임아웃, 워커 풀 크기 — 는 ADR-021 러너에 속하며 여기서 설정하지 않는다.)
- * {@code @Builder}를 통한 명명 생성도 지원한다.
+ * application.yml의 {@code pipeline.*} 키에서 바인딩되는 전역 태스크 데드라인 기본값 설정이다
+ * ({@code @ConfigurationProperties(prefix = "pipeline")}). 태스크는 이 값을 얼마든지 오버라이드할 수 있고,
+ * 오버라이드하지 않으면 여기서 정한 값이 쓰인다. (실행 케이던스 — 틱 간격, 호출별 타임아웃, 워커 풀 크기 —
+ * 는 ADR-021 러너의 몫이라 여기서 설정하지 않는다.) {@code @Builder}로 명명 생성도 지원한다.
  *
- * <p>compact constructor에서 유효성을 검사한다: {@code pipeline.*} 키가 누락되거나 값이 양수가 아니면
- * 문제가 있는 키 이름과 함께 즉시 시작 실패(fail fast)가 발생한다. 또한 {@code maxFailCount}가
- * 1 미만인 경우에도 시작 시 예외가 발생한다. 이는 데드라인 계산({@code TaskSettings})에서 나중에
- * NPE나 조용한 오동작으로 나타나는 것을 방지한다.
+ * <p>compact constructor가 값을 검증한다. {@code pipeline.*} 키가 빠졌거나 값이 양수가 아니면 문제가 된
+ * 키 이름과 함께 곧바로 시작에 실패한다(fail fast). {@code maxFailCount}가 1 미만이어도 마찬가지로 시작 시
+ * 예외가 난다. 이렇게 막아 두면 데드라인 계산({@code TaskSettings})에서 나중에 NPE나 조용한 오동작으로
+ * 번지지 않는다.
  */
 @Builder
 @ConfigurationProperties(prefix = "pipeline")

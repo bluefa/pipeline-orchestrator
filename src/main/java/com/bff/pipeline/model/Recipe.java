@@ -2,7 +2,7 @@ package com.bff.pipeline.model;
 
 import java.util.List;
 
-/** 파이프라인 타입에 대한 순서가 정해진 task 체인이다(ADR-016 §2: "(타입, 프로바이더)별 코드 기본값"). */
+/** 파이프라인 타입 하나에 대응하는, 순서가 정해진 task 체인이다(ADR-016 §2: "(타입, 프로바이더)별 코드 기본값"). */
 public record Recipe(List<RecipeStep> steps) {
 
     public Recipe {

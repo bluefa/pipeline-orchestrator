@@ -18,17 +18,18 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * ADR-021 phase-B: tx2 가드 라이트백(Decision 4). pipeline 행을 {@code FOR UPDATE}로 잠그고 claim 소유권
- * (token-only: {@code claimed_by} 토큰 일치)을 검증한 뒤, phase-A({@link StepRunner})가 계산한 {@link StepOutcome}을
- * 관리 태스크에 적용한다. 외부 호출은 이 클래스에 없다.
+ * phase-B — tx2 가드 라이트백이다(Decision 4). pipeline 행을 {@code FOR UPDATE}로 잠그고 claim 소유권을
+ * 검증한 뒤(token-only: {@code claimed_by} 토큰 일치), phase-A({@link StepRunner})가 계산한 {@link StepOutcome}을
+ * 태스크에 적용한다. 외부 호출은 이 클래스에 없다.
  *
- * <p>tx2 고정 순서: (1) {@code findByIdForUpdate}로 행 잠금; (2) {@link #ownsClaim} 검증(토큰 일치) — 실패 시
- * 전체 no-op(stale straggler 차단); (3) {@code cancel_requested}를 같은 락 아래 읽기 — set이면
- * 협력적 취소를 경합 없이 관찰; (4) outcome 적용 + converge + BLOCKED 후속 승격; (5) claim 해제 + next_due_at 전진.
- * CAS/`status=:expected` 가드가 없다 — {@code FOR UPDATE} + 검증된 단일 쓰기자이므로 불필요(Decision 4/6).
+ * <p>tx2는 순서가 고정돼 있다. (1) {@code findByIdForUpdate}로 행을 잠근다; (2) {@link #ownsClaim}으로 토큰 일치를
+ * 검증한다 — 실패하면 전체 no-op으로 stale straggler를 막는다; (3) 같은 락 아래에서 {@code cancel_requested}를
+ * 읽어 협력적 취소를 경합 없이 관찰한다; (4) outcome을 적용하고 converge한 뒤 BLOCKED 후속을 승격한다;
+ * (5) claim을 해제하고 next_due_at을 전진시킨다. CAS나 {@code status=:expected} 가드는 없다 —
+ * {@code FOR UPDATE}에 검증된 단일 쓰기자가 더해지므로 필요 없다(Decision 4/6).
  *
- * <p>현재 태스크가 DONE이 되면 같은 tx2 안에서 다음 BLOCKED 후속 태스크를 READY로 승격해
- * (Decision 4 §152) 별도 claim 사이클 없이 트랜잭션 중간 불변식 위반을 제거한다.
+ * <p>현재 태스크가 DONE이 되면 같은 tx2 안에서 다음 BLOCKED 후속 태스크를 READY로 승격한다(Decision 4 §152).
+ * 별도 claim 사이클을 거치지 않으니 트랜잭션 중간에 불변식이 깨지는 상태가 남지 않는다.
  */
 @Component
 public class StepReporter {
@@ -75,17 +76,17 @@ public class StepReporter {
         });
     }
 
-    /** 행을 FOR UPDATE로 잠그고, 토큰이 일치할 때만(소유권) 돌려준다 — 불일치/부재면 empty(전체 no-op). */
+    /** 행을 FOR UPDATE로 잠근 뒤 토큰이 일치할 때만 돌려준다(소유권 확인). 불일치하거나 없으면 empty라 전체가 no-op된다. */
     private Optional<Pipeline> claimedPipeline(long pipelineId, String claimToken) {
         return pipelineRepository.findByIdForUpdate(pipelineId)
                 .filter(pipeline -> ownsClaim(pipeline, claimToken));
     }
 
     /**
-     * 소유권: 토큰 일치(ADR-021 Decision 4 — {@code WHERE claimed_by = :claim_token}). fencing은 토큰만으로
-     * 충분하다 — 재claim은 새 토큰을 발급하고 cancel(Case A)은 토큰을 지우므로, 위험한 두 경합 모두 토큰 불일치로
-     * no-op된다. lease 만료만으로는 거부하지 않는다(아무도 reclaim/cancel하지 않았다면 stale-claim 보유자가 여전히
-     * 정당한 단일 소유자이며, 그 report를 버리면 불필요한 재dispatch만 유발).
+     * 소유권은 토큰 일치로 판정한다(Decision 4 — {@code WHERE claimed_by = :claim_token}). fencing에는 토큰만으로
+     * 충분하다. 재claim은 새 토큰을 발급하고 cancel(Case A)은 토큰을 지우므로, 위험한 두 경합 모두 토큰 불일치로
+     * no-op되기 때문이다. lease 만료만으로는 거부하지 않는다 — 아무도 reclaim이나 cancel을 하지 않았다면
+     * stale-claim 보유자가 여전히 정당한 단일 소유자이고, 그 report를 버리면 불필요한 재dispatch만 생긴다.
      */
     private boolean ownsClaim(Pipeline pipeline, String claimToken) {
         return claimToken != null && claimToken.equals(pipeline.getClaimedBy());
@@ -106,8 +107,8 @@ public class StepReporter {
         } else if (chain.stream().allMatch(task -> task.getStatus() == TaskStatus.DONE)) {
             terminalize(pipeline, PipelineStatus.DONE, now);
         } else if (chain.stream().allMatch(task -> task.getStatus().isTerminal())) {
-            // 방어적 생존성 가드: 모든 task가 종료이나 all-DONE·any-FAILED가 아닌 경우(예: 전체 CANCELLED)
-            // — RUNNING pipeline이 재claim 루프에 갇히는 것을 방지한다.
+            // 방어적 생존성 가드: 모든 task가 종료 상태이지만 all-DONE도 any-FAILED도 아닌 경우다(예: 전체 CANCELLED).
+            // RUNNING pipeline이 재claim 루프에 갇히지 않게 막는다.
             terminalize(pipeline, PipelineStatus.CANCELLED, now);
         }
     }
@@ -133,7 +134,7 @@ public class StepReporter {
         pipeline.setClaimedBy(null);
         pipeline.setClaimedUntil(null);
         if (pipeline.getStatus() == PipelineStatus.RUNNING) {
-            // Optional.map(getNextCheckAt)는 nextCheckAt이 null이면 empty가 되므로 orElseGet이 now로 메운다.
+            // nextCheckAt이 null이면 map 결과가 empty가 되므로, orElseGet이 now로 메운다.
             pipeline.setNextDueAt(currentTask(chain).map(Task::getNextCheckAt).orElseGet(clock::instant));
         }
     }

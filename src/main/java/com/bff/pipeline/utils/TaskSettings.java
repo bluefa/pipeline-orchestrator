@@ -6,14 +6,13 @@ import java.time.Clock;
 import java.time.Duration;
 
 /**
- * 태스크별 파라미터 해석 및 데드라인 계산을 담당하는 순수 정적 유틸리티 클래스이다.
- * 모든 메서드는 (task, settings) → value 형태로 상태를 갖지 않으므로,
- * {@code TaskStateMachine} 외부에 위치하며 빈(bean)으로 등록할 필요가 없다.
- * 태스크 자체의 오버라이드 값이 우선 적용되며, 없을 경우 전역 {@link PipelineSettings} 기본값이 사용된다.
+ * 태스크별 파라미터 해석과 데드라인 계산을 맡는 순수 정적 유틸리티 클래스다. 모든 메서드가
+ * (task, settings) → value 꼴로 상태를 갖지 않으므로 {@code TaskStateMachine} 바깥에 두고 빈으로 등록하지
+ * 않는다. 태스크 자체의 오버라이드 값이 먼저고, 없으면 전역 {@link PipelineSettings} 기본값을 쓴다.
  *
- * <p>{@code isPastDeadline}은 현재 attempt의 {@code startedAt}을 기준으로 태스크가 데드라인을
- * 초과하였는지 판별한다. 재시도는 {@code startedAt}을 초기화하는 새로운 실행이므로(ADR-016 §6),
- * 실행 타임아웃(execution-timeout)과 TTL은 태스크 전체 생명주기가 아닌 각 attempt를 기준으로 적용된다.
+ * <p>{@code isPastDeadline}은 현재 attempt의 {@code startedAt}을 기준으로 데드라인을 넘겼는지 판별한다.
+ * 재시도는 {@code startedAt}을 새로 찍는 별개의 실행이므로(ADR-016 §6), 실행 타임아웃(execution-timeout)과
+ * TTL은 태스크 전체 생명주기가 아니라 attempt마다 따로 적용된다.
  */
 public final class TaskSettings {
 

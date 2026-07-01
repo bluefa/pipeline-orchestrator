@@ -20,18 +20,18 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
- * task의 재시도 시도(retry attempt)당 하나의 행(row)을 저장하는 관찰(observation) 테이블이다(ADR-016 §3).
- * 시도가 시작되는 순간 {@code attemptNumber = task.failCount + 1}이므로, 두 번 재시도한 후 실패한 task는
- * 세 개의 행(1, 2, 3)을 남긴다. {@code status}는 시도의 결과(outcome)이다: 실행 중에는 IN_PROGRESS이며,
- * 이후 DONE, FAILED, 또는 CANCELLED가 된다(cancel 시점에 열려 있던 시도는 CANCELLED로 종료된다).
+ * task의 재시도 시도(retry attempt)마다 행 하나를 쌓는 관찰(observation) 테이블이다(ADR-016 §3). 시도가 시작되는
+ * 순간 {@code attemptNumber = task.failCount + 1}이므로, 두 번 재시도한 끝에 실패한 task는 행 세 개(1, 2, 3)를
+ * 남긴다. {@code status}는 그 시도의 결과(outcome)다 — 실행 중에는 IN_PROGRESS, 끝나면 DONE·FAILED·CANCELLED
+ * 중 하나가 된다(cancel 시점에 열려 있던 시도는 CANCELLED로 닫힌다).
  *
- * <p>{@code response}는 dispatch가 반환한 <b>원시 외부 응답(text)</b>이다(ADR-016 ed97ec0 §3/§5). 엔진은 이 텍스트의
- * 형식을 알지 못한 채 그대로 저장만 하며, 각 task 종류({@code TaskType})가 완료 판정 시 자기 {@code response}를
- * 자기 형식으로 역직렬화한다(응답 스키마는 해당 task type의 사적 계약이다). 완료 판정은 도메인 컬럼이 아니라 이
- * <b>최신 attempt 행의 {@code response}</b>를 입력으로 하는
- * {@code check(attempt, task)}로 이뤄진다 — 엔진은 관찰 테이블을 오직 완료 목적으로, 그것도 최신 행만 읽는다
- * (§3 invariant 1). claim/스케줄링/pipeline 전이는 여전히 {@code pipeline}/{@code task}만 본다. 최신 {@code response}가
- * 유실되면(dispatch 후 기록 실패) 정확성이 깨지지 않는다: per-task {@code executionTimeout}이 만료되어 멱등 재dispatch된다.
+ * <p>{@code response}는 dispatch가 돌려준 <b>원시 외부 응답(text)</b>이다(ADR-016 ed97ec0 §3/§5). 엔진은 이 텍스트의
+ * 형식을 모른 채 그대로 저장만 하고, 완료 판정 때 각 task 종류({@code TaskType})가 자기 {@code response}를 자기
+ * 형식으로 역직렬화한다(응답 스키마는 그 task type만의 사적 계약이다). 완료 판정은 도메인 컬럼이 아니라 이
+ * <b>최신 attempt 행의 {@code response}</b>를 입력으로 삼는 {@code check(attempt, task)}가 내린다 — 엔진은 관찰
+ * 테이블을 오직 완료 판정에만, 그것도 최신 행 하나만 읽는다(§3 invariant 1). claim·스케줄링·pipeline 전이는 여전히
+ * {@code pipeline}/{@code task}만 본다. 최신 {@code response}가 날아가도(dispatch 후 기록 실패) 정확성은 무너지지
+ * 않는다 — per-task {@code executionTimeout}이 만료되면 멱등하게 재dispatch되기 때문이다.
  */
 @Entity
 @Table(

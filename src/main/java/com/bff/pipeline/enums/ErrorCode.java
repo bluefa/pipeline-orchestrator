@@ -1,30 +1,29 @@
 package com.bff.pipeline.enums;
 
 /**
- * 태스크 실패 원인을 나타내는 정식 열거형으로, 데이터베이스에 영속된다(ADR-016 §6).
- * 각 값은 고유한 원인을 나타내며 압축된 버킷이 아니다. 이는 비즈니스 실패의 "메시지" 형태로,
- * 실패한 태스크는 예외를 던지는 대신 자신의 행(row)에 {@code ErrorCode}를 기록한다
- * (자세한 내용은 {@code docs/exception-strategy.md} 참조).
+ * 태스크 실패 원인을 담는 정식 열거형으로, DB에 영속된다(ADR-016 §6). 각 값은 하나의 구체적 원인이지
+ * 여러 원인을 뭉뚱그린 버킷이 아니다. 비즈니스 실패를 표현하는 "메시지"에 해당하며, 태스크가 실패하면
+ * 예외를 던지는 대신 자기 행(row)에 {@code ErrorCode}를 남긴다(자세한 내용은
+ * {@code docs/exception-strategy.md} 참조).
  *
- * <p>원인별 의미: {@code JOB_FAILED} — TERRAFORM_JOB 폴링 결과로 해당 잡이 FAILED 상태임을 보고받은 경우;
- * {@code EXECUTION_TIMEOUT} — TERRAFORM_JOB이 태스크별 실행 타임아웃을 초과하여 실행된 경우;
- * {@code TIME_TO_LIVE_EXPIRED} — CONDITION_CHECK가 TTL 내에 충족되지 않은 경우;
- * {@code CHECK_ERROR} — dispatch/poll 호출이 오류를 반환한 경우(잡 실패가 아닌 읽기 실패);
- * {@code CALL_TIMEOUT} — 단일 InfraManager 호출이 호출별 타임아웃을 초과한 경우;
- * {@code UNKNOWN_TASK} — 태스크에 저장된 이름에 대응하는 {@code TaskType}이 등록되어 있지 않아
- * 더 이상 정의된 태스크가 아닌 경우.
+ * <p>원인별 의미: {@code JOB_FAILED} — TERRAFORM_JOB 폴링에서 잡이 FAILED로 보고됨.
+ * {@code EXECUTION_TIMEOUT} — TERRAFORM_JOB이 태스크별 실행 타임아웃을 넘김.
+ * {@code TIME_TO_LIVE_EXPIRED} — CONDITION_CHECK가 TTL 안에 충족되지 못함.
+ * {@code CHECK_ERROR} — dispatch/poll 호출이 오류를 반환(잡 실패가 아닌 읽기 실패).
+ * {@code CALL_TIMEOUT} — InfraManager 호출 한 번이 호출별 타임아웃을 넘김.
+ * {@code UNKNOWN_TASK} — 태스크에 저장된 이름에 맞는 {@code TaskType}이 등록돼 있지 않아 더는 정의된 태스크가 아님.
  */
 public enum ErrorCode {
-    /** TERRAFORM_JOB 폴링에서 잡이 FAILED 상태로 보고된 경우. */
+    /** TERRAFORM_JOB 폴링에서 잡이 FAILED로 보고된 경우. */
     JOB_FAILED,
-    /** TERRAFORM_JOB이 태스크별 실행 타임아웃을 초과한 경우. */
+    /** TERRAFORM_JOB이 태스크별 실행 타임아웃을 넘긴 경우. */
     EXECUTION_TIMEOUT,
-    /** CONDITION_CHECK가 TTL 내에 충족되지 않은 경우. */
+    /** CONDITION_CHECK가 TTL 안에 충족되지 못한 경우. */
     TIME_TO_LIVE_EXPIRED,
     /** dispatch/poll 호출이 오류를 반환한 경우(잡 실패가 아닌 읽기 실패). */
     CHECK_ERROR,
-    /** 단일 InfraManager 호출이 호출별 타임아웃을 초과한 경우. */
+    /** InfraManager 호출 한 번이 호출별 타임아웃을 넘긴 경우. */
     CALL_TIMEOUT,
-    /** 저장된 태스크 이름에 대응하는 {@code TaskType}이 등록되지 않은 경우. */
+    /** 저장된 태스크 이름에 맞는 {@code TaskType}이 등록돼 있지 않은 경우. */
     UNKNOWN_TASK
 }

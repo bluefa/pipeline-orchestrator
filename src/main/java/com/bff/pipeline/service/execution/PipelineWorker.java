@@ -16,13 +16,13 @@ import java.util.Optional;
 import org.springframework.stereotype.Component;
 
 /**
- * ADR-021 한 사이클의 조립자: claim(tx1, {@link PipelineClaimer}) 이후 외부호출(phase-A,
- * {@link StepRunner}) → report(tx2, {@link StepReporter})를 잇는다. <b>자신은 트랜잭션을 열지 않는다</b> —
- * 외부호출이 어떤 행 락도 보유하지 않게 하기 위함(Decision 3). 트랜잭션은 pipelineClaimer/reporter에만 있다.
+ * 한 실행 사이클을 조립한다: claim(tx1, {@link PipelineClaimer}) → 외부 호출(phase-A, {@link StepRunner})
+ * → report(tx2, {@link StepReporter})를 잇는다. <b>자신은 트랜잭션을 열지 않는다</b> — 외부 호출이 어떤
+ * 행 락도 쥐고 있지 않게 하기 위해서다(Decision 3). 트랜잭션은 pipelineClaimer와 reporter에만 있다.
  *
- * <p>cancel은 두 안전지점에서 관찰된다: claim 직후({@link #loadStepContext}에서 {@code cancel_requested}
- * 또는 현재 task 없음 → 외부호출 생략하고 report로 수렴/해제) 그리고 tx2 안({@link StepReporter#report}).
- * TF dispatch 단계인데 slot이 없으면 외부호출 대신 reschedule로 claim을 해제한다(Decision 7).
+ * <p>cancel은 두 안전지점에서 관찰한다. 하나는 claim 직후로, {@link #loadStepContext}에서 {@code cancel_requested}이거나
+ * 현재 task가 없으면 외부 호출을 건너뛰고 report로 넘어가 수렴·해제한다. 다른 하나는 tx2 안이다({@link StepReporter#report}).
+ * TF dispatch 단계인데 slot이 비어 있지 않으면 외부 호출 대신 reschedule로 claim을 놓는다(Decision 7).
  */
 @Component
 public class PipelineWorker {
@@ -50,7 +50,7 @@ public class PipelineWorker {
         this.executionSettings = executionSettings;
     }
 
-    /** 편의: 한 건 claim 후 처리하고, 처리한 pipeline id를 반환한다(없으면 empty). */
+    /** 편의 메서드: 한 건을 claim해 처리하고 그 pipeline id를 반환한다. 잡을 게 없으면 empty. */
     public Optional<Long> pollOnce() {
         return pipelineClaimer.claimOneDue().map(claim -> {
             process(claim);

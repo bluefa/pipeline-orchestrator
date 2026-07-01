@@ -16,16 +16,15 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
- * 하나의 시도(attempt)에 대한 폴링 단계(poll-phase) 요약 정보를 나타내는 행(row)이다(ADR-016 §3). 시도당 최대
- * 하나의 행(1:0..1)이며, <b>제자리에서 갱신(updated in place)</b>된다. 따라서 행 수는 폴(poll) 횟수가 아닌
- * 시도 횟수에 따라 증가한다. 쓰기 전용 관찰(write-only observation) 테이블로, 엔진은 이를 절대 읽지 않는다.
+ * 한 시도(attempt)의 폴링 단계(poll-phase)를 요약하는 행이다(ADR-016 §3). 시도당 행은 최대 하나(1:0..1)이고
+ * <b>제자리에서 갱신(updated in place)</b>된다. 그래서 행 수는 폴(poll) 횟수가 아니라 시도 횟수만큼 늘어난다.
+ * 쓰기 전용 관찰(write-only observation) 테이블이라 엔진은 결코 읽지 않는다.
  *
- * <p>{@code callCount}는 해당 시도의 진행 중(in-progress) 또는 오류(errored) 폴 관측 횟수를 집계한다(종료
- * 결과 자체는 {@link TaskAttempt}에 저장된다). 하위 카운터들은 근본 원인 분석 질문에 답한다: TTL 만료 조건이
- * NOT_MET인지 아니면 API 실패(API-failed)인지, 그리고 얼마나 많은 폴이 반복(churned)되었는지.
- * {@code lastExternalStatus}는 마지막 폴의 자유 형식 디버그 레이블(예: "RUNNING", "NOT_MET")로,
- * 로직에는 절대 사용되지 않는다. {@code lastResponseCode}/{@code lastResponseSummary}는 향후 HTTP 어댑터에
- * 의해 채워질 필드이다.
+ * <p>{@code callCount}는 그 시도에서 관측한 진행 중(in-progress)·오류(errored) 폴 횟수를 센다(종료 결과 자체는
+ * {@link TaskAttempt}에 남는다). 하위 카운터들은 근본 원인 분석 질문에 답한다 — TTL 만료 조건이 NOT_MET이었는지
+ * 아니면 API 실패(API-failed)였는지, 그리고 폴이 얼마나 헛돌았는지(churned). {@code lastExternalStatus}는 마지막
+ * 폴의 자유 형식 디버그 레이블(예: "RUNNING", "NOT_MET")로, 로직에는 절대 쓰지 않는다.
+ * {@code lastResponseCode}/{@code lastResponseSummary}는 앞으로 HTTP 어댑터가 채울 필드다.
  */
 @Entity
 @Table(

@@ -16,13 +16,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 새 실행 하나를 단일 트랜잭션 안에 삽입한다 — {@code active_target}이 설정된 파이프라인과
- * 태스크 체인을 함께 생성한다. 첫 번째 태스크는 READY 상태로 시작하고, 나머지는 BLOCKED 상태로
- * 시작하여 선행 태스크가 완료될 때마다 하나씩 언블로킹된다 (ADR-016 §2).
+ * 새 실행 하나를 단일 트랜잭션 안에서 삽입한다 — {@code active_target}이 설정된 파이프라인과 태스크 체인을 함께 만든다.
+ * 첫 태스크는 READY로 출발하고 나머지는 BLOCKED로 두었다가, 선행 태스크가 끝날 때마다 하나씩 언블로킹한다(ADR-016 §2).
  *
- * <p>파이프라인에 대해 {@code saveAndFlush}를 사용하면 {@code active_target} 유니크 제약 위반이
- * 지연된 커밋이 아닌 이 지점에서 즉시 표면화되므로, {@link PipelineCreator}가 이를 캐치하여
- * 복구할 수 있다.
+ * <p>파이프라인을 {@code saveAndFlush}로 저장하면 {@code active_target} 유니크 제약 위반이 커밋 시점으로 미뤄지지 않고
+ * 바로 이 지점에서 드러난다. 그래야 {@link PipelineCreator}가 이를 잡아 복구할 수 있다.
  */
 @Component
 public class PipelineInserter {
@@ -49,7 +47,7 @@ public class PipelineInserter {
                 .activeTarget(target)
                 .createdAt(now)
                 .lastActivityAt(now)
-                .nextDueAt(now)            // ADR-021 Decision 4: 생성 시 즉시 claim 가능하도록 시딩(없으면 영원히 unclaimed)
+                .nextDueAt(now)            // ADR-021 Decision 4: 생성 즉시 claim되도록 시딩한다(비워 두면 영영 unclaimed로 남는다)
                 .cancelRequested(false)
                 .build());
         taskRepository.saveAll(buildChain(pipeline.getId(), recipes.forType(type).steps(), now));
