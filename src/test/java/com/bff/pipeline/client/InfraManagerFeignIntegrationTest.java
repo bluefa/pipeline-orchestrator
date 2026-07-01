@@ -54,11 +54,11 @@ class InfraManagerFeignIntegrationTest {
 
     @Test
     void happyPathMapsTheStatusBody() {
-        wireMock.stubFor(get(urlPathEqualTo("/infra/terraform/jobs/job-7"))
+        wireMock.stubFor(get(urlPathEqualTo("/infra/network/apply/jobs/job-7"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json")
                         .withBody("{\"finished\":true,\"succeeded\":true}")));
 
-        assertThat(adapter.terraformJobStatus("job-7")).isEqualTo(TerraformPoll.success());
+        assertThat(adapter.terraformJobStatus("job-7", TaskOperation.APPLY_NETWORK)).isEqualTo(TerraformPoll.success());
     }
 
     @Test
@@ -82,43 +82,43 @@ class InfraManagerFeignIntegrationTest {
 
     @Test
     void serverErrorBecomesACallFailure() {
-        wireMock.stubFor(get(urlPathEqualTo("/infra/terraform/jobs/job-7"))
+        wireMock.stubFor(get(urlPathEqualTo("/infra/network/apply/jobs/job-7"))
                 .willReturn(aResponse().withStatus(503)));
 
-        assertThatThrownBy(() -> adapter.terraformJobStatus("job-7"))
+        assertThatThrownBy(() -> adapter.terraformJobStatus("job-7", TaskOperation.APPLY_NETWORK))
                 .isInstanceOf(InfraManagerClient.CallFailedException.class);
     }
 
     @Test
     void malformedBodyBecomesACallFailure() {
-        wireMock.stubFor(get(urlPathEqualTo("/infra/terraform/jobs/job-7"))
+        wireMock.stubFor(get(urlPathEqualTo("/infra/network/apply/jobs/job-7"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json")
                         .withBody("not-json")));
 
-        assertThatThrownBy(() -> adapter.terraformJobStatus("job-7"))
+        assertThatThrownBy(() -> adapter.terraformJobStatus("job-7", TaskOperation.APPLY_NETWORK))
                 .isInstanceOf(InfraManagerClient.CallFailedException.class);
     }
 
     @Test
     void readTimeoutBecomesACallFailure() {
-        wireMock.stubFor(get(urlPathEqualTo("/infra/terraform/jobs/job-7"))
+        wireMock.stubFor(get(urlPathEqualTo("/infra/network/apply/jobs/job-7"))
                 .willReturn(aResponse().withFixedDelay(1000)
                         .withHeader("Content-Type", "application/json")
                         .withBody("{\"finished\":true,\"succeeded\":true}")));
 
         // 이 클라이언트의 readTimeout은 500ms(@BeforeEach) — 1000ms 지연 응답은 RetryableException → CallFailed 로 귀결.
-        assertThatThrownBy(() -> adapter.terraformJobStatus("job-7"))
+        assertThatThrownBy(() -> adapter.terraformJobStatus("job-7", TaskOperation.APPLY_NETWORK))
                 .isInstanceOf(InfraManagerClient.CallFailedException.class);
     }
 
     @Test
     void sendsBearerAuthorizationHeader() {
-        wireMock.stubFor(get(urlPathEqualTo("/infra/terraform/jobs/job-7"))
+        wireMock.stubFor(get(urlPathEqualTo("/infra/network/apply/jobs/job-7"))
                 .withHeader("Authorization", matching("Bearer test-token"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json")
                         .withBody("{\"finished\":false,\"succeeded\":false}")));
 
-        assertThat(adapter.terraformJobStatus("job-7")).isEqualTo(TerraformPoll.running());
+        assertThat(adapter.terraformJobStatus("job-7", TaskOperation.APPLY_NETWORK)).isEqualTo(TerraformPoll.running());
     }
 
     private InfraManagerFeignClient feignClient(String baseUrl, int readTimeoutMillis) {

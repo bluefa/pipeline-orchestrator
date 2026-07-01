@@ -44,14 +44,14 @@ class InfraManagerFeignAdapterTest {
     void mapsStatusResponseToTerraformPoll() {
         InfraManagerFeignAdapter adapter = adapter(stub().withStatus(new TerraformStatusResponse(true, true)));
 
-        assertThat(adapter.terraformJobStatus("job-1")).isEqualTo(TerraformPoll.success());
+        assertThat(adapter.terraformJobStatus("job-1", TaskOperation.APPLY_NETWORK)).isEqualTo(TerraformPoll.success());
     }
 
     @Test
     void treatsAMissingStatusAsACallFailure() {
         InfraManagerFeignAdapter adapter = adapter(stub().withStatus(null));
 
-        assertThatThrownBy(() -> adapter.terraformJobStatus("job-1"))
+        assertThatThrownBy(() -> adapter.terraformJobStatus("job-1", TaskOperation.APPLY_NETWORK))
                 .isInstanceOf(InfraManagerClient.CallFailedException.class)
                 .hasMessageContaining("job-1");
     }
@@ -61,7 +61,7 @@ class InfraManagerFeignAdapterTest {
         // {finished:false, succeeded:true}는 TerraformPoll 불변식 위반 → 우리 버그가 아니라 쓸 수 없는 외부 응답.
         InfraManagerFeignAdapter adapter = adapter(stub().withStatus(new TerraformStatusResponse(false, true)));
 
-        assertThatThrownBy(() -> adapter.terraformJobStatus("job-9"))
+        assertThatThrownBy(() -> adapter.terraformJobStatus("job-9", TaskOperation.APPLY_NETWORK))
                 .isInstanceOf(InfraManagerClient.CallFailedException.class)
                 .hasMessageContaining("job-9");
     }
@@ -71,7 +71,7 @@ class InfraManagerFeignAdapterTest {
         // 누락 필드 응답(예: {})은 Boolean이 null로 디코딩됨 → 조용히 false로 처리하지 않고 CallFailed.
         InfraManagerFeignAdapter adapter = adapter(stub().withStatus(new TerraformStatusResponse(null, true)));
 
-        assertThatThrownBy(() -> adapter.terraformJobStatus("job-1"))
+        assertThatThrownBy(() -> adapter.terraformJobStatus("job-1", TaskOperation.APPLY_NETWORK))
                 .isInstanceOf(InfraManagerClient.CallFailedException.class);
     }
 
@@ -132,7 +132,8 @@ class InfraManagerFeignAdapterTest {
 
         @Override public TerraformDispatchResponse applyNetwork(String target) { return dispatch; }
         @Override public TerraformDispatchResponse destroyNetwork(String target) { return dispatch; }
-        @Override public TerraformStatusResponse terraformJobStatus(String jobId) { return status; }
+        @Override public TerraformStatusResponse applyJobStatus(String jobId) { return status; }
+        @Override public TerraformStatusResponse destroyJobStatus(String jobId) { return status; }
         @Override public ConditionResponse networkReady(String target) { return condition; }
         @Override public CloudProviderResponse cloudProvider(String target) { return provider; }
     }

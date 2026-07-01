@@ -34,9 +34,13 @@ public interface InfraManagerFeignClient {
     @PostMapping("/infra/network/destroy")
     TerraformDispatchResponse destroyNetwork(@RequestParam("target") String target);
 
-    /** terraform 잡 상태를 job id로 조회한다. */
-    @GetMapping("/infra/terraform/jobs/{jobId}")
-    TerraformStatusResponse terraformJobStatus(@PathVariable("jobId") String jobId);
+    /** APPLY_NETWORK 잡 상태를 job id로 조회한다. */
+    @GetMapping("/infra/network/apply/jobs/{jobId}")
+    TerraformStatusResponse applyJobStatus(@PathVariable("jobId") String jobId);
+
+    /** DESTROY_NETWORK 잡 상태를 job id로 조회한다. */
+    @GetMapping("/infra/network/destroy/jobs/{jobId}")
+    TerraformStatusResponse destroyJobStatus(@PathVariable("jobId") String jobId);
 
     // ── CONDITION_CHECK: operation마다 다른 실제 API ──
 

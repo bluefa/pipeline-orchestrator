@@ -93,7 +93,8 @@ public class TerraformTask implements TaskType {
                     task.getId(), attempt.getAttemptNumber());
             return TaskProgress.failedTerminal(ErrorCode.CHECK_ERROR);
         }
-        List<TerraformJob> jobs = jobIds.stream().map(jobId -> (TerraformJob) new JobIdTerraformJob(jobId)).toList();
+        List<TerraformJob> jobs = jobIds.stream()
+                .map(jobId -> (TerraformJob) new JobIdTerraformJob(jobId, task.getOperation())).toList();
         return aggregate(task, jobs);
     }
 

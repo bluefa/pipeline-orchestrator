@@ -17,14 +17,14 @@ class JobIdTerraformJobTest {
     @Test
     void pollStatusReturnsTheInfraStatusForItsJobId() {
         TerraformPoll expected = TerraformPoll.success();
-        TerraformJob job = new JobIdTerraformJob("job-7");
+        TerraformJob job = new JobIdTerraformJob("job-7", TaskOperation.APPLY_NETWORK);
 
         assertThat(job.pollStatus(infraReturning("job-7", expected))).isEqualTo(expected);
     }
 
     @Test
     void pollStatusTreatsAMissingStatusAsACallFailure() {
-        TerraformJob job = new JobIdTerraformJob("job-7");
+        TerraformJob job = new JobIdTerraformJob("job-7", TaskOperation.APPLY_NETWORK);
 
         assertThatThrownBy(() -> job.pollStatus(infraReturning("job-7", null)))
                 .isInstanceOf(InfraManagerClient.CallFailedException.class)
@@ -39,7 +39,7 @@ class JobIdTerraformJobTest {
             }
 
             @Override
-            public TerraformPoll terraformJobStatus(String jobId) {
+            public TerraformPoll terraformJobStatus(String jobId, TaskOperation operation) {
                 assertThat(jobId).isEqualTo(expectedJobId);
                 return status;
             }

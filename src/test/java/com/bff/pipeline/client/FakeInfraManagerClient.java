@@ -53,7 +53,7 @@ public final class FakeInfraManagerClient implements InfraManagerClient {
     }
 
     @Override
-    public TerraformPoll terraformJobStatus(String jobId) {
+    public TerraformPoll terraformJobStatus(String jobId, TaskOperation operation) {
         return poll.run();
     }
 

@@ -53,8 +53,8 @@ public class TimeBoundedInfraManagerClient implements InfraManagerClient {
     }
 
     @Override
-    public TerraformPoll terraformJobStatus(String jobId) {
-        return withTimeout(() -> delegate.terraformJobStatus(jobId));
+    public TerraformPoll terraformJobStatus(String jobId, TaskOperation operation) {
+        return withTimeout(() -> delegate.terraformJobStatus(jobId, operation));
     }
 
     @Override

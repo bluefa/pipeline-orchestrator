@@ -58,8 +58,8 @@ public class InfraManagerFeignAdapter implements InfraManagerClient {
     }
 
     @Override
-    public TerraformPoll terraformJobStatus(String jobId) {
-        TerraformStatusResponse response = translating(() -> feign.terraformJobStatus(jobId));
+    public TerraformPoll terraformJobStatus(String jobId, TaskOperation operation) {
+        TerraformStatusResponse response = translating(() -> statusApiFor(operation, jobId));
         if (response == null || response.finished() == null || response.succeeded() == null) {
             throw new CallFailedException("InfraManager returned an incomplete status for job " + jobId);
         }
@@ -69,6 +69,15 @@ public class InfraManagerFeignAdapter implements InfraManagerClient {
             // 불가능한 조합(!finished && succeeded)은 쓸 수 없는 외부 응답이지 우리 버그가 아니다 → 닫힌 어휘로.
             throw new CallFailedException("InfraManager returned an impossible poll state for job " + jobId);
         }
+    }
+
+    /** operation → 구체 terraform 상태 조회 API 라우팅. 매핑 없는 operation은 설정 버그이므로 fail-fast. */
+    private TerraformStatusResponse statusApiFor(TaskOperation operation, String jobId) {
+        return switch (operation) {
+            case APPLY_NETWORK -> feign.applyJobStatus(jobId);
+            case DESTROY_NETWORK -> feign.destroyJobStatus(jobId);
+            default -> throw new IllegalStateException("no terraform status API mapped for operation " + operation);
+        };
     }
 
     @Override

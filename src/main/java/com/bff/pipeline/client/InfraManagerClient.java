@@ -31,8 +31,11 @@ public interface InfraManagerClient {
      */
     String runTerraform(String target, TaskOperation operation);
 
-    /** job id 핸들로 Terraform 잡의 상태를 읽는다. */
-    TerraformPoll terraformJobStatus(String jobId);
+    /**
+     * job id 핸들로 Terraform 잡의 상태를 읽는다. 상태 조회 API 경로가 operation(apply/destroy)마다 다르므로
+     * operation을 함께 받아 어느 구체 API로 갈지 결정한다.
+     */
+    TerraformPoll terraformJobStatus(String jobId, TaskOperation operation);
 
     /** operation의 조건이 충족됐는지 한 번 확인한다. */
     boolean checkCondition(String target, TaskOperation operation);

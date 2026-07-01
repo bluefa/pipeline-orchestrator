@@ -88,14 +88,15 @@ per-call 타임아웃은 데코레이터의 `apiCallTimeout`이 authoritative다
 | `runTerraform(target, op)` | `APPLY_NETWORK` | `applyNetwork` → `POST /infra/network/apply?target=` | `{ "jobIds":[...] }` |
 | `runTerraform(target, op)` | `DESTROY_NETWORK` | `destroyNetwork` → `POST /infra/network/destroy?target=` | `{ "jobIds":[...] }` |
 | `checkCondition(target, op)` | `NETWORK_READY` | `networkReady` → `GET /infra/network/ready?target=` | `{ "met":bool }` |
-| `terraformJobStatus(jobId)` | — | `terraformJobStatus` → `GET /infra/terraform/jobs/{jobId}` | `{ "finished":bool,"succeeded":bool }` |
+| `terraformJobStatus(jobId, op)` | `APPLY_NETWORK` | `applyJobStatus` → `GET /infra/network/apply/jobs/{jobId}` | `{ "finished":bool,"succeeded":bool }` |
+| `terraformJobStatus(jobId, op)` | `DESTROY_NETWORK` | `destroyJobStatus` → `GET /infra/network/destroy/jobs/{jobId}` | `{ "finished":bool,"succeeded":bool }` |
 | `cloudProvider(target)` | — | `cloudProvider` → `GET /infra/targets/{target}/cloud-provider` | `{ "provider":"AWS" }` |
 
 operation이 늘면(예: 18개 계획) Feign 구체 메서드 + 어댑터 switch case가 함께 는다 — operation마다 다른 API라는 현실을 그대로 반영한 것.
 
 > ⚠️ **파서 일치:** `TerraformTask.check`는 `attempt.response`를 `List<String>` JSON, 즉 정확히 `["job-1", ...]`로 역직렬화한다(`TypeReference<List<String>>`). 어댑터는 wire DTO `{jobIds:[...]}`를 받되 **`jobIds` 배열만 JSON 문자열로 재직렬화**해 넘긴다.
 
-> ❓ **미해결 — terraform poll 경로:** 현재 `terraformJobStatus(jobId)`는 job id 하나만 받아 단일 경로로 조회한다. 만약 terraform 잡 상태 조회 API도 operation(apply/destroy)마다 경로가 다르다면, 도메인 인터페이스가 poll 시점에 operation을 함께 넘겨야 한다(`terraformJobStatus`에 operation 인자 추가 = 도메인 변경). 아래 D-6 참조.
+> ✅ **terraform poll 경로도 operation별로 다르다(D-6 확정).** `terraformJobStatus`에 operation 인자를 추가했고(도메인 변경), `JobIdTerraformJob`이 자신의 operation을 지녀 poll 시 전달한다(`TerraformTask.check`가 `task.getOperation()` 주입). 어댑터가 operation→구체 상태 API(`applyJobStatus`/`destroyJobStatus`)로 라우팅.
 
 실제 경로/DTO 확정 시 `@FeignClient` 구체 메서드 + wire DTO만 조정한다.
 
@@ -191,7 +192,13 @@ RequestInterceptor infraManagerAuth(@Value("${infra-manager.auth-token}") String
 - `pom.xml` — spring-cloud BOM + openfeign starter
 - `application.yml` — `infra-manager` 블록
 
-**최소 변경**: `TimeBoundedInfraManagerClient`는 조건 애너테이션 1줄만 교체(`@ConditionalOnBean`→`@ConditionalOnProperty`, §8). `InfraManagerClient` 인터페이스, 도메인/실행 계층(`StepRunner`/`PipelineWorker`/…), 기존 테스트·fake는 무변경.
+**도메인 변경(operation 라우팅 위해 최소 확장)**:
+- `InfraManagerClient.terraformJobStatus`에 `TaskOperation` 인자 추가(poll 경로가 operation별이라, D-6).
+- `JobIdTerraformJob`이 operation 보유, `TerraformTask.check`가 `task.getOperation()` 주입.
+- `TimeBoundedInfraManagerClient`: poll 시그니처 반영 + 조건 애너테이션 1줄 교체(`@ConditionalOnBean`→`@ConditionalOnProperty`, §8).
+- fake(`FakeInfraManagerClient`)와 관련 테스트의 poll 시그니처 갱신.
+
+`StepRunner`/`PipelineWorker` 등 실행 계층은 무변경.
 
 ---
 
@@ -204,4 +211,4 @@ RequestInterceptor infraManagerAuth(@Value("${infra-manager.auth-token}") String
 - **D-5 실패 세부 영속:** 신규 컬럼 없음(§6).
 - **번역 위치:** delegate 어댑터의 `catch(FeignException)` 한 경계(RetryableException 포함). 타임아웃/인터럽트는 데코레이터 소유.
 - **operation 라우팅:** operation→구체 API는 어댑터 `switch`가 소유(§5). FeignClient는 operation별 구체 메서드만.
-- **D-6 (미해결):** terraform poll(`terraformJobStatus`) 경로가 operation마다 다른가? 다르면 도메인 인터페이스에 operation을 넘겨야 함(도메인 변경). 사용자 확인 필요.
+- **D-6 (확정):** terraform poll 경로도 operation마다 다름 → `terraformJobStatus(jobId, operation)`로 도메인 인터페이스 확장. `JobIdTerraformJob`이 operation 보유, `TerraformTask.check`가 주입. 어댑터가 `applyJobStatus`/`destroyJobStatus`로 라우팅.
