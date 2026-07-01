@@ -79,20 +79,20 @@ per-call 타임아웃은 데코레이터의 `apiCallTimeout`이 authoritative다
 
 ## 5. HTTP 계약 — operation마다 실제 API가 다르다
 
-**핵심 원칙:** `operation`은 path 변수 하나로 뭉갤 값이 아니다. operation마다 호출할 **InfraManager 실제 API 자체가 다르다.** 그래서:
-- `@FeignClient`는 operation별 **구체 API 메서드**를 각각 노출한다(`applyNetwork`, `destroyNetwork`, `networkReady`, …). path 템플릿에 `{operation}`을 끼우지 않는다.
-- **operation → 어느 구체 API를 부를지 라우팅(switch)은 어댑터가 소유한다** — 이게 delegate의 "translating" 책임이다. 매핑 없는 operation은 설정 버그이므로 `IllegalStateException`으로 fail-fast.
+**핵심 원칙:** `operation`은 path 변수 하나로 뭉갤 값이 아니다. operation마다 호출할 **InfraManager 실제 API도, 응답 형태(shape)도 다르다.** 그래서:
+- `@FeignClient`는 operation별 **구체 API 메서드 + 전용 응답 DTO**를 각각 노출한다(`applyNetwork`→`ApplyNetworkResponse`, `destroyNetwork`→`DestroyNetworkResponse`, …). path 템플릿에 `{operation}`을 끼우지 않고, 응답 DTO도 operation 간 공유하지 않는다.
+- **operation → 구체 API 라우팅 + operation별 응답 → 도메인 공통 형식 정규화는 어댑터가 소유한다** — 이게 delegate의 "translating" 책임이다. 매핑 없는 operation은 설정 버그이므로 `IllegalStateException`으로 fail-fast.
 
-| 도메인 메서드 | operation | Feign 구체 메서드 → HTTP (가정) | 응답 wire DTO |
-|---|---|---|---|
-| `runTerraform(target, op)` | `APPLY_NETWORK` | `applyNetwork` → `POST /infra/network/apply?target=` | `{ "jobIds":[...] }` |
-| `runTerraform(target, op)` | `DESTROY_NETWORK` | `destroyNetwork` → `POST /infra/network/destroy?target=` | `{ "jobIds":[...] }` |
-| `checkCondition(target, op)` | `NETWORK_READY` | `networkReady` → `GET /infra/network/ready?target=` | `{ "met":bool }` |
-| `terraformJobStatus(jobId, op)` | `APPLY_NETWORK` | `applyJobStatus` → `GET /infra/network/apply/jobs/{jobId}` | `{ "finished":bool,"succeeded":bool }` |
-| `terraformJobStatus(jobId, op)` | `DESTROY_NETWORK` | `destroyJobStatus` → `GET /infra/network/destroy/jobs/{jobId}` | `{ "finished":bool,"succeeded":bool }` |
-| `cloudProvider(target)` | — | `cloudProvider` → `GET /infra/targets/{target}/cloud-provider` | `{ "provider":"AWS" }` |
+| 도메인 메서드 | operation | Feign 구체 메서드 → HTTP (가정) | 전용 응답 DTO | 도메인 공통 형식 |
+|---|---|---|---|---|
+| `runTerraform(target, op)` | `APPLY_NETWORK` | `applyNetwork` → `POST /infra/network/apply?target=` | `ApplyNetworkResponse` | `["job-1",...]` 문자열 |
+| `runTerraform(target, op)` | `DESTROY_NETWORK` | `destroyNetwork` → `POST /infra/network/destroy?target=` | `DestroyNetworkResponse` | `["job-1",...]` 문자열 |
+| `terraformJobStatus(jobId, op)` | `APPLY_NETWORK` | `applyJobStatus` → `GET /infra/network/apply/jobs/{jobId}` | `ApplyJobStatusResponse` | `TerraformPoll` |
+| `terraformJobStatus(jobId, op)` | `DESTROY_NETWORK` | `destroyJobStatus` → `GET /infra/network/destroy/jobs/{jobId}` | `DestroyJobStatusResponse` | `TerraformPoll` |
+| `checkCondition(target, op)` | `NETWORK_READY` | `networkReady` → `GET /infra/network/ready?target=` | `NetworkReadyResponse` | `boolean` |
+| `cloudProvider(target)` | — | `cloudProvider` → `GET /infra/targets/{target}/cloud-provider` | `CloudProviderResponse` | `CloudProvider` |
 
-operation이 늘면(예: 18개 계획) Feign 구체 메서드 + 어댑터 switch case가 함께 는다 — operation마다 다른 API라는 현실을 그대로 반영한 것.
+**operation 추가 = 세트 추가.** operation 하나가 실제로 다른 API 하나이므로, 늘 때마다 (전용 Feign 메서드 + 전용 응답 DTO + 어댑터 라우팅 case + 도메인 공통 형식 변환)을 함께 추가한다. 이는 스멜이 아니라 "N개의 서로 다른 실제 API"라는 본질의 반영이다. 도메인이 받는 공통 형식(jobIds 문자열 / TerraformPoll / boolean)은 고정이고, 각 operation의 전용 DTO를 어댑터가 그 형식으로 정규화한다. (case가 많아지면 `EnumMap<TaskOperation, handler>` 전략으로 옮길 수 있으나, 실제 API 스키마가 나오기 전엔 보류 — YAGNI.)
 
 > ⚠️ **파서 일치:** `TerraformTask.check`는 `attempt.response`를 `List<String>` JSON, 즉 정확히 `["job-1", ...]`로 역직렬화한다(`TypeReference<List<String>>`). 어댑터는 wire DTO `{jobIds:[...]}`를 받되 **`jobIds` 배열만 JSON 문자열로 재직렬화**해 넘긴다.
 
