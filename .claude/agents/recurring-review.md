@@ -38,7 +38,39 @@ flag correct code, and respect `// harness-allow:` annotations.
 6. **no abbreviations.** Every identifier (class, method, field, variable, enum constant) is a full word
    that reveals its role. FLAG terse abbreviations — `im`, `seq`, `ttl`, `cve`, a catch param `e`, a loop
    `t` — and suggest the spelled-out name (`infraManager`, `sequence`, `timeToLive`, `constraintViolation`,
-   `exception`, `cause`). Allowed: `id` and the conventional `main(String[] args)`.
+   `exception`, `cause`). Allowed: `id` and the conventional `main(String[] args)`. A role-based
+   collection name (`tasks`, `pipelines`, `settings`) is CORRECT — the rule is reveal-the-role, not
+   echo-the-type; do NOT ask to rename `tasks` → `taskRepository`.
+7. **optional-idiom.** An `Optional` degraded with `.orElse(null)` and then re-checked with `== null`
+   throws away the type's guarantee. FLAG `x.orElse(null)` followed by a null check — keep it an
+   `Optional` and consume it with `map`/`filter`/`ifPresent`/`orElseThrow`, or return `Optional` from the
+   source. A null sentinel that immediately becomes an `if (v == null)` is the smell.
+8. **extensibility-not-by-name.** An engine/gate must branch on a `TaskType` property/method, never on a
+   type's `NAME` constant (`if (task.getTaskName().equals(Terraform.NAME))`). FLAG name-switching that
+   forces an engine edit to add a type — push the varying behavior onto the `TaskType` itself.
+9. **intention-revealing-guards.** A non-trivial inline boolean or compound expression in a condition
+   must be extracted to a named predicate/method (`isReadyToDispatch(task)`, `hasExhaustedRetries()`).
+   FLAG a multi-clause `&&`/`||` guard or a nested arithmetic condition that reads as a puzzle — name it.
+10. **explicit-domain-naming.** Names carry the domain, not generic nouns or positional jargon. FLAG a
+    bare `slot` where it means a `terraformSlot`, and FLAG `tx1`/`tx2`/`phaseA`/`phaseB`/`step1` jargon —
+    use the role vocabulary (`claim` / `run` / `writeBack`). A method that writes a result back is
+    `writeBack(...)`, not `report(...)`; the name states the role in the flow.
+11. **repo-owns-single-result.** "Give me the one matching row" belongs in an intention-named repository
+    method returning `Optional`, not assembled in a service via `PageRequest.of(0,1)` +
+    `stream().findFirst()`. FLAG a service that pages-then-picks-first — move it to a
+    `findFirstBy...`/`@Query` returning `Optional`.
+12. **input-contract-guard (API entry).** A missing/invalid required argument on a public entry point
+    fails as a dedicated `OrchestrationException` subtype (e.g. `PipelineNotFoundException`) carrying a
+    stable HTTP status (400/404/409) and a stable error `code` — never a bare NPE and never a generic
+    `IllegalArgumentException`/`BadRequestException`. FLAG a public entry that dereferences a required arg
+    without a typed contract guard.
+13. **controlled-boundary-exception.** A raw infrastructure exception (e.g.
+    `DataIntegrityViolationException`) must not leak to `GlobalAdvice` — wrap it at the service boundary
+    into a controlled `OrchestrationException(status + code)`. `GlobalAdvice` then handles
+    `OrchestrationException` (status + code) in ONE place, plus a catch-all that logs the cause (never a
+    generic body with the trace dropped). FLAG a raw persistence/infra exception propagating past its
+    boundary. Error codes come from the `OrchestrationErrorCode` enum (`PREFIX + name()`) — FLAG a magic
+    `"ORCHESTRATION_..."` literal re-spelled outside the enum (the grep half catches the syntactic case).
 
 ## Output
 

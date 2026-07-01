@@ -67,6 +67,28 @@ for f in "${files[@]}"; do
     add "targeted-catch" "$f" "$ln" "broad catch → target the cause and rethrow the rest"
   done < <(grep -nE 'catch[[:space:]]*\([[:space:]]*(Exception|Throwable)[[:space:]]' "$f" 2>/dev/null | grep -v harness-allow)
 
+  # list-get-first (Java 21): List.get(0) → getFirst() reveals intent (SequencedCollection).
+  while IFS=: read -r ln _; do
+    add "list-get-first" "$f" "$ln" ".get(0) → getFirst() (Java 21 SequencedCollection; harness-allow if the receiver is not a List)"
+  done < <(grep -nE '\.get\(0\)' "$f" 2>/dev/null | grep -v harness-allow)
+
+  # extensibility-not-by-name: an engine/gate branching on a type's NAME constant instead of a
+  # TaskType property blocks new types. Scoped to service/ (the engine + gate live there).
+  if [[ "$f" == */service/* ]]; then
+    while IFS=: read -r ln _; do
+      add "extensibility-not-by-name" "$f" "$ln" "branch on Type.NAME → add a property/method on TaskType so a new type needs no engine edit"
+    done < <(grep -nE '\.NAME\.equals\(' "$f" 2>/dev/null | grep -v harness-allow)
+  fi
+
+  # error-code-enum: an ORCHESTRATION_* wire code is built from the OrchestrationErrorCode enum
+  # (PREFIX + name()), never re-spelled as a bare literal elsewhere. Skip the enum that OWNS the PREFIX
+  # and tests (which legitimately assert the resolved wire string).
+  if [[ "$f" != *OrchestrationErrorCode.java && "$f" != *Test.java && "$f" != */test/* ]]; then
+    while IFS=: read -r ln _; do
+      add "error-code-enum" "$f" "$ln" "\"ORCHESTRATION_...\" string literal → build it from OrchestrationErrorCode (single source)"
+    done < <(grep -nE '"ORCHESTRATION_' "$f" 2>/dev/null | grep -v harness-allow)
+  fi
+
   # Semantic-area reminder: status transitions and new interfaces need the recurring-review AGENT.
   if grep -qE 'setStatus[[:space:]]*\(|^[[:space:]]*(public|private|protected)?[[:space:]]*interface[[:space:]]' "$f" 2>/dev/null; then
     semantic=1
