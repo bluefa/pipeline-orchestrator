@@ -157,6 +157,26 @@ class ObservationTest {
         assertThat(taskCheckRepository.findAll()).hasSize(2);
     }
 
+    @Test
+    void aConditionMetRecordsResponseAndOneMetCheckThenDone() {
+        Pipeline pipeline = createInstallAtConditionInProgress();   // condition IN_PROGRESS, attempt 1
+        Long conditionTaskId = taskId(pipeline, 1);
+        infraManagerClient.onCheck(() -> true);                     // the next poll observes MET
+
+        pipelineWorker.pollOnce();                                  // poll condition met → DONE
+
+        TaskAttempt attempt = taskAttemptRepository.findByTaskIdAndAttemptNumber(conditionTaskId, 1).orElseThrow();
+        assertThat(attempt.getStatus()).isEqualTo(TaskStatus.DONE);
+        assertThat(attempt.getErrorCode()).isNull();
+        assertThat(attempt.getResponse()).isEqualTo("{\"met\":true}");   // raw check payload recorded on the met poll
+        assertThat(taskCheckRepository.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
+            assertThat(check.getCallCount()).isEqualTo(1);
+            assertThat(check.getLastExternalStatus()).isEqualTo("MET");
+            assertThat(check.getNotMetCount()).isEqualTo(0);
+        });
+        assertThat(taskRepository.findById(conditionTaskId).orElseThrow().getFailCount()).isEqualTo(0);   // met never fails
+    }
+
     private Pipeline createInstallAtConditionInProgress() {
         Pipeline pipeline = creator.create("obs-cond", PipelineType.INSTALL);
         infraManagerClient.onPoll(TerraformPoll::success);

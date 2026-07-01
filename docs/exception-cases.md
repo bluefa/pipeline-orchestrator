@@ -108,7 +108,7 @@ or by the state machine, then persisted by `TaskStateMachine.applyOutcome` in tx
 |---|---|---|
 | `JOB_FAILED` | `TerraformTask.check` — the Terraform poll reported the job FAILED | yes |
 | `EXECUTION_TIMEOUT` | `TerraformTask.check` — the job ran past its per-task execution timeout | yes |
-| `TIME_TO_LIVE_EXPIRED` | `ConditionCheckTask.check` — the condition was never met within its TTL | **no** (the wait window is gone) |
+| `CONDITION_NOT_MET` | `ConditionCheckTask.check` — a not-met poll (a failed poll); the terminal `error_code` when the poll that hits `maxFailCount` is still not-met | yes (each not-met poll retries within `maxFailCount`, then fails) |
 | `UNKNOWN_TASK` | `StepRunner.runStep` returns `StepOutcome.unknownTask()` when the stored `taskName` resolves to no registered `TaskType`; tx2 `applyOutcome` fails it outright | **no** |
 | `CALL_TIMEOUT` | `StepRunner` translating case 2 (phase-A), persisted by `TaskStateMachine` in tx2 | yes |
 | `CHECK_ERROR` | `StepRunner` translating case 3 (phase-A), persisted by `TaskStateMachine` in tx2 | yes |

@@ -82,8 +82,8 @@ documented).
 | F1 | `fail_count` per task; below `maxFailCount` → fresh re-run, at/above → FAILED | `TaskStateMachine.retryOrFail` + `PipelineExecutionTest.terraformFailureRetriesThenFailsAtMaxAndCascadeCancels` | ✅ |
 | F2 | Per-call timeout → `CALL_TIMEOUT` (the `TimeBoundedInfraManagerClient` enforces the timeout; `StepRunner.runExternalCall` maps `CallTimeoutException`) | `TimeBoundedInfraManagerClientTest.aSlowCallBecomesCallTimeout` (+ `StepRunner.runExternalCall`) | ✅ |
 | F3 | Per-task `executionTimeout` (TF) → `EXECUTION_TIMEOUT` | `TaskSettings.isPastDeadline` (executionTimeout path) + `PipelineExecutionTest.aLostDispatchResponseRidesExecutionTimeoutThenSharesTheFailCount` | ✅ |
-| F4 | Per-task `timeToLive` (condition) → `TIME_TO_LIVE_EXPIRED` (no retry) | `TaskSettings.isPastDeadline` (timeToLive path) + `ErrorCode.TIME_TO_LIVE_EXPIRED` | ✅ |
-| F5 | Both deadlines map to canonical `ErrorCode` values, not separate states | `ErrorCode`; no extra `TaskStatus` | ✅ |
+| F4 | CONDITION_CHECK bounded by a retry count: a not-met poll is a failed poll (`fail_count++`, re-check after `polling_interval`), failing at `maxFailCount` → `CONDITION_NOT_MET` | `ConditionCheckTask.check` → `TaskProgress.notMet` → `retryOrFail` + `PipelineExecutionTest.conditionNotMetRetriesThenFailsAtMaxWithConditionNotMet` | ✅ |
+| F5 | `executionTimeout` (TF) and the per-call timeout map to canonical `ErrorCode` values, not separate states | `ErrorCode`; no extra `TaskStatus` | ✅ |
 
 ## G. Decision 7 — minimal lifecycle
 
