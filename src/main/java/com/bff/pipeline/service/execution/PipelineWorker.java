@@ -7,10 +7,11 @@ import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.model.StepOutcome;
+import com.bff.pipeline.model.TaskType;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.service.task.ObservationRecorder;
-import com.bff.pipeline.service.task.terraform.TerraformTask;
+import com.bff.pipeline.service.task.TaskTypeRegistry;
 import java.util.List;
 import java.util.Optional;
 import lombok.Builder;
@@ -23,29 +24,31 @@ import org.springframework.stereotype.Component;
  *
  * <p>cancel은 두 안전지점에서 관찰한다. 하나는 claim 직후로, {@link #loadStepContext}에서 {@code cancel_requested}이거나
  * 현재 task가 없으면 외부 호출을 건너뛰고 report로 넘어가 수렴·해제한다. 다른 하나는 tx2 안이다({@link StepReporter#report}).
- * TF dispatch 단계인데 slot이 비어 있지 않으면 외부 호출 대신 reschedule로 claim을 놓는다(Decision 7).
+ * 슬롯을 소비하는 dispatch 단계인데 빈 slot이 없으면 외부 호출 대신 reschedule로 claim을 놓는다(Decision 7).
  */
 @Component
 public class PipelineWorker {
 
     @Builder
     private record StepContext(String target, Task currentTask, TaskAttempt attempt,
-            boolean cancelRequested, boolean terraformDispatch) { }
+            boolean cancelRequested, boolean slotConsumingDispatch) { }
 
     private final PipelineClaimer pipelineClaimer;
     private final PipelineRepository pipelineRepository;
     private final TaskRepository taskRepository;
+    private final TaskTypeRegistry taskTypeRegistry;
     private final ObservationRecorder observationRecorder;
     private final StepRunner stepRunner;
     private final StepReporter stepReporter;
     private final ExecutionSettings executionSettings;
 
     public PipelineWorker(PipelineClaimer pipelineClaimer, PipelineRepository pipelineRepository, TaskRepository taskRepository,
-            ObservationRecorder observationRecorder, StepRunner stepRunner, StepReporter stepReporter,
-            ExecutionSettings executionSettings) {
+            TaskTypeRegistry taskTypeRegistry, ObservationRecorder observationRecorder, StepRunner stepRunner,
+            StepReporter stepReporter, ExecutionSettings executionSettings) {
         this.pipelineClaimer = pipelineClaimer;
         this.pipelineRepository = pipelineRepository;
         this.taskRepository = taskRepository;
+        this.taskTypeRegistry = taskTypeRegistry;
         this.observationRecorder = observationRecorder;
         this.stepRunner = stepRunner;
         this.stepReporter = stepReporter;
@@ -69,7 +72,7 @@ public class PipelineWorker {
             stepReporter.report(claim.pipelineId(), claim.token(), null);
             return;
         }
-        if (context.terraformDispatch() && !slotAvailable()) {
+        if (context.slotConsumingDispatch() && !slotAvailable()) {
             stepReporter.reschedule(claim.pipelineId(), claim.token(), executionSettings.slotRetry());
             return;
         }
@@ -82,15 +85,15 @@ public class PipelineWorker {
             List<Task> chain = taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId);
             Task current = currentTask(chain).orElse(null);
             TaskAttempt attempt = current == null ? null : observationRecorder.currentAttempt(current).orElse(null);
-            boolean terraformDispatch = current != null
+            boolean slotConsumingDispatch = current != null
                     && current.getStatus() == TaskStatus.READY
-                    && TerraformTask.NAME.equals(current.getTaskName());
+                    && taskTypeRegistry.find(current.getTaskName()).map(TaskType::consumesDispatchSlot).orElse(false);
             return StepContext.builder()
                     .target(pipeline.getTarget())
                     .currentTask(current)
                     .attempt(attempt)
                     .cancelRequested(pipeline.isCancelRequested())
-                    .terraformDispatch(terraformDispatch)
+                    .slotConsumingDispatch(slotConsumingDispatch)
                     .build();
         });
     }
@@ -100,6 +103,7 @@ public class PipelineWorker {
     }
 
     private boolean slotAvailable() {
-        return taskRepository.countByTaskNameAndStatus(TerraformTask.NAME, TaskStatus.IN_PROGRESS) < executionSettings.slotCap();
+        return taskRepository.countByTaskNameInAndStatus(taskTypeRegistry.slotConsumingTaskNames(), TaskStatus.IN_PROGRESS)
+                < executionSettings.slotCap();
     }
 }

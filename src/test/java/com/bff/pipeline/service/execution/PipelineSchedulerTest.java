@@ -77,7 +77,7 @@ class PipelineSchedulerTest {
     void drainIsolatesAProcessFailureAndContinues() {
         AtomicInteger processed = new AtomicInteger();
         PipelineClaimer claimer = claimerYielding(1L, 2L);
-        PipelineWorker worker = new PipelineWorker(null, null, null, null, null, null, null) {
+        PipelineWorker worker = new PipelineWorker(null, null, null, null, null, null, null, null) {
             @Override public void process(Claim claim) {
                 processed.incrementAndGet();
                 if (claim.pipelineId() == 1L) throw new IllegalStateException("isolated");
@@ -103,7 +103,7 @@ class PipelineSchedulerTest {
     @Test
     void aCallInterruptedDuringProcessAbortsTheDrain() {
         PipelineClaimer claimer = claimerYielding(1L);
-        PipelineWorker worker = new PipelineWorker(null, null, null, null, null, null, null) {
+        PipelineWorker worker = new PipelineWorker(null, null, null, null, null, null, null, null) {
             @Override public void process(Claim claim) {
                 throw new InfraManagerClient.CallInterruptedException();
             }
@@ -125,7 +125,7 @@ class PipelineSchedulerTest {
     }
 
     private PipelineWorker neverProcess() {
-        return new PipelineWorker(null, null, null, null, null, null, null) {
+        return new PipelineWorker(null, null, null, null, null, null, null, null) {
             @Override public void process(Claim claim) {
                 throw new AssertionError("should not process after a claim failure");
             }
