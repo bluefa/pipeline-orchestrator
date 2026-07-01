@@ -65,11 +65,6 @@ public class TerraformTask implements TaskType {
     }
 
     @Override
-    public boolean consumesTerraformSlot() {
-        return true;
-    }
-
-    @Override
     public DispatchResult execute(String target, Task task) {
         String response = infraManagerClient.runTerraform(target, task.getOperation());
         if (response == null || response.isBlank()) {

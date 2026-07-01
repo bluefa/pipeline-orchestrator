@@ -19,8 +19,8 @@ import org.junit.jupiter.api.Test;
 class StepRunnerTest {
 
     private final StepRunner stepRunner = new StepRunner(new TaskTypeRegistry(List.of(
-            fake(TaskOperation.Mechanism.TERRAFORM_JOB, true),
-            fake(TaskOperation.Mechanism.CONDITION_CHECK, false))));
+            fake(TaskOperation.Mechanism.TERRAFORM_JOB),
+            fake(TaskOperation.Mechanism.CONDITION_CHECK))));
 
     @Test
     void dispatchesWhenTheRowAgreesWithItsDefinition() {
@@ -72,12 +72,11 @@ class StepRunnerTest {
                 .build();
     }
 
-    private static TaskType fake(String name, boolean consumesSlot) {
+    private static TaskType fake(String name) {
         return new TaskType() {
             @Override public String taskName() { return name; }
             @Override public DispatchResult execute(String target, Task task) { return DispatchResult.withResponse("[\"job-1\"]"); }
             @Override public TaskProgress check(String target, Task task, TaskAttempt attempt) { return TaskProgress.SUCCEEDED; }
-            @Override public boolean consumesTerraformSlot() { return consumesSlot; }
         };
     }
 }

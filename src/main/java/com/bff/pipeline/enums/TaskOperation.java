@@ -9,8 +9,8 @@ package com.bff.pipeline.enums;
  * operation은 (a) 어느 mechanism으로 갈지 라우팅하고 (b) InfraManager 호출 때 구체 액션 값으로 전달된다.
  *
  * mechanism은 String이라 TaskType의 열린 집합을 유지한다(새 TaskType은 이름으로 자기등록, 중앙 enum 수정 없음).
- * 값은 각 TaskType.NAME과 일치해야 하며 부팅 시 TaskTypeRegistry가 검증한다. slot은 mechanism의 속성이라 여기 캐시하고
- * 부팅 때 실제 TaskType.consumesTerraformSlot()과 일치하는지 검증한다.
+ * 값은 각 TaskType.NAME과 일치해야 하며, 부팅 시 TaskTypeRegistry가 모든 operation의 mechanism이 등록된 TaskType을
+ * 가리키는지 검증한다. slot 소비 여부는 mechanism의 속성이라 여기서 mechanism으로 판별한다(slot의 단일 authority).
  */
 public enum TaskOperation {
 
@@ -45,9 +45,8 @@ public enum TaskOperation {
     }
 
     /**
-     * terraform slot 소비 여부. slot 소비는 operation이 아니라 mechanism의 속성이라, 값을 op마다 두지 않고 mechanism으로
-     * 판별한다. 부팅 때 TaskTypeRegistry가 실제 TaskType.consumesTerraformSlot()과 일치하는지 검증하므로, 이 판별이
-     * 틀리면 기동이 실패한다.
+     * terraform slot 소비 여부의 단일 authority다. slot 소비는 operation이 아니라 mechanism의 속성이라, 값을 op마다
+     * 두지 않고 mechanism으로 판별한다. insert 때 이 값이 task 행(consumes_terraform_slot)에 캐시돼 slot 게이트가 쓴다.
      */
     public boolean consumesTerraformSlot() {
         return Mechanism.TERRAFORM_JOB.equals(mechanism);

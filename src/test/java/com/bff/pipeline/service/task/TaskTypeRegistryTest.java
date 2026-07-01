@@ -44,7 +44,7 @@ class TaskTypeRegistryTest {
     @Test
     void rejectsTwoTypesClaimingTheSameName() {
         List<TaskType> clashing = new java.util.ArrayList<>(everyMechanism());
-        clashing.add(fake(TaskDefinition.APPLY_NETWORK_V1.mechanism(), true));
+        clashing.add(fake(TaskDefinition.APPLY_NETWORK_V1.mechanism()));
 
         assertThatThrownBy(() -> new TaskTypeRegistry(clashing))
                 .isInstanceOf(IllegalStateException.class)
@@ -59,16 +59,15 @@ class TaskTypeRegistryTest {
 
     private List<TaskType> everyMechanism() {
         return mechanismsInCatalog().stream()
-                .map(name -> fake(name, name.contains("TERRAFORM")))
+                .map(this::fake)
                 .collect(Collectors.toList());
     }
 
-    private TaskType fake(String name, boolean consumesSlot) {
+    private TaskType fake(String name) {
         return new TaskType() {
             @Override public String taskName() { return name; }
             @Override public DispatchResult execute(String target, Task task) { return DispatchResult.NONE; }
             @Override public TaskProgress check(String target, Task task, TaskAttempt attempt) { return TaskProgress.SUCCEEDED; }
-            @Override public boolean consumesTerraformSlot() { return consumesSlot; }
         };
     }
 }

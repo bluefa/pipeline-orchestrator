@@ -24,30 +24,41 @@ public class TaskTypeRegistry {
     private final Map<String, TaskType> byName;
 
     public TaskTypeRegistry(List<TaskType> taskTypes) {
-        Map<String, TaskType> map = new HashMap<>();
+        this.byName = indexByTaskName(taskTypes);
+        verifyEveryOperationResolves();
+    }
+
+    /** 각 {@code TaskType}을 자기 이름으로 색인한다. 이름이 없거나 비었거나 겹치면 기동을 실패시킨다. */
+    private static Map<String, TaskType> indexByTaskName(List<TaskType> taskTypes) {
+        Map<String, TaskType> byName = new HashMap<>();
         for (TaskType type : taskTypes) {
-            String name = type.taskName();
-            if (name == null || name.isBlank()) {
-                throw new IllegalStateException(
-                        "TaskType " + type.getClass().getName() + " has a null/blank taskName()");
-            }
-            TaskType clash = map.putIfAbsent(name, type);
+            String name = requireTaskName(type);
+            TaskType clash = byName.putIfAbsent(name, type);
             if (clash != null) {
                 throw new IllegalStateException("Two TaskTypes claim taskName '" + name + "': "
                         + clash.getClass().getName() + " and " + type.getClass().getName());
             }
         }
-        this.byName = Map.copyOf(map);
+        return Map.copyOf(byName);
+    }
+
+    private static String requireTaskName(TaskType type) {
+        String name = type.taskName();
+        if (name == null || name.isBlank()) {
+            throw new IllegalStateException("TaskType " + type.getClass().getName() + " has a null/blank taskName()");
+        }
+        return name;
+    }
+
+    /**
+     * 모든 {@link TaskOperation}이 광고하는 mechanism이 실제 등록된 {@code TaskType}을 가리키는지 검증한다 —
+     * operation이 런타임 확정 실패로 부팅되지 않게(설계 §2).
+     */
+    private void verifyEveryOperationResolves() {
         for (TaskOperation operation : TaskOperation.values()) {
-            TaskType type = byName.get(operation.mechanism());
-            if (type == null) {
+            if (!byName.containsKey(operation.mechanism())) {
                 throw new IllegalStateException("TaskOperation " + operation.name() + " names mechanism '"
                         + operation.mechanism() + "' but no TaskType is registered under it");
-            }
-            if (type.consumesTerraformSlot() != operation.consumesTerraformSlot()) {
-                throw new IllegalStateException("TaskOperation " + operation.name() + " declares consumesTerraformSlot="
-                        + operation.consumesTerraformSlot() + " but its TaskType '" + operation.mechanism()
-                        + "' declares " + type.consumesTerraformSlot());
             }
         }
     }
