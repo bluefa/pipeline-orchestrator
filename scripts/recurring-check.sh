@@ -67,6 +67,19 @@ for f in "${files[@]}"; do
     add "targeted-catch" "$f" "$ln" "broad catch → target the cause and rethrow the rest"
   done < <(grep -nE 'catch[[:space:]]*\([[:space:]]*(Exception|Throwable)[[:space:]]' "$f" 2>/dev/null | grep -v harness-allow)
 
+  # no-inline-fqn: a fully-qualified class name written inline in code (declaration / new / call / cast /
+  # type argument) instead of importing it. JPQL enum literals inside @Query strings and javadoc
+  # {@link}/{@code} references are exempt (they cannot be imported); a deliberate case takes harness-allow.
+  while IFS=: read -r ln _; do
+    add "no-inline-fqn" "$f" "$ln" "inline fully-qualified name → import the type and use the short name"
+  done < <(grep -nE '\b(java|javax|com\.bff)\.[a-z0-9_]+(\.[a-z0-9_]+)*\.[A-Z][A-Za-z0-9_]*' "$f" 2>/dev/null \
+      | grep -vE '^[0-9]+:[[:space:]]*(import|package)[[:space:]]' \
+      | grep -vE '^[0-9]+:[[:space:]]*(\*|//|/\*)' \
+      | grep -vE '\{@(link|code)' \
+      | grep -vE '@Query' \
+      | grep -vE '^[0-9]+:[[:space:]]*\+?[[:space:]]*"' \
+      | grep -v harness-allow)
+
   # list-get-first (Java 21): List.get(0) → getFirst() reveals intent (SequencedCollection).
   while IFS=: read -r ln _; do
     add "list-get-first" "$f" "$ln" ".get(0) → getFirst() (Java 21 SequencedCollection; harness-allow if the receiver is not a List)"

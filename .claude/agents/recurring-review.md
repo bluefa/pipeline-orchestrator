@@ -71,6 +71,12 @@ flag correct code, and respect `// harness-allow:` annotations.
     generic body with the trace dropped). FLAG a raw persistence/infra exception propagating past its
     boundary. Error codes come from the `OrchestrationErrorCode` enum (`PREFIX + name()`) — FLAG a magic
     `"ORCHESTRATION_..."` literal re-spelled outside the enum (the grep half catches the syntactic case).
+14. **no-html-javadoc.** The owner writes javadoc in plain text — no HTML markup tags (`<b>`, `<p>`,
+    `<em>`, `<i>`, `<strong>`). Judge the DIFF: FLAG a tag on an **added/changed** line, and suggest the
+    plain-text form (drop `<b>`/`</b>`; replace a `<p>` paragraph break with a blank javadoc line). Do NOT
+    flag the same tag on unchanged lines — the existing codebase is saturated with it; this rule is
+    "don't add more," a diff-scoped preference, not a repo-wide cleanup. `<pre>` blocks (state diagrams,
+    ASCII tables) are allowed — they are layout, not prose markup.
 
 ## Output
 
