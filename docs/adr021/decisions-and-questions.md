@@ -14,6 +14,20 @@
 - **되돌리기**: 기존 브랜치를 rebase해서 살리고 싶다면 가능하나 충돌 해소 비용이 큼. 현재 선택이 더 안전하다고 판단.
 - **확인 요청**: 이 방향이 맞는지. (기존 `feat/adr-021-execution-model` 브랜치/워크트리는 건드리지 않고 보존해 둠.)
 
+## D-C. ADR-016 §4 반전: 중복 create → 기존 반환(idempotent) 대신 409 Conflict ✅ 결정함(오너)
+
+- **배경**: 트리거의 실제 호출 경로가 확정됨 — **운영자가 web admin 페이지에서 "try" 버튼을 누르는 사람 콜**.
+  자동 시스템의 at-least-once 재전달 경로가 아니다.
+- **결정**: 같은 target에 이미 활성 실행이 있으면 → `PipelineAlreadyActiveException`(409 /
+  `ORCHESTRATION_PIPELINE_ALREADY_ACTIVE`)로 거절. (기존: 기존 활성 실행을 그대로 반환하는 멱등 no-op.)
+  - silent return-existing은 machine 클라이언트의 재전달 흡수용인데, 사람 콜에선 409 "이미 실행 중"이 더 정직·명확하다
+    (사람은 409를 읽고 이해; 멱등 재해석 불필요).
+  - 부수 정리: 재시도 소진용 `PipelineCreationConflictException` 제거, `insert`의 active-target 아닌 무결성 위반은
+    `PipelinePersistenceException`(500)으로 감싸 raw 예외가 컨트롤러까지 새지 않게 함. `findByActiveTarget`은 dead code라 제거.
+- **ADR-021 영향 없음**: single-owner 불변식은 `active_target` 유니크 제약이 보장하며 create 반환 방식과 무관.
+  워커는 create를 부르지 않고 기존 실행을 claim한다. §5의 dispatch 멱등성(InfraManager)도 무관하게 유지.
+- **되돌리기**: 반환-멱등으로 돌리려면 create에서 위반 시 `findByActiveTarget` 조회·반환으로 복구(저비용). ADR-016 §4 문구도 함께 복원.
+
 ## D-B. 구현 중 내린 세부 결정 (리뷰 라운드 누적)
 
 ### D-B1. 재시도 케이던스: retry 시 `nextCheckAt = now + pollingInterval` ✅ 결정함

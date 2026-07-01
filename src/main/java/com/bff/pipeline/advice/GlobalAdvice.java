@@ -24,6 +24,9 @@ public class GlobalAdvice {
 
     @ExceptionHandler(OrchestrationException.class)
     public ResponseEntity<ErrorResponse> onOrchestration(OrchestrationException exception) {
+        if (exception.status().is5xxServerError()) {
+            log.error("Orchestration server error [{}]", exception.code(), exception);
+        }
         return ResponseEntity.status(exception.status()).body(body(exception.code(), exception.getMessage()));
     }
 

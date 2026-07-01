@@ -1,10 +1,12 @@
 package com.bff.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
+import com.bff.pipeline.exception.PipelineAlreadyActiveException;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
@@ -49,21 +51,21 @@ class PipelineUniquenessTest {
     }
 
     @Test
-    void duplicateCreateForAnActiveTargetReturnsTheExistingRun() {
-        Pipeline first = creator.create("target-a", PipelineType.INSTALL);
-        Pipeline again = creator.create("target-a", PipelineType.INSTALL);
+    void duplicateCreateForAnActiveTargetIsRejectedAsConflict() {
+        creator.create("target-a", PipelineType.INSTALL);
 
-        assertThat(again.getId()).isEqualTo(first.getId());
+        assertThatThrownBy(() -> creator.create("target-a", PipelineType.INSTALL))
+                .isInstanceOf(PipelineAlreadyActiveException.class);
         assertThat(pipelineRepository.findAll()).hasSize(1);
     }
 
     @Test
-    void aDifferentTypeCreateForAnActiveTargetReturnsTheExistingRun() {
-        Pipeline install = creator.create("target-b", PipelineType.INSTALL);
-        Pipeline delete = creator.create("target-b", PipelineType.DELETE);
+    void aDifferentTypeCreateForAnActiveTargetIsRejectedAsConflict() {
+        creator.create("target-b", PipelineType.INSTALL);
 
-        assertThat(delete.getId()).isEqualTo(install.getId());
-        assertThat(delete.getType()).isEqualTo(PipelineType.INSTALL);
+        assertThatThrownBy(() -> creator.create("target-b", PipelineType.DELETE))
+                .isInstanceOf(PipelineAlreadyActiveException.class);
+        assertThat(pipelineRepository.findAll()).hasSize(1);
     }
 
     @Test

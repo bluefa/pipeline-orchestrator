@@ -13,7 +13,11 @@ public abstract class OrchestrationException extends RuntimeException {
     private final String code;
 
     protected OrchestrationException(HttpStatus status, String code, String message) {
-        super(message);
+        this(status, code, message, null);
+    }
+
+    protected OrchestrationException(HttpStatus status, String code, String message, Throwable cause) {
+        super(message, cause);
         this.status = status;
         this.code = code;
     }

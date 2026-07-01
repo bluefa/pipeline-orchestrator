@@ -15,13 +15,10 @@ import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.query.Param;
 
 /**
- * {@link Pipeline} 행의 영속성 계층이다. ADR-016 도메인 질의({@code findByActiveTarget})에 ADR-021 실행 모델의
- * claim/guard/cancel 질의를 얹었다.
+ * {@link Pipeline} 행의 영속성 계층이다. ADR-021 실행 모델의 claim/guard/cancel 질의를 담는다.
  *
- * <p>{@code findByActiveTarget}은 해당 target의 현재 활성 실행을 돌려준다. 불변식상 비종료 상태일 때만
- * {@code active_target == target}이 성립한다. 종료 전이는 이제 별도 CAS가 아니라 write-back 트랜잭션의 {@code FOR UPDATE} 잠금
- * 아래에서 엔티티 setter로 처리한다({@code StepReporter.terminalize}/{@code cancelIfIdle}). RUNNING 가드는 그 질의들이
- * 직접 들고 있다.
+ * <p>종료 전이는 별도 CAS가 아니라 write-back 트랜잭션의 {@code FOR UPDATE} 잠금 아래에서 엔티티 setter로 처리한다
+ * ({@code StepReporter.terminalize}/{@code cancelIfIdle}). RUNNING 가드는 그 질의들이 직접 들고 있다.
  *
  * <p><b>ADR-021 claim(claim 트랜잭션)</b>: {@code findNextClaimableDuePipeline}은 due 조건을 만족하는 행 하나를
  * {@code PESSIMISTIC_WRITE} + lock-timeout {@code -2}로 잠근다({@code lockClaimableDuePipelines}에 Limit 1로 위임). 이 힌트는 MySQL 8에서 {@code FOR UPDATE SKIP LOCKED}로
@@ -33,8 +30,6 @@ import org.springframework.data.repository.query.Param;
  * idle-sleep 상한 계산에 쓴다.
  */
 public interface PipelineRepository extends JpaRepository<Pipeline, Long> {
-
-    Optional<Pipeline> findByActiveTarget(String activeTarget);
 
     /**
      * claim 트랜잭션의 진입 질의 — claim 가능한 due pipeline <b>하나</b>를 잠가서 가져온다(없으면 empty).
