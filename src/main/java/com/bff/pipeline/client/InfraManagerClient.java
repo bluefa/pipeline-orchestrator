@@ -1,6 +1,7 @@
 package com.bff.pipeline.client;
 
 import com.bff.pipeline.dto.TerraformPoll;
+import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
 
 /**
@@ -35,6 +36,13 @@ public interface InfraManagerClient {
 
     /** operation의 조건이 충족됐는지 한 번 확인한다. */
     boolean checkCondition(String target, TaskOperation operation);
+
+    /**
+     * target(targetSourceId 기반)이 속한 cloud provider를 조회한다(설계 §3). create 시점에 한 번 불러 recipe를 고르고
+     * Pipeline에 저장하므로 claim-pull 실행 경로는 이 호출에 의존하지 않는다. 조회 실패는 다른 호출과 같은 닫힌 어휘
+     * 예외로 전달한다(장애/타임아웃 → 인프라 실패).
+     */
+    CloudProvider cloudProvider(String target);
 
     /** InfraManager 호출 하나가 호출별 타임아웃을 넘겼을 때 던진다(→ {@code ErrorCode.CALL_TIMEOUT}). */
     final class CallTimeoutException extends RuntimeException {

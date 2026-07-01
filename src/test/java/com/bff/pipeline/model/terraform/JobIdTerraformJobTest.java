@@ -48,6 +48,11 @@ class JobIdTerraformJobTest {
             public boolean checkCondition(String target, TaskOperation operation) {
                 throw new UnsupportedOperationException();
             }
+
+            @Override
+            public com.bff.pipeline.enums.CloudProvider cloudProvider(String target) {
+                throw new UnsupportedOperationException();
+            }
         };
     }
 }

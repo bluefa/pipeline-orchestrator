@@ -131,5 +131,10 @@ class PipelineControlTest {
         Clock clock() {
             return Clock.fixed(Instant.parse("2026-06-28T00:00:00Z"), ZoneOffset.UTC);
         }
+
+        @Bean
+        com.bff.pipeline.client.FakeInfraManagerClient infraManager() {
+            return new com.bff.pipeline.client.FakeInfraManagerClient();
+        }
     }
 }

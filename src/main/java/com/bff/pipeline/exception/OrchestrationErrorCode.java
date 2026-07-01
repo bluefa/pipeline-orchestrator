@@ -11,6 +11,7 @@ public enum OrchestrationErrorCode {
     PIPELINE_NOT_FOUND,
     PIPELINE_ALREADY_ACTIVE,
     PIPELINE_PERSISTENCE_ERROR,
+    UNSUPPORTED_RECIPE,
     INTERNAL_ERROR;
 
     private static final String PREFIX = "ORCHESTRATION_";

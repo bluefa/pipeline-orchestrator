@@ -80,6 +80,7 @@ class TimeBoundedInfraManagerClientTest {
             @Override public String runTerraform(String target, TaskOperation operation) { return dispatch.get(); }
             @Override public TerraformPoll terraformJobStatus(String jobId) { return TerraformPoll.running(); }
             @Override public boolean checkCondition(String target, TaskOperation operation) { return false; }
+            @Override public com.bff.pipeline.enums.CloudProvider cloudProvider(String target) { return com.bff.pipeline.enums.CloudProvider.AWS; }
         };
     }
 

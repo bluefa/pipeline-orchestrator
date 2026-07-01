@@ -1,6 +1,7 @@
 package com.bff.pipeline.client;
 
 import com.bff.pipeline.dto.TerraformPoll;
+import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
 
 /**
@@ -28,6 +29,11 @@ public final class FakeInfraManagerClient implements InfraManagerClient {
     private Dispatch dispatch = () -> "[\"job-1\"]";
     private Poll poll = TerraformPoll::running;
     private Check check = () -> false;
+    private CloudProvider cloudProvider = CloudProvider.AWS;
+
+    public void onCloudProvider(CloudProvider cloudProvider) {
+        this.cloudProvider = cloudProvider;
+    }
 
     public void onDispatch(Dispatch dispatch) {
         this.dispatch = dispatch;
@@ -54,5 +60,10 @@ public final class FakeInfraManagerClient implements InfraManagerClient {
     @Override
     public boolean checkCondition(String target, TaskOperation operation) {
         return check.run();
+    }
+
+    @Override
+    public CloudProvider cloudProvider(String target) {
+        return cloudProvider;
     }
 }

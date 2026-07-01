@@ -1,9 +1,13 @@
 package com.bff.pipeline.service.lifecycle;
 
+import com.bff.pipeline.client.InfraManagerClient;
 import com.bff.pipeline.entity.Pipeline;
+import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineType;
+import com.bff.pipeline.enums.RecipeDefinition;
 import com.bff.pipeline.exception.PipelineAlreadyActiveException;
 import com.bff.pipeline.exception.PipelinePersistenceException;
+import com.bff.pipeline.exception.UnsupportedRecipeException;
 import java.util.Locale;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -26,14 +30,21 @@ import org.springframework.stereotype.Service;
 public class PipelineCreator {
 
     private final PipelineInserter pipelineInserter;
+    private final Recipes recipes;
+    private final InfraManagerClient infraManagerClient;
 
-    public PipelineCreator(PipelineInserter pipelineInserter) {
+    public PipelineCreator(PipelineInserter pipelineInserter, Recipes recipes, InfraManagerClient infraManagerClient) {
         this.pipelineInserter = pipelineInserter;
+        this.recipes = recipes;
+        this.infraManagerClient = infraManagerClient;
     }
 
     public Pipeline create(String target, PipelineType type) {
+        CloudProvider provider = infraManagerClient.cloudProvider(target);   // 트랜잭션 밖 외부 조회(§3)
+        RecipeDefinition recipe = recipes.forProviderAndType(provider, type)
+                .orElseThrow(() -> new UnsupportedRecipeException(provider, type));
         try {
-            return pipelineInserter.insert(target, type);
+            return pipelineInserter.insert(target, type, provider, recipe);
         } catch (DataIntegrityViolationException violation) {
             if (isActiveTargetViolation(violation)) {
                 throw new PipelineAlreadyActiveException(target);

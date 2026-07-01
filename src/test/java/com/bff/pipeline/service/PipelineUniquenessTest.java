@@ -3,10 +3,13 @@ package com.bff.pipeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.bff.pipeline.client.FakeInfraManagerClient;
 import com.bff.pipeline.entity.Pipeline;
+import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.exception.PipelineAlreadyActiveException;
+import com.bff.pipeline.exception.UnsupportedRecipeException;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
@@ -43,11 +46,30 @@ class PipelineUniquenessTest {
     @Autowired private PipelineCreator creator;
     @Autowired private PipelineRepository pipelineRepository;
     @Autowired private TaskRepository taskRepository;
+    @Autowired private FakeInfraManagerClient infraManager;
 
     @AfterEach
     void clean() {
         taskRepository.deleteAll();
         pipelineRepository.deleteAll();
+        infraManager.onCloudProvider(CloudProvider.AWS);
+    }
+
+    @Test
+    void createResolvesTheProviderAndPersistsItWithTheRecipe() {
+        Pipeline pipeline = creator.create("prov-a", PipelineType.INSTALL);
+
+        assertThat(pipeline.getCloudProvider()).isEqualTo(CloudProvider.AWS);
+        assertThat(pipeline.getRecipeDefinition()).isEqualTo("AWS_NETWORK_INSTALL_V1");
+    }
+
+    @Test
+    void createRejectsAProviderTypeWithNoRecipeAsBadRequest() {
+        infraManager.onCloudProvider(CloudProvider.GCP);   // 카탈로그에 GCP recipe 없음(데모)
+
+        assertThatThrownBy(() -> creator.create("prov-b", PipelineType.INSTALL))
+                .isInstanceOf(UnsupportedRecipeException.class);
+        assertThat(pipelineRepository.findAll()).isEmpty();
     }
 
     @Test
@@ -90,6 +112,11 @@ class PipelineUniquenessTest {
         @Bean
         Clock clock() {
             return Clock.fixed(Instant.parse("2026-06-28T00:00:00Z"), ZoneOffset.UTC);
+        }
+
+        @Bean
+        com.bff.pipeline.client.FakeInfraManagerClient infraManager() {
+            return new com.bff.pipeline.client.FakeInfraManagerClient();
         }
     }
 }

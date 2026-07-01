@@ -20,11 +20,11 @@ import java.util.Optional;
  */
 public enum TaskDefinition {
 
-    APPLY_NETWORK_V1(Mechanism.TERRAFORM_JOB, TaskOperation.APPLY_NETWORK, true,
+    APPLY_NETWORK_V1(CloudProvider.AWS, Mechanism.TERRAFORM_JOB, TaskOperation.APPLY_NETWORK, true,
             "네트워크 생성", "대상의 네트워크 인프라를 Terraform으로 구성(apply)한다."),
-    NETWORK_READY_V1(Mechanism.CONDITION_CHECK, TaskOperation.NETWORK_READY, false,
+    NETWORK_READY_V1(CloudProvider.AWS, Mechanism.CONDITION_CHECK, TaskOperation.NETWORK_READY, false,
             "네트워크 준비 확인", "네트워크가 준비 완료 상태가 될 때까지 조건을 확인한다."),
-    DESTROY_NETWORK_V1(Mechanism.TERRAFORM_JOB, TaskOperation.DESTROY_NETWORK, true,
+    DESTROY_NETWORK_V1(CloudProvider.AWS, Mechanism.TERRAFORM_JOB, TaskOperation.DESTROY_NETWORK, true,
             "네트워크 철거", "대상의 네트워크 인프라를 Terraform으로 철거(destroy)한다.");
 
     /** mechanism 이름 리터럴 — 값은 각 {@code TaskType.NAME}과 일치해야 하며 부팅 시 검증된다. */
@@ -36,19 +36,25 @@ public enum TaskDefinition {
         }
     }
 
+    private final CloudProvider provider;
     private final String mechanism;
     private final TaskOperation operation;
     private final boolean consumesTerraformSlot;
     private final String displayName;
     private final String description;
 
-    TaskDefinition(String mechanism, TaskOperation operation, boolean consumesTerraformSlot,
+    TaskDefinition(CloudProvider provider, String mechanism, TaskOperation operation, boolean consumesTerraformSlot,
             String displayName, String description) {
+        this.provider = provider;
         this.mechanism = mechanism;
         this.operation = operation;
         this.consumesTerraformSlot = consumesTerraformSlot;
         this.displayName = displayName;
         this.description = description;
+    }
+
+    public CloudProvider provider() {
+        return provider;
     }
 
     /** 이 정의를 실행할 {@code TaskType}의 이름(=taskName). */
