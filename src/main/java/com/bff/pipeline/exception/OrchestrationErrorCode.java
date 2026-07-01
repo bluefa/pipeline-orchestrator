@@ -8,6 +8,7 @@ package com.bff.pipeline.exception;
 public enum OrchestrationErrorCode {
 
     PIPELINE_ID_REQUIRED,
+    TARGET_REQUIRED,
     PIPELINE_NOT_FOUND,
     PIPELINE_ALREADY_ACTIVE,
     PIPELINE_PERSISTENCE_ERROR,

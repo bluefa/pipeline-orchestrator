@@ -8,7 +8,9 @@ import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
+import com.bff.pipeline.exception.MissingTargetException;
 import com.bff.pipeline.exception.PipelineAlreadyActiveException;
+import com.bff.pipeline.exception.ProviderLookupException;
 import com.bff.pipeline.exception.UnsupportedRecipeException;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
@@ -70,6 +72,20 @@ class PipelineUniquenessTest {
         assertThatThrownBy(() -> creator.create("prov-b", PipelineType.INSTALL))
                 .isInstanceOf(UnsupportedRecipeException.class);
         assertThat(pipelineRepository.findAll()).isEmpty();
+    }
+
+    @Test
+    void createRejectsABlankTargetBeforeTheProviderLookup() {
+        assertThatThrownBy(() -> creator.create("  ", PipelineType.INSTALL))
+                .isInstanceOf(MissingTargetException.class);
+    }
+
+    @Test
+    void createTranslatesANullProviderLookupIntoAServiceUnavailable() {
+        infraManager.onCloudProvider(null);   // 경계 계약 위반(null 반환)
+
+        assertThatThrownBy(() -> creator.create("prov-c", PipelineType.INSTALL))
+                .isInstanceOf(ProviderLookupException.class);
     }
 
     @Test

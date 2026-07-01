@@ -16,13 +16,13 @@ public enum TaskOperation {
 
     // ── TERRAFORM_JOB mechanism ──
     /** 네트워크 인프라를 구성(apply)하는 액션. */
-    APPLY_NETWORK(Mechanism.TERRAFORM_JOB, true),
+    APPLY_NETWORK(Mechanism.TERRAFORM_JOB),
     /** 네트워크 인프라를 철거(destroy)하는 액션. */
-    DESTROY_NETWORK(Mechanism.TERRAFORM_JOB, true),
+    DESTROY_NETWORK(Mechanism.TERRAFORM_JOB),
 
     // ── CONDITION_CHECK mechanism ──
     /** 네트워크가 준비됐는지 확인(condition check)하는 액션. */
-    NETWORK_READY(Mechanism.CONDITION_CHECK, false);
+    NETWORK_READY(Mechanism.CONDITION_CHECK);
 
     /** mechanism 이름 리터럴 — 값은 각 TaskType.NAME과 일치해야 하며 부팅 시 검증된다. */
     public static final class Mechanism {
@@ -34,11 +34,9 @@ public enum TaskOperation {
     }
 
     private final String mechanism;
-    private final boolean consumesTerraformSlot;
 
-    TaskOperation(String mechanism, boolean consumesTerraformSlot) {
+    TaskOperation(String mechanism) {
         this.mechanism = mechanism;
-        this.consumesTerraformSlot = consumesTerraformSlot;
     }
 
     /** 이 operation을 실행할 TaskType의 이름(=taskName). */
@@ -46,7 +44,12 @@ public enum TaskOperation {
         return mechanism;
     }
 
+    /**
+     * terraform slot 소비 여부. slot 소비는 operation이 아니라 mechanism의 속성이라, 값을 op마다 두지 않고 mechanism으로
+     * 판별한다. 부팅 때 TaskTypeRegistry가 실제 TaskType.consumesTerraformSlot()과 일치하는지 검증하므로, 이 판별이
+     * 틀리면 기동이 실패한다.
+     */
     public boolean consumesTerraformSlot() {
-        return consumesTerraformSlot;
+        return Mechanism.TERRAFORM_JOB.equals(mechanism);
     }
 }

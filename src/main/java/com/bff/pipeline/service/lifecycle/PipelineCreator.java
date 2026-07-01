@@ -5,6 +5,7 @@ import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.RecipeDefinition;
+import com.bff.pipeline.exception.MissingTargetException;
 import com.bff.pipeline.exception.PipelineAlreadyActiveException;
 import com.bff.pipeline.exception.PipelinePersistenceException;
 import com.bff.pipeline.exception.ProviderLookupException;
@@ -42,6 +43,9 @@ public class PipelineCreator {
     }
 
     public Pipeline create(String target, PipelineType type) {
+        if (target == null || target.isBlank()) {           // 외부 조회 전에 입력을 검증한다
+            throw new MissingTargetException();
+        }
         CloudProvider provider = resolveProvider(target);   // 트랜잭션 밖 외부 조회(§3)
         RecipeDefinition recipe = recipeCatalog.forProviderAndType(provider, type)
                 .orElseThrow(() -> new UnsupportedRecipeException(provider, type));
@@ -61,11 +65,16 @@ public class PipelineCreator {
      * 그대로 전파한다(fail-fast).
      */
     private CloudProvider resolveProvider(String target) {
+        CloudProvider provider;
         try {
-            return infraManagerClient.cloudProvider(target);
+            provider = infraManagerClient.cloudProvider(target);
         } catch (InfraManagerClient.CallTimeoutException | InfraManagerClient.CallFailedException lookupFailure) {
             throw new ProviderLookupException(target, lookupFailure);
         }
+        if (provider == null) {   // 경계 계약 위반(null 반환)은 degraded 값으로 흘리지 않고 조회 실패로 번역한다
+            throw new ProviderLookupException(target, null);
+        }
+        return provider;
     }
 
     private static boolean isActiveTargetViolation(DataIntegrityViolationException exception) {
