@@ -32,6 +32,8 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 | **error-code-enum** — an API error code is built from the `OrchestrationErrorCode` enum (`PREFIX + name()`), never a magic `"ORCHESTRATION_..."` literal re-spelled outside the enum | (1) constant-single-source (changelog) · (2) ADR-021 retro #14 | rule (`"ORCHESTRATION_` literal, enum + tests excluded) + agent | a bare error-code literal outside the enum |
 | **input-contract-guard** — a public entry point's missing/invalid required arg fails as a dedicated `OrchestrationException` subtype (`PipelineNotFoundException` — stable status + `code`), never a bare NPE or generic `IllegalArgumentException` | (1) trust-boundary-null · (2) ADR-021 retro #12 | agent | a public entry dereferencing a required arg unguarded |
 | **controlled-boundary-exception** — a raw infra exception (`DataIntegrityViolationException`…) is wrapped into a controlled `OrchestrationException(status+code)` at the service boundary; `GlobalAdvice` handles it in one place + a catch-all that logs the cause | (1) single-translation-boundary (changelog) · (2) ADR-021 retro #13 | agent | a raw infra exception reaching `GlobalAdvice` |
+| **no-inline-fqn** — a class is imported and used by its short name, never written fully-qualified inline in code (declaration / `new` / call / cast / type arg); JPQL enum literals in `@Query` strings and javadoc `{@link}`/`{@code}` are exempt | (1) owner (stated hard: "반드시 피해야되는 패턴") · (2) PR#15 review — codex found `PipelineScheduler` `java.time.Clock` + inline FQNs in 3 tests | rule | a `java.`/`javax.`/`com.bff.` FQN inline in code |
+| **no-html-javadoc** — javadoc is plain text; no HTML markup tags (`<b>`/`<p>`/`<em>`/`<i>`/`<strong>`). Diff-scoped: don't ADD tags (`<pre>` layout blocks allowed) | (1) owner (memory: dislikes `<b>`/`<p>`/`<em>`) · (2) PR#15 review — codex flagged added `<b>`/`<p>` | agent (diff-aware; rule too noisy — codebase is saturated) | an HTML tag added to javadoc |
 
 ## Watch-list (1 occurrence — recorded, promote on the next hit)
 
@@ -55,6 +57,23 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 
 ## Changelog
 
+- **PR #15 review (CONDITION_CHECK ttl→retry-count) → harness.** Two owner points promoted:
+  - **no-inline-fqn** → **rule** (`recurring-check.sh`). Owner stated it as a hard rule; codex found 4 inline
+    FQNs (`PipelineScheduler` `java.time.Clock` field/ctor + `java.util.Arrays`/`Supplier`/`ConditionPoll`
+    in tests). The grep is silent on the (now clean) tree and excludes `import`/`package`, javadoc
+    `{@link}`/`{@code}`, and JPQL enum literals in `@Query` strings (string-continuation lines starting
+    `"`/`+ "`). Verified 0-match on `origin/main` and a positive hit on a field/`new` sample.
+  - **no-html-javadoc** → **agent** pattern 14 (diff-aware). Owner dislikes `<b>`/`<p>`/`<em>` in javadoc;
+    codex flagged tags this change had added. NOT a grep — the existing codebase is saturated with `<p>`,
+    so a staged-file grep would be all noise; the agent flags only tags on **added/changed** lines
+    (`<pre>` layout blocks stay allowed).
+  - Reinforced **trust-boundary-null** (3rd occurrence): `ConditionCheckTask` now translates a null
+    `checkCondition()` result to `CallFailedException` instead of leaking an NPE — same pattern as
+    `TerraformTask`'s null jobId/poll guard. No ledger change (already promoted); noted here.
+  - Review lesson (not a rule): when a change is scoped to ONE kind (condition), prove the OTHER kind
+    (terraform) is untouched — the codex diff review confirmed additive-only shared switches (new
+    `ConditionMet`/`ConditionNotMet` arms) with the terraform `Pending`/`Succeeded`/`Failed`/`complete`/
+    `retryOrFail` paths byte-for-byte unchanged.
 - **ADR-021 refactor-session retro → harness** (rebased onto `origin/main` = PR #9, which **landed the
   ADR-021 claim-pull execution engine** — `PipelineScheduler`/`PipelineClaimer`/`PipelineWorker`/
   `StepRunner`/`StepReporter`, `OrchestrationException`/`OrchestrationErrorCode`, `advice/GlobalAdvice`).
