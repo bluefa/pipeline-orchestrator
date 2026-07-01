@@ -1,6 +1,6 @@
 # InfraManagerClient 프로덕션 구현 스펙 (Feign delegate)
 
-- Status: REWRITTEN against latest `origin/main` (ADR-021 claim-pull 실행 모델 반영). 구현 대기.
+- Status: IMPLEMENTED (최신 `origin/main` 위, ADR-021 claim-pull 모델 기준). codex 리뷰 2라운드 반영, 84 테스트 그린.
 - Branch: `feat/infra-manager-feign` (base = 최신 `origin/main`)
 - ⚠️ 이전 초안은 스테일 브랜치 기준이라 실행 모델을 잘못 서술했음 — 리베이스 후 전면 교정.
 
@@ -10,7 +10,7 @@
 
 - `InfraManagerClient` 인터페이스는 4메서드: `runTerraform` / `terraformJobStatus` / `checkCondition` / **`cloudProvider`**.
 - 프로덕션 HTTP 구현체가 **없다.** 대신 데코레이터 `TimeBoundedInfraManagerClient`가 이미 존재하며, 그 delegate 슬롯(`infraManagerDelegate` 빈)이 **비어 있다.**
-- 데코레이터는 `@ConditionalOnBean(name = "infraManagerDelegate")`라, delegate 빈이 없으면 자기도 안 뜬다. 그래서 지금은 **테스트만** `FakeInfraManagerClient`를 직접 주입해 통과하고, **실서버 기동엔 실제 HTTP delegate가 반드시 필요**하다.
+- 데코레이터는 base-url 프로퍼티가 있을 때만 켜지고(§8) delegate가 없으면 도메인이 주입받을 `InfraManagerClient`도 없다. 그래서 지금은 **슬라이스 테스트만** `FakeInfraManagerClient`를 직접 주입해 통과하고, **실서버 기동엔 실제 HTTP delegate가 반드시 필요**하다.
 - 결론: 우리가 만들 것은 **`infraManagerDelegate` 라는 이름의 Feign 기반 HTTP delegate 빈** 하나다.
 
 ---

@@ -51,8 +51,8 @@ public class InfraManagerFeignAdapter implements InfraManagerClient {
     @Override
     public TerraformPoll terraformJobStatus(String jobId) {
         TerraformStatusResponse response = translating(() -> feign.terraformJobStatus(jobId));
-        if (response == null) {
-            throw new CallFailedException("InfraManager returned no status for job " + jobId);
+        if (response == null || response.finished() == null || response.succeeded() == null) {
+            throw new CallFailedException("InfraManager returned an incomplete status for job " + jobId);
         }
         try {
             return new TerraformPoll(response.finished(), response.succeeded());
@@ -65,7 +65,7 @@ public class InfraManagerFeignAdapter implements InfraManagerClient {
     @Override
     public boolean checkCondition(String target, TaskOperation operation) {
         ConditionResponse response = translating(() -> feign.checkCondition(operation, target));
-        if (response == null) {
+        if (response == null || response.met() == null) {
             throw new CallFailedException("InfraManager returned no condition result for " + operation);
         }
         return response.met();

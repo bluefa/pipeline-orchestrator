@@ -67,6 +67,23 @@ class InfraManagerFeignAdapterTest {
     }
 
     @Test
+    void treatsAnIncompleteStatusAsACallFailure() {
+        // 누락 필드 응답(예: {})은 Boolean이 null로 디코딩됨 → 조용히 false로 처리하지 않고 CallFailed.
+        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(new TerraformStatusResponse(null, true)));
+
+        assertThatThrownBy(() -> adapter.terraformJobStatus("job-1"))
+                .isInstanceOf(InfraManagerClient.CallFailedException.class);
+    }
+
+    @Test
+    void treatsAMissingConditionFieldAsACallFailure() {
+        InfraManagerFeignAdapter adapter = adapter(stub().withCondition(new ConditionResponse(null)));
+
+        assertThatThrownBy(() -> adapter.checkCondition("target-a", TaskOperation.NETWORK_READY))
+                .isInstanceOf(InfraManagerClient.CallFailedException.class);
+    }
+
+    @Test
     void returnsTheConditionOutcome() {
         InfraManagerFeignAdapter met = adapter(stub().withCondition(new ConditionResponse(true)));
         InfraManagerFeignAdapter notMet = adapter(stub().withCondition(new ConditionResponse(false)));
