@@ -18,13 +18,13 @@ import org.springframework.stereotype.Component;
  * 일치하는지(§3). (mechanism이 등록된 TaskType을 갖는지는 TaskTypeRegistry가 검증한다.)
  */
 @Component
-public class Recipes {
+public class RecipeCatalog {
 
     private record Key(CloudProvider provider, PipelineType type) { }
 
     private final Map<Key, RecipeDefinition> byKey;
 
-    public Recipes() {
+    public RecipeCatalog() {
         Map<Key, RecipeDefinition> map = new HashMap<>();
         for (RecipeDefinition recipe : RecipeDefinition.values()) {
             for (TaskDefinition step : recipe.steps()) {

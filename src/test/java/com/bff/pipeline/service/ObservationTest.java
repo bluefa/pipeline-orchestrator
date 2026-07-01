@@ -22,7 +22,7 @@ import com.bff.pipeline.service.execution.StepReporter;
 import com.bff.pipeline.service.execution.StepRunner;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
 import com.bff.pipeline.service.lifecycle.PipelineInserter;
-import com.bff.pipeline.service.lifecycle.Recipes;
+import com.bff.pipeline.service.lifecycle.RecipeCatalog;
 import com.bff.pipeline.service.task.ConditionCheckTask;
 import com.bff.pipeline.service.task.ObservationRecorder;
 import com.bff.pipeline.service.task.TaskCanceller;
@@ -51,7 +51,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
         TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, ConditionCheckTask.class,
         ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class, PipelineInserter.class,
-        Recipes.class, PipelineExecutionTest.Wiring.class})
+        RecipeCatalog.class, PipelineExecutionTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class ObservationTest {
 

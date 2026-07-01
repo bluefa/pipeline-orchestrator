@@ -31,18 +31,18 @@ import org.springframework.stereotype.Service;
 public class PipelineCreator {
 
     private final PipelineInserter pipelineInserter;
-    private final Recipes recipes;
+    private final RecipeCatalog recipeCatalog;
     private final InfraManagerClient infraManagerClient;
 
-    public PipelineCreator(PipelineInserter pipelineInserter, Recipes recipes, InfraManagerClient infraManagerClient) {
+    public PipelineCreator(PipelineInserter pipelineInserter, RecipeCatalog recipeCatalog, InfraManagerClient infraManagerClient) {
         this.pipelineInserter = pipelineInserter;
-        this.recipes = recipes;
+        this.recipeCatalog = recipeCatalog;
         this.infraManagerClient = infraManagerClient;
     }
 
     public Pipeline create(String target, PipelineType type) {
         CloudProvider provider = resolveProvider(target);   // 트랜잭션 밖 외부 조회(§3)
-        RecipeDefinition recipe = recipes.forProviderAndType(provider, type)
+        RecipeDefinition recipe = recipeCatalog.forProviderAndType(provider, type)
                 .orElseThrow(() -> new UnsupportedRecipeException(provider, type));
         try {
             return pipelineInserter.insert(target, type, provider, recipe);
