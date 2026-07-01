@@ -58,6 +58,7 @@ public class PipelineControl {
         } else {
             pipelineRepository.requestCancel(pipelineId, now);                             // Case B (live lease, 또는 이미 종료됨 → 0행 멱등)
         }
-        return pipelineRepository.findById(pipelineId).orElseThrow();
+        return pipelineRepository.findById(pipelineId)
+                .orElseThrow(() -> new PipelineNotFoundException(pipelineId));
     }
 }
