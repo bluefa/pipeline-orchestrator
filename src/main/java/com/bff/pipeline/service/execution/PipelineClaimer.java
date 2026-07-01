@@ -2,14 +2,11 @@ package com.bff.pipeline.service.execution;
 
 import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.dto.Claim;
-import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.repository.PipelineRepository;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -45,15 +42,13 @@ public class PipelineClaimer {
         if (pipelineRepository.countByClaimedUntilAfter(now) >= executionSettings.runningPipelineCap()) {
             return Optional.empty();
         }
-        List<Pipeline> due = pipelineRepository.findClaimableDuePipelines(now, PageRequest.of(0, 1));
-        if (due.isEmpty()) {
-            return Optional.empty();
-        }
-        Pipeline pipeline = due.get(0);
-        String token = UUID.randomUUID().toString();
-        pipeline.setClaimedBy(token);
-        pipeline.setClaimedUntil(now.plus(executionSettings.leaseDuration()));
-        return Optional.of(new Claim(pipeline.getId(), token));
+        return pipelineRepository.findNextClaimableDuePipeline(now)
+                .map(pipeline -> {
+                    String token = UUID.randomUUID().toString();
+                    pipeline.setClaimedBy(token);
+                    pipeline.setClaimedUntil(now.plus(executionSettings.leaseDuration()));
+                    return new Claim(pipeline.getId(), token);
+                });
     }
 
     @Transactional(readOnly = true)
