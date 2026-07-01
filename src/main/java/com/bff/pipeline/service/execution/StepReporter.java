@@ -101,16 +101,28 @@ public class StepReporter {
 
     private void converge(Pipeline pipeline, List<Task> chain) {
         Instant now = clock.instant();
-        if (chain.stream().anyMatch(task -> task.getStatus() == TaskStatus.FAILED)) {
+        if (anyTaskFailed(chain)) {
             taskCanceller.cancelNonTerminal(chain);
             terminalize(pipeline, PipelineStatus.FAILED, now);
-        } else if (chain.stream().allMatch(task -> task.getStatus() == TaskStatus.DONE)) {
+        } else if (allTasksDone(chain)) {
             terminalize(pipeline, PipelineStatus.DONE, now);
-        } else if (chain.stream().allMatch(task -> task.getStatus().isTerminal())) {
-            // 방어적 생존성 가드: 모든 task가 종료 상태이지만 all-DONE도 any-FAILED도 아닌 경우다(예: 전체 CANCELLED).
+        } else if (allTasksTerminal(chain)) {
+            // 방어적 생존성 가드: 모든 task가 종료됐지만 all-DONE도 any-FAILED도 아닌 경우다(예: 전체 CANCELLED).
             // RUNNING pipeline이 재claim 루프에 갇히지 않게 막는다.
             terminalize(pipeline, PipelineStatus.CANCELLED, now);
         }
+    }
+
+    private boolean anyTaskFailed(List<Task> chain) {
+        return chain.stream().anyMatch(task -> task.getStatus() == TaskStatus.FAILED);
+    }
+
+    private boolean allTasksDone(List<Task> chain) {
+        return chain.stream().allMatch(task -> task.getStatus() == TaskStatus.DONE);
+    }
+
+    private boolean allTasksTerminal(List<Task> chain) {
+        return chain.stream().allMatch(task -> task.getStatus().isTerminal());
     }
 
     private void terminalize(Pipeline pipeline, PipelineStatus status, Instant now) {

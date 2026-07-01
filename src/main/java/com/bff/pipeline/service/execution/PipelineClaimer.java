@@ -38,8 +38,7 @@ public class PipelineClaimer {
     @Transactional
     public Optional<Claim> claimOneDue() {
         Instant now = clock.instant();
-        // soft admission gate — RUNNING 전체가 아니라 활성 claim 수만 센다. count-read라서 M+C-1 overshoot는 허용한다.
-        if (pipelineRepository.countByClaimedUntilAfter(now) >= executionSettings.runningPipelineCap()) {
+        if (atRunningCapacity(now)) {
             return Optional.empty();
         }
         return pipelineRepository.findNextClaimableDuePipeline(now)
@@ -54,5 +53,13 @@ public class PipelineClaimer {
     @Transactional(readOnly = true)
     public Optional<Instant> nearestClaimableDueAt() {
         return pipelineRepository.findNearestClaimableDueAt(clock.instant());
+    }
+
+    /**
+     * admission soft-cap — 현재 활성(미만료) claim 수가 정원({@code runningPipelineCap})에 도달했는지 본다.
+     * RUNNING 행 전체가 아니라 활성 claim만 센다. 단순 count-read라 M+C-1 overshoot는 허용한다(soft cap).
+     */
+    private boolean atRunningCapacity(Instant now) {
+        return pipelineRepository.countByClaimedUntilAfter(now) >= executionSettings.runningPipelineCap();
     }
 }
