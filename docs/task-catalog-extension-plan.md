@@ -87,13 +87,17 @@
 ## 3. Provider/Target 정체성 (§9-P1 해결)
 
 - **target은 전역 유일 파이프라인 정체성.** `active_target` 유니크 제약 target-only 유지, provider를 키에 넣지 않는다.
-- **provider는 target에서 파생한다(권위 있는 resolver).** `ProviderResolver.of(target): Provider`가 유일한 권위.
-  **순수 파서**(외부 조회 없음, 5xx 경로 없음): target이 provider를 결정적으로 인코딩/매핑한다. 파싱 불가/미지원 target →
-  **400**(검증 실패)로 끊고 절대 5xx가 아니다. create 입력이 provider를 보내더라도 그건 **assertion일 뿐** — 파생값과
-  불일치하면 400. 파생된 provider를 Pipeline에 저장. provider는 recipe 선택·라우팅·표시용이지 격리 축이 아니다.
-  (후일 BackendManager 외부 조회가 필요해지면 그건 별도 결정: not-found/ambiguous→400, lookup 장애→503.)
-- 결과: `AWS+targetA` / `GCP+targetA` 애매성 없음 — targetA의 provider는 target이 결정. single-owner는 target만으로 성립.
-- create 경로(`PipelineCreator`/`PipelineInserter`): `target`→provider 파생 → `RecipeKey(provider, pipelineType)`로
+- **provider는 targetSourceId로 외부 조회해 얻는다.** target은 targetSourceId 기반이고, 그 target에 수행 가능한 cloud
+  provider는 **기존 `InfraManagerClient`(프로덕션은 Feign) 호출**로 결정된다 — 별도 클라이언트를 만들지 않고 인터페이스에
+  `cloudProvider(targetSourceId): CloudProvider` 조회를 추가한다. enum `CloudProvider { AWS, GCP, AZURE, IDC }`,
+  Pipeline 필드명 `cloudProvider`.
+- **create 시점에만 한 번 조회**하고 결과를 `Pipeline.cloudProvider`에 영속 → claim-pull 실행 경로(hot path)는 이 조회에
+  의존하지 않는다(ADR-021 영향 0).
+- **실패 계약**(exception-strategy 정합): provider를 못 찾음/모호 → **400**; 조회 서버 장애/타임아웃 → **503**(인프라
+  실패, 예외 전파). create 입력이 provider를 보내면 조회값과 일치하는지만 확인(불일치 400), 없으면 조회값 사용.
+- provider는 recipe 선택·라우팅·표시용이지 격리 축이 아니다.
+- 결과: `AWS+targetA` / `GCP+targetA` 애매성 없음 — targetA의 provider는 조회가 결정. single-owner는 target만으로 성립.
+- create 경로(`PipelineCreator`/`PipelineInserter`): targetSourceId→provider 조회 → `RecipeKey(provider, pipelineType)`로
   RecipeDefinition 조회, 없으면 400.
 - **부팅 검증에 provider 정합성 추가(§9-P1)**: recipe의 `provider`와 그 recipe가 참조하는 **모든 step `TaskDefinition`의
   `provider`가 일치**하는지 부팅 시 fail-fast. (AWS recipe가 실수로 GCP task 정의를 품는 걸 막는다.)
@@ -210,7 +214,7 @@ metadata가 코드 관리 정적값이므로 **카탈로그 API는 순수 read**
 ### 9.3 라운드 3 반영
 - **P1 double source of truth** → §4: `task_definition`을 **단일 진실원**으로 명시, 투영 컬럼은 write-once 캐시,
   StepRunner가 외부 호출 전 정의↔캐시 일관성 단언(불일치 시 `CHECK_ERROR`).
-- **P1 ProviderResolver 실패 계약** → §3: **순수 파서**, 미지원/파싱불가 target→400, 5xx 없음.
+- **P1 provider 조회 실패 계약** → §3: InfraManagerClient 외부 조회(cloudProvider), not-found/모호→400, 조회 장애→503.
 - **P2 drain cutover 세부** → §4 런북: 신규 create 차단·구버전 워커 종료 확인·새 컬럼 nullable.
 - **P2 부팅 mechanism 검증** → §2(4): 광고된 step 정의의 mechanism이 registry에 등록된 `TaskType`을 갖는지 부팅 검증.
 
@@ -218,7 +222,7 @@ metadata가 코드 관리 정적값이므로 **카탈로그 API는 순수 read**
 - **P1 데이터 마이그레이션** → §4 말미: Flyway 금지 환경, **drain-before-deploy**(RUNNING 0) 요구, 미출시 확장의 추가분.
 - **P1 실행 계약(no-snapshot 모순)** → §0-4/§4: `taskName`/`operation` **row 유지**(실행 투영, TaskType 시그니처 무변경),
   StepRunner가 정의 미스·registry 미스 **둘 다 호출 전 `unknownTask` 매핑**.
-- **P1 provider 정합성** → §3: `ProviderResolver.of(target)` 권위 파생, request provider는 assertion, 부팅 시
+- **P1 provider 정합성** → §3: cloudProvider 외부 조회가 권위, request provider는 assertion, 부팅 시
   recipe.provider == step 정의 provider 검증.
 - **P2 Admin degrade 모순** → §7: `taskName`/`operation` 투영이 row에 남으므로 미해석 정의도 스냅샷값 노출과 정합.
 
