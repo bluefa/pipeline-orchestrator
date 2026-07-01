@@ -54,7 +54,12 @@ public class InfraManagerFeignAdapter implements InfraManagerClient {
         if (response == null) {
             throw new CallFailedException("InfraManager returned no status for job " + jobId);
         }
-        return new TerraformPoll(response.finished(), response.succeeded());
+        try {
+            return new TerraformPoll(response.finished(), response.succeeded());
+        } catch (IllegalArgumentException impossibleState) {
+            // 불가능한 조합(!finished && succeeded)은 쓸 수 없는 외부 응답이지 우리 버그가 아니다 → 닫힌 어휘로.
+            throw new CallFailedException("InfraManager returned an impossible poll state for job " + jobId);
+        }
     }
 
     @Override

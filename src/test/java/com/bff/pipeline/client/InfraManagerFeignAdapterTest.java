@@ -57,6 +57,16 @@ class InfraManagerFeignAdapterTest {
     }
 
     @Test
+    void treatsAnImpossiblePollStateAsACallFailure() {
+        // {finished:false, succeeded:true}는 TerraformPoll 불변식 위반 → 우리 버그가 아니라 쓸 수 없는 외부 응답.
+        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(new TerraformStatusResponse(false, true)));
+
+        assertThatThrownBy(() -> adapter.terraformJobStatus("job-9"))
+                .isInstanceOf(InfraManagerClient.CallFailedException.class)
+                .hasMessageContaining("job-9");
+    }
+
+    @Test
     void returnsTheConditionOutcome() {
         InfraManagerFeignAdapter met = adapter(stub().withCondition(new ConditionResponse(true)));
         InfraManagerFeignAdapter notMet = adapter(stub().withCondition(new ConditionResponse(false)));

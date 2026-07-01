@@ -20,7 +20,7 @@
 ```
 StepRunner  (외부 호출 지점, @Transactional 없음 — 트랜잭션 밖에서 돎)
   └ InfraManagerClient  (도메인이 주입받는 것 = @Primary 데코레이터)
-       = TimeBoundedInfraManagerClient   @Primary, @ConditionalOnBean("infraManagerDelegate")
+       = TimeBoundedInfraManagerClient   @Primary, @ConditionalOnProperty("infra-manager.base-url")
             · 별도 풀(infraManagerCallPool)에서 future.get(apiCallTimeout)로 호출별 타임아웃 강제
             · timeout → CallTimeout,  interrupt → CallInterrupted(+플래그 복원)
             · 그 밖의 RuntimeException은 언랩해 그대로 전파(fail-fast)
@@ -83,7 +83,7 @@ per-call 타임아웃은 데코레이터의 `apiCallTimeout`이 authoritative다
 
 | 도메인 메서드 | HTTP (가정) | 응답 wire DTO | 어댑터가 도메인에 넘기는 것 |
 |---|---|---|---|
-| `runTerraform(target, operation)` | `POST /infra/terraform/{operation}` body `{ "target": ... }` | `{ "jobIds": ["job-1", ...] }` | **`["job-1", ...]` bare JSON 배열 문자열** (⚠️ 아래) |
+| `runTerraform(target, operation)` | `POST /infra/terraform/{operation}?target=` | `{ "jobIds": ["job-1", ...] }` | **`["job-1", ...]` bare JSON 배열 문자열** (⚠️ 아래) |
 | `terraformJobStatus(jobId)` | `GET /infra/terraform/jobs/{jobId}` | `{ "finished":bool, "succeeded":bool }` | `TerraformPoll` |
 | `checkCondition(target, operation)` | `GET /infra/conditions/{operation}?target=` | `{ "met": bool }` | `boolean` |
 | `cloudProvider(target)` | `GET /infra/targets/{target}/cloud-provider` | `{ "provider": "AWS" }` | `CloudProvider` (미매칭 값 → `CallFailed`) |
@@ -139,18 +139,21 @@ RequestInterceptor infraManagerAuth(@Value("${infra-manager.auth-token}") String
 
 ---
 
-## 8. 빈 배선 / 테스트 격리 — 이미 구조가 해결함
+## 8. 빈 배선 / 테스트 격리
 
-- Feign delegate를 **`infraManagerDelegate` 이름 빈**으로 등록한다. 그러면 기존 `TimeBoundedInfraManagerClient`(`@ConditionalOnBean("infraManagerDelegate")` + `@Primary`)가 자동으로 켜져 도메인이 데코레이터를 주입받는다.
+- **`FeignConfig` 클래스 전체를 `@ConditionalOnProperty("infra-manager.base-url")`로 게이트한다.** `@EnableFeignClients`가 클래스에 달려 있어, base-url이 없으면 `@FeignClient` url 플레이스홀더 해석이 시작 시점에 터지는 것(P1, codex/opus)을 이 클래스 게이트가 막는다. delegate @Bean만 게이트하면 늦다.
   ```java
-  @Bean("infraManagerDelegate")
-  @ConditionalOnProperty(prefix = "infra-manager", name = "base-url")   // 값 있을 때만(프로덕션)
-  InfraManagerClient infraManagerDelegate(InfraManagerFeignClient feign, ObjectMapper mapper) {
-      return new InfraManagerFeignAdapter(feign, mapper);
+  @Configuration
+  @ConditionalOnProperty(prefix = "infra-manager", name = "base-url")
+  @EnableFeignClients(clients = InfraManagerFeignClient.class)
+  class FeignConfig {
+      @Bean RequestInterceptor infraManagerAuth(...) { /* 빈 토큰이면 fail-fast */ }
+      @Bean("infraManagerDelegate") InfraManagerClient infraManagerDelegate(...) { ... }
   }
   ```
-- **테스트는 변경 없음.** 최신 main엔 `@SpringBootTest`가 없다 — 모든 테스트가 `@DataJpaTest` 슬라이스 + `new FakeInfraManagerClient()`. 슬라이스는 `@EnableFeignClients`/delegate를 컴포넌트 스캔하지 않으므로 delegate가 안 뜨고, 데코레이터도 `@ConditionalOnBean`으로 안 뜬다 → fake만 쓰인다. **빈 충돌 없음.**
-- `@EnableFeignClients`는 `PipelineApplication`(또는 `config/`의 설정 클래스)에. `base-url` 미설정이면 delegate가 안 떠 데모/로컬 기동도 안 깨진다.
+- **데코레이터 조건을 `@ConditionalOnBean` → `@ConditionalOnProperty("infra-manager.base-url")`로 바꿨다(1줄, 정확성 수정).** `@ConditionalOnBean(name="infraManagerDelegate")`는 컴포넌트 스캔 순서상 delegate 등록 **전에** 평가돼 데코레이터가 안 뜨고, 그러면 도메인이 **타임아웃 없는 raw delegate를 직접 주입**받는 버그가 실제 재현됐다(`FeignDelegateWiringTest`). delegate와 데코레이터를 **같은 프로퍼티**로 켜면 조건 순서와 무관하고, 데코레이터는 delegate를 `@Qualifier`로 주입받아 의존성 해석이 생성 순서를 보장한다.
+- **테스트 격리:** 최신 main엔 (이 작업 전엔) `@SpringBootTest`가 없었다 — 모든 테스트가 `@DataJpaTest` 슬라이스 + `new FakeInfraManagerClient()`. 슬라이스는 `FeignConfig`를 스캔하지 않고 base-url도 없으므로 delegate·데코레이터 둘 다 안 뜬다 → fake만. 빈 충돌 없음.
+- **인증:** base-url이 있는 프로덕션에서 `auth-token`이 비면 매 호출이 401→CHECK_ERROR로 조용히 실패하므로, 인터셉터 빈이 **시작 시점에 fail-fast**한다(P2, codex).
 
 ---
 
@@ -181,7 +184,7 @@ RequestInterceptor infraManagerAuth(@Value("${infra-manager.auth-token}") String
 - `pom.xml` — spring-cloud BOM + openfeign starter
 - `application.yml` — `infra-manager` 블록
 
-**손 안 대는 것**: `InfraManagerClient` 인터페이스, `TimeBoundedInfraManagerClient` 데코레이터, 도메인/실행 계층(`StepRunner`/`PipelineWorker`/…), 기존 테스트·fake. (테스트 0줄 변경.)
+**최소 변경**: `TimeBoundedInfraManagerClient`는 조건 애너테이션 1줄만 교체(`@ConditionalOnBean`→`@ConditionalOnProperty`, §8). `InfraManagerClient` 인터페이스, 도메인/실행 계층(`StepRunner`/`PipelineWorker`/…), 기존 테스트·fake는 무변경.
 
 ---
 
@@ -189,7 +192,7 @@ RequestInterceptor infraManagerAuth(@Value("${infra-manager.auth-token}") String
 
 - **D-1 백엔드:** 현재 platform thread라 pinning 무관 → **기본 Feign 백엔드로 시작.** VT 전환 시 `feign-java11`로 교체(§4).
 - **D-2 HTTP 계약:** 실제 스펙 없음 → `/infra/...` 가정(§5). 확정 시 인터페이스+DTO만 조정.
-- **D-3 빈 격리:** 별도 조치 불요 — `infraManagerDelegate` 이름 등록 + 기존 `@ConditionalOnBean`/`@Primary` 데코레이터로 해결. `@ConditionalOnProperty(base-url)`로 프로덕션 게이트. **테스트 무변경.**
+- **D-3 빈 격리:** `FeignConfig` 클래스 게이트(`@ConditionalOnProperty(base-url)`) + 데코레이터 조건을 동일 프로퍼티로 통일. `@ConditionalOnBean`의 스캔 순서 취약성 회피(§8, `FeignDelegateWiringTest`로 검증).
 - **D-4 통합테스트:** WireMock 추가.
 - **D-5 실패 세부 영속:** 신규 컬럼 없음(§6).
 - **번역 위치:** delegate 어댑터의 `catch(FeignException)` 한 경계(RetryableException 포함). 타임아웃/인터럽트는 데코레이터 소유.

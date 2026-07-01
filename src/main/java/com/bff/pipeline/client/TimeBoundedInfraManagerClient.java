@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
@@ -25,13 +25,15 @@ import org.springframework.stereotype.Component;
  * (자기참조 회피). delegate가 던지는 닫힌 어휘 예외는 그대로 흘려보내고, 그 밖의 {@code RuntimeException}은
  * 언랩해 전파한다(fail-fast). 인터럽트는 {@link CallInterruptedException}으로 바꾸면서 인터럽트 플래그를 복원한다.
  *
- * <p>{@code @ConditionalOnBean(name = "infraManagerDelegate")} — 실제 HTTP delegate가 등록됐을 때만 활성화된다.
- * 이 데모 repo에는 프로덕션 HTTP 구현이 없으므로(테스트는 fake를 직접 주입) delegate가 없으면 데코레이터도
- * 만들어지지 않아 컨텍스트 기동을 깨뜨리지 않는다. 프로덕션은 {@code infraManagerDelegate} 빈을 제공해 켠다.
+ * <p>{@code @ConditionalOnProperty("infra-manager.base-url")} — 프로덕션 HTTP delegate를 켜는 것과 동일한 프로퍼티로
+ * 함께 활성화된다({@code FeignConfig}도 같은 조건). delegate와 데코레이터가 같은 프로퍼티 조건이라 조건 평가 순서에
+ * 무관하고, 데코레이터는 delegate를 {@code @Qualifier}로 주입받으므로 의존성 해석이 생성 순서를 보장한다
+ * (컴포넌트 스캔 순서에 취약한 {@code @ConditionalOnBean} 대신). base-url이 없는 슬라이스 테스트는 fake를 직접
+ * 주입하므로 데코레이터가 뜨지 않는다.
  */
 @Primary
 @Component
-@ConditionalOnBean(name = "infraManagerDelegate")
+@ConditionalOnProperty(prefix = "infra-manager", name = "base-url")
 public class TimeBoundedInfraManagerClient implements InfraManagerClient {
 
     private final InfraManagerClient delegate;
