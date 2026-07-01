@@ -4,6 +4,7 @@ import com.bff.pipeline.config.PipelineSettings;
 import com.bff.pipeline.entity.Task;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 
 /**
  * 태스크별 파라미터 해석과 데드라인 계산을 맡는 순수 정적 유틸리티 클래스다. 모든 메서드가
@@ -36,6 +37,10 @@ public final class TaskSettings {
     }
 
     public static boolean isPastDeadline(Task task, Duration deadline, Clock clock) {
-        return task.getStartedAt() != null && !clock.instant().isBefore(task.getStartedAt().plus(deadline));
+        if (task.getStartedAt() == null) {
+            return false;   // 아직 시작 전 → 데드라인 없음
+        }
+        Instant deadlineAt = task.getStartedAt().plus(deadline);
+        return !clock.instant().isBefore(deadlineAt);   // now ≥ deadlineAt (데드라인 도달/경과)
     }
 }

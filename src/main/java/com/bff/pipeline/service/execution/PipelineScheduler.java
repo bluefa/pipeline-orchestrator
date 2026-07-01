@@ -184,9 +184,9 @@ public class PipelineScheduler {
     }
 
     static Duration capToNearestDue(Duration delay, Optional<Instant> nearestDueAt, Instant now) {
-        if (nearestDueAt.isEmpty() || !nearestDueAt.get().isAfter(now)) {
-            return delay;
-        }
-        return min(Duration.between(now, nearestDueAt.get()), delay);
+        return nearestDueAt
+                .filter(due -> due.isAfter(now))                        // 미래의 due만 상한 후보
+                .map(due -> min(Duration.between(now, due), delay))     // 그 due까지로 idle sleep을 좁힘
+                .orElse(delay);                                        // due 없거나 이미 지남 → 그대로
     }
 }
