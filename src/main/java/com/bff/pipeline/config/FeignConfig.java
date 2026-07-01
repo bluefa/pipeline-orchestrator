@@ -3,6 +3,7 @@ package com.bff.pipeline.config;
 import com.bff.pipeline.client.InfraManagerClient;
 import com.bff.pipeline.client.InfraManagerFeignAdapter;
 import com.bff.pipeline.client.InfraManagerFeignClient;
+import com.bff.pipeline.client.InfraManagerOperationRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import feign.RequestInterceptor;
 import org.springframework.beans.factory.annotation.Value;
@@ -43,7 +44,8 @@ public class FeignConfig {
     }
 
     @Bean("infraManagerDelegate")
-    InfraManagerClient infraManagerDelegate(InfraManagerFeignClient feign, ObjectMapper objectMapper) {
-        return new InfraManagerFeignAdapter(feign, objectMapper);
+    InfraManagerClient infraManagerDelegate(InfraManagerFeignClient feign, InfraManagerOperationRegistry registry,
+            ObjectMapper objectMapper) {
+        return new InfraManagerFeignAdapter(feign, registry, objectMapper);
     }
 }

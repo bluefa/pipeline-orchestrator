@@ -125,7 +125,10 @@ class InfraManagerFeignAdapterTest {
     }
 
     private InfraManagerFeignAdapter adapter(StubFeignClient stub) {
-        return new InfraManagerFeignAdapter(stub, objectMapper);
+        InfraManagerOperationRegistry registry = new InfraManagerOperationRegistry(
+                List.of(new ApplyNetworkBinding(stub), new DestroyNetworkBinding(stub)),
+                List.of(new NetworkReadyBinding(stub)));
+        return new InfraManagerFeignAdapter(stub, registry, objectMapper);
     }
 
     private StubFeignClient stub() {

@@ -44,7 +44,11 @@ class InfraManagerFeignIntegrationTest {
     void start() {
         wireMock = new WireMockServer(options().dynamicPort());
         wireMock.start();
-        adapter = new InfraManagerFeignAdapter(feignClient(wireMock.baseUrl(), 500), objectMapper);
+        InfraManagerFeignClient client = feignClient(wireMock.baseUrl(), 500);
+        InfraManagerOperationRegistry registry = new InfraManagerOperationRegistry(
+                java.util.List.of(new ApplyNetworkBinding(client), new DestroyNetworkBinding(client)),
+                java.util.List.of(new NetworkReadyBinding(client)));
+        adapter = new InfraManagerFeignAdapter(client, registry, objectMapper);
     }
 
     @AfterEach

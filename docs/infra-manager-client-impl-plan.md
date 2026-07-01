@@ -92,7 +92,16 @@ per-call 타임아웃은 데코레이터의 `apiCallTimeout`이 authoritative다
 | `checkCondition(target, op)` | `NETWORK_READY` | `networkReady` → `GET /infra/network/ready?target=` | `NetworkReadyResponse` | `boolean` |
 | `cloudProvider(target)` | — | `cloudProvider` → `GET /infra/targets/{target}/cloud-provider` | `CloudProviderResponse` | `CloudProvider` |
 
-**operation 추가 = 세트 추가.** operation 하나가 실제로 다른 API 하나이므로, 늘 때마다 (전용 Feign 메서드 + 전용 응답 DTO + 어댑터 라우팅 case + 도메인 공통 형식 변환)을 함께 추가한다. 이는 스멜이 아니라 "N개의 서로 다른 실제 API"라는 본질의 반영이다. 도메인이 받는 공통 형식(jobIds 문자열 / TerraformPoll / boolean)은 고정이고, 각 operation의 전용 DTO를 어댑터가 그 형식으로 정규화한다. (case가 많아지면 `EnumMap<TaskOperation, handler>` 전략으로 옮길 수 있으나, 실제 API 스키마가 나오기 전엔 보류 — YAGNI.)
+### 5.1 operation → API 바인딩은 레지스트리가 소유 (self-registering + 부팅 검증)
+
+operation마다 실제 API·응답이 다르므로 "operation 하나 = 실제 API 하나"라 늘 때마다 (전용 Feign 메서드 + 전용 응답 DTO + 호출·변환)을 추가하는 건 본질이다. 다만 그 바인딩을 **어댑터 switch에 흩뿌리지 않는다** — `TaskTypeRegistry`와 같은 self-registering + 부팅 검증 패턴으로 옮겨, 새 개발자가 "무엇을 구현할지"를 컴파일러가 알려주고 "빠뜨림"을 부팅/CI가 잡게 한다.
+
+- mechanism당 바인딩 인터페이스: `TerraformOperationBinding {operation(); dispatchJobIds(target); poll(jobId);}`, `ConditionOperationBinding {operation(); check(target);}`.
+- operation마다 `@Component` 구현체 하나(`ApplyNetworkBinding`, `DestroyNetworkBinding`, `NetworkReadyBinding`)가 자기 Feign 호출 + 전용 DTO → 도메인 공통 형식 정규화(null·누락·불가능 조합은 `CallFailed`)를 **한 클래스에 응집**.
+- `InfraManagerOperationRegistry`가 바인딩 빈들을 operation으로 색인하고 **생성(부팅) 시 완전성 검증**: 모든 TERRAFORM_JOB operation이 정확히 하나의 `TerraformOperationBinding`, 모든 CONDITION_CHECK operation이 하나의 `ConditionOperationBinding`을 갖는가(누락·중복·mechanism 불일치 → 부팅 실패). `InfraManagerOperationRegistryTest`가 CI로 고정.
+- `InfraManagerFeignAdapter`는 switch 없이 `registry.terraform(op).dispatchJobIds(target)`로 위임하고, 공통 꼬리(빈 job id 검사·직렬화)와 전송 예외 번역만 담당.
+
+**새 operation 추가 워크플로우:** ① `TaskOperation`에 값+mechanism 추가 → ② `InfraManagerFeignClient`에 엔드포인트+전용 DTO 추가 → ③ 그 mechanism의 바인딩 인터페이스를 구현(**컴파일러가 dispatch/status/check 강제**) + `@Component` → ④ `TaskDefinition`/recipe 연결 → ⑤ 실행 시 누락·불일치는 **registry 검증이 부팅/CI에서** 잡는다(런타임 아님). 바인딩 누락은 외부 호출 실패가 아니라 설정 오류이므로 부팅 fail-fast가 맞다(exception-strategy).
 
 > ⚠️ **파서 일치:** `TerraformTask.check`는 `attempt.response`를 `List<String>` JSON, 즉 정확히 `["job-1", ...]`로 역직렬화한다(`TypeReference<List<String>>`). 어댑터는 wire DTO `{jobIds:[...]}`를 받되 **`jobIds` 배열만 JSON 문자열로 재직렬화**해 넘긴다.
 
