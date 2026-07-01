@@ -1,11 +1,11 @@
 package com.bff.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.exception.BadRequestException;
-import com.bff.pipeline.exception.NotFoundException;
+import com.bff.pipeline.exception.PipelineNotFoundException;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
@@ -29,6 +29,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -73,14 +74,19 @@ class PipelineControlTest {
 
     @Test
     void cancelRejectsANullPipelineIdAsABadRequest() {
-        assertThatThrownBy(() -> control.cancel(null))
-                .isInstanceOf(BadRequestException.class);
+        BadRequestException exception = catchThrowableOfType(() -> control.cancel(null), BadRequestException.class);
+
+        assertThat(exception.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(exception.code()).isEqualTo("ORCHESTRATION_PIPELINE_ID_REQUIRED");
     }
 
     @Test
     void cancelRejectsAMissingPipelineAsNotFound() {
-        assertThatThrownBy(() -> control.cancel(999_999L))
-                .isInstanceOf(NotFoundException.class);
+        PipelineNotFoundException exception =
+                catchThrowableOfType(() -> control.cancel(999_999L), PipelineNotFoundException.class);
+
+        assertThat(exception.status()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(exception.code()).isEqualTo("ORCHESTRATION_PIPELINE_NOT_FOUND");
     }
 
     @Test
