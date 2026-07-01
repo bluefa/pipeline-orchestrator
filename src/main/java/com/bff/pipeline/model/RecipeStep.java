@@ -1,18 +1,25 @@
 package com.bff.pipeline.model;
 
+import com.bff.pipeline.enums.TaskDefinition;
 import com.bff.pipeline.enums.TaskOperation;
 import java.util.Objects;
 
 /**
- * recipe의 한 단계 — 어떤 task type(taskName)이 어떤 operation을 수행하는지를 가리키는 값이다.
- * taskName은 {@code TaskTypeRegistry}가 해당 {@code TaskType} 구현체를 찾을 때 쓰는 안정적인 식별자이고,
- * operation은 그 task type이 실행할 구체적인 작업을 지정한다.
+ * recipe의 한 단계 — 명명된 {@link TaskDefinition} 하나를 가리킨다(설계: {@code docs/task-catalog-extension-plan.md}).
+ * mechanism(taskName)/operation은 정의에서 파생하므로 여기서 따로 들고 있지 않는다. 정의가 진실원이고, step은
+ * 순서 있는 참조일 뿐이다.
  */
-public record RecipeStep(String taskName, TaskOperation operation) {
+public record RecipeStep(TaskDefinition definition) {
     public RecipeStep {
-        if (taskName == null || taskName.isBlank()) {
-            throw new IllegalArgumentException("taskName must not be blank");
-        }
-        Objects.requireNonNull(operation, "operation must not be null");
+        Objects.requireNonNull(definition, "definition must not be null");
+    }
+
+    /** 이 step을 실행할 {@code TaskType}의 이름. */
+    public String taskName() {
+        return definition.mechanism();
+    }
+
+    public TaskOperation operation() {
+        return definition.operation();
     }
 }

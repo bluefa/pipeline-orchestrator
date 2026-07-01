@@ -64,6 +64,8 @@ public class PipelineInserter {
                             .sequence(sequence)
                             .taskName(step.taskName())
                             .operation(step.operation())
+                            .taskDefinition(step.definition().name())
+                            .consumesTerraformSlot(step.definition().consumesTerraformSlot())
                             .status(first ? TaskStatus.READY : TaskStatus.BLOCKED)
                             .readyAt(first ? now : null)
                             .failCount(0)

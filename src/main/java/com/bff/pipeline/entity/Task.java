@@ -73,6 +73,22 @@ public class Task {
     @Column(nullable = false)
     private TaskOperation operation;
 
+    /**
+     * 이 행의 진실원 — TaskDefinition 상수 이름(String, 버전 불변). taskName/operation은 insert 때 이 정의에서 파생된
+     * write-once 캐시다. @Enumerated가 아니라 String으로 두어, 삭제/rename된 정의도 read를 터뜨리지 않고
+     * TaskDefinition.find(name)이 UNKNOWN_TASK로 열화하게 한다.
+     * (미출시 확장의 추가분 — cutover는 drain-before-deploy이므로 신규 행에만 채워진다. nullable.)
+     */
+    @Column(name = "task_definition")
+    private String taskDefinition;
+
+    /**
+     * terraform slot 소비 여부를 insert 때 mechanism에서 파생해 박아 둔 캐시다(ADR-021 Decision 7). slot 게이트가
+     * 카탈로그·정의 삭제와 무관하게 이 boolean만으로 IN_PROGRESS 점유 수를 세게 한다. nullable(drain-before-deploy).
+     */
+    @Column(name = "consumes_terraform_slot")
+    private Boolean consumesTerraformSlot;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private TaskStatus status;

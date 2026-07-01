@@ -1,38 +1,66 @@
 package com.bff.pipeline.service.task;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
+import com.bff.pipeline.enums.TaskDefinition;
 import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
-/** ADR-021 terraform slot 게이트의 집계 기반: registry가 슬롯-소비 타입 이름을 어떻게 모으는지 검증한다. */
+/** registry의 이름 해석과, 카탈로그가 광고하는 모든 TaskDefinition mechanism이 등록됐는지에 대한 부팅 검증을 다룬다. */
 class TaskTypeRegistryTest {
 
-    /**
-     * terraformSlotTaskNames는 {@code consumesTerraformSlot()==true}인 <b>모든</b> 타입 이름을 모으고 나머지는 뺀다.
-     * 슬롯을 공유하는 terraform 계열 타입이 여럿이어도 하나도 놓치지 않아야 cap 카운트가 헐거워지지 않는다.
-     */
+    /** 카탈로그의 모든 mechanism에 대응하는 TaskType이 있으면 부팅되고, 이름을 그 타입으로 해석한다. */
     @Test
-    void collectsEveryTerraformSlotConsumingTypeName() {
-        TaskTypeRegistry registry = new TaskTypeRegistry(List.of(
-                fake("TERRAFORM_JOB", true),
-                fake("AWS_APPLY", true),
-                fake("CONDITION_CHECK", false)));
+    void resolvesRegisteredNamesWhenEveryDefinitionMechanismIsPresent() {
+        TaskTypeRegistry registry = new TaskTypeRegistry(everyMechanism());
 
-        assertThat(registry.terraformSlotTaskNames())
-                .containsExactlyInAnyOrder("TERRAFORM_JOB", "AWS_APPLY");
+        for (String mechanism : mechanismsInCatalog()) {
+            assertThat(registry.find(mechanism)).isPresent();
+        }
+        assertThat(registry.find("NOT_A_TYPE")).isEmpty();
+        assertThat(registry.find(null)).isEmpty();
+    }
+
+    /** 카탈로그가 광고하는 mechanism에 대응 TaskType이 없으면 부팅이 실패한다 — 런타임 확정 실패로 부팅되지 않게. */
+    @Test
+    void failsBootWhenACatalogMechanismHasNoRegisteredType() {
+        List<TaskType> missingOne = everyMechanism().stream()
+                .filter(type -> !type.taskName().equals(TaskDefinition.APPLY_NETWORK_V1.mechanism()))
+                .collect(Collectors.toList());
+
+        assertThatThrownBy(() -> new TaskTypeRegistry(missingOne))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(TaskDefinition.APPLY_NETWORK_V1.mechanism());
     }
 
     @Test
-    void isEmptyWhenNoTypeConsumesTheSlot() {
-        TaskTypeRegistry registry = new TaskTypeRegistry(List.of(fake("CONDITION_CHECK", false)));
+    void rejectsTwoTypesClaimingTheSameName() {
+        List<TaskType> clashing = new java.util.ArrayList<>(everyMechanism());
+        clashing.add(fake(TaskDefinition.APPLY_NETWORK_V1.mechanism(), true));
 
-        assertThat(registry.terraformSlotTaskNames()).isEmpty();
+        assertThatThrownBy(() -> new TaskTypeRegistry(clashing))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("claim taskName");
+    }
+
+    private static Set<String> mechanismsInCatalog() {
+        return java.util.Arrays.stream(TaskDefinition.values())
+                .map(TaskDefinition::mechanism)
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
+    private List<TaskType> everyMechanism() {
+        return mechanismsInCatalog().stream()
+                .map(name -> fake(name, name.contains("TERRAFORM")))
+                .collect(Collectors.toList());
     }
 
     private TaskType fake(String name, boolean consumesSlot) {
