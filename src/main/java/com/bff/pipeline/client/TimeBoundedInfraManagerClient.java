@@ -4,6 +4,8 @@ import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
+import com.bff.pipeline.exception.CallInterruptedException;
+import com.bff.pipeline.exception.CallTimeoutException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -11,7 +13,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
@@ -25,15 +26,13 @@ import org.springframework.stereotype.Component;
  * (자기참조 회피). delegate가 던지는 닫힌 어휘 예외는 그대로 흘려보내고, 그 밖의 {@code RuntimeException}은
  * 언랩해 전파한다(fail-fast). 인터럽트는 {@link CallInterruptedException}으로 바꾸면서 인터럽트 플래그를 복원한다.
  *
- * <p>{@code @ConditionalOnProperty("infra-manager.base-url")} — 프로덕션 HTTP delegate를 켜는 것과 동일한 프로퍼티로
- * 함께 활성화된다({@code FeignConfig}도 같은 조건). delegate와 데코레이터가 같은 프로퍼티 조건이라 조건 평가 순서에
- * 무관하고, 데코레이터는 delegate를 {@code @Qualifier}로 주입받으므로 의존성 해석이 생성 순서를 보장한다
- * (컴포넌트 스캔 순서에 취약한 {@code @ConditionalOnBean} 대신). base-url이 없는 슬라이스 테스트는 fake를 직접
- * 주입하므로 데코레이터가 뜨지 않는다.
+ * <p>delegate({@code infraManagerDelegate})는 {@code FeignConfig}가 제공하며, 데코레이터는 그것을 {@code @Qualifier}로
+ * 주입받는다 — 의존성 해석이 생성 순서를 보장한다. 슬라이스 테스트(@DataJpaTest)는 이 데코레이터도 fake도 컴포넌트
+ * 스캔하지 않고 fake를 직접 주입하므로 무관하다. (base-url·token은 필수 설정이라 full 컨텍스트는 그것 없이는 뜨지 않는다 —
+ * {@code FeignConfig} 참조.)
  */
 @Primary
 @Component
-@ConditionalOnProperty(prefix = "infra-manager", name = "base-url")
 public class TimeBoundedInfraManagerClient implements InfraManagerClient {
 
     private final InfraManagerClient delegate;

@@ -1,11 +1,12 @@
 package com.bff.pipeline.client;
 
+import com.bff.pipeline.client.condition.ConditionOperationBinding;
+import com.bff.pipeline.client.terraform.TerraformOperationBinding;
 import com.bff.pipeline.enums.TaskOperation;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
@@ -24,7 +25,6 @@ import org.springframework.stereotype.Component;
  * 실패가 아니라 설정/프로그래머 오류이므로 fail-fast가 맞다 — {@code docs/exception-strategy.md}).
  */
 @Component
-@ConditionalOnProperty(prefix = "infra-manager", name = "base-url")
 public class InfraManagerOperationRegistry {
 
     private final Map<TaskOperation, TerraformOperationBinding> terraform;

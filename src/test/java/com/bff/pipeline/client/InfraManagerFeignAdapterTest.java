@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.dto.ApplyJobStatusResponse;
 import com.bff.pipeline.dto.ApplyNetworkResponse;
+import com.bff.pipeline.client.condition.NetworkReadyBinding;
+import com.bff.pipeline.client.terraform.ApplyNetworkBinding;
+import com.bff.pipeline.client.terraform.DestroyNetworkBinding;
 import com.bff.pipeline.dto.CloudProviderResponse;
 import com.bff.pipeline.dto.DestroyJobStatusResponse;
 import com.bff.pipeline.dto.DestroyNetworkResponse;
@@ -15,6 +18,7 @@ import com.bff.pipeline.enums.TaskOperation;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import com.bff.pipeline.exception.CallFailedException;
 
 /**
  * {@link InfraManagerFeignAdapter}의 operation별 응답 변환·계약 방어를 검증한다. 전송 예외(FeignException)의 실제
@@ -37,7 +41,7 @@ class InfraManagerFeignAdapterTest {
         InfraManagerFeignAdapter adapter = adapter(stub().withApply(new ApplyNetworkResponse(List.of())));
 
         assertThatThrownBy(() -> adapter.runTerraform("target-a", TaskOperation.APPLY_NETWORK))
-                .isInstanceOf(InfraManagerClient.CallFailedException.class);
+                .isInstanceOf(CallFailedException.class);
     }
 
     @Test
@@ -66,7 +70,7 @@ class InfraManagerFeignAdapterTest {
         InfraManagerFeignAdapter adapter = adapter(stub().withApplyStatus(null));
 
         assertThatThrownBy(() -> adapter.terraformJobStatus("job-1", TaskOperation.APPLY_NETWORK))
-                .isInstanceOf(InfraManagerClient.CallFailedException.class)
+                .isInstanceOf(CallFailedException.class)
                 .hasMessageContaining("job-1");
     }
 
@@ -76,7 +80,7 @@ class InfraManagerFeignAdapterTest {
         InfraManagerFeignAdapter adapter = adapter(stub().withApplyStatus(new ApplyJobStatusResponse(false, true)));
 
         assertThatThrownBy(() -> adapter.terraformJobStatus("job-9", TaskOperation.APPLY_NETWORK))
-                .isInstanceOf(InfraManagerClient.CallFailedException.class)
+                .isInstanceOf(CallFailedException.class)
                 .hasMessageContaining("job-9");
     }
 
@@ -86,7 +90,7 @@ class InfraManagerFeignAdapterTest {
         InfraManagerFeignAdapter adapter = adapter(stub().withApplyStatus(new ApplyJobStatusResponse(null, true)));
 
         assertThatThrownBy(() -> adapter.terraformJobStatus("job-1", TaskOperation.APPLY_NETWORK))
-                .isInstanceOf(InfraManagerClient.CallFailedException.class);
+                .isInstanceOf(CallFailedException.class);
     }
 
     @Test
@@ -94,7 +98,7 @@ class InfraManagerFeignAdapterTest {
         InfraManagerFeignAdapter adapter = adapter(stub().withReady(new NetworkReadyResponse(null)));
 
         assertThatThrownBy(() -> adapter.checkCondition("target-a", TaskOperation.NETWORK_READY))
-                .isInstanceOf(InfraManagerClient.CallFailedException.class);
+                .isInstanceOf(CallFailedException.class);
     }
 
     @Test
@@ -119,9 +123,9 @@ class InfraManagerFeignAdapterTest {
         InfraManagerFeignAdapter missing = adapter(stub().withProvider(new CloudProviderResponse(null)));
 
         assertThatThrownBy(() -> bogus.cloudProvider("target-a"))
-                .isInstanceOf(InfraManagerClient.CallFailedException.class);
+                .isInstanceOf(CallFailedException.class);
         assertThatThrownBy(() -> missing.cloudProvider("target-a"))
-                .isInstanceOf(InfraManagerClient.CallFailedException.class);
+                .isInstanceOf(CallFailedException.class);
     }
 
     private InfraManagerFeignAdapter adapter(StubFeignClient stub) {

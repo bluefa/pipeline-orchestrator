@@ -50,6 +50,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import com.bff.pipeline.exception.CallFailedException;
 
 /**
  * ADR-021 claim-pull 실행 모델의 엔드-투-엔드 테스트이다. {@link PipelineWorker#pollOnce}가 due pipeline 하나를
@@ -162,7 +163,7 @@ class PipelineExecutionTest {
     @Test
     void aThrowingDispatchIsCheckErrorAndRetries() {
         Pipeline pipeline = creator.create("e-throw", PipelineType.DELETE);
-        infraManagerClient.onDispatch(() -> { throw new InfraManagerClient.CallFailedException("503"); });
+        infraManagerClient.onDispatch(() -> { throw new CallFailedException("503"); });
 
         pipelineWorker.pollOnce();
 

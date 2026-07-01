@@ -10,7 +10,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 /**
  * base-url이 설정된 프로덕션형 컨텍스트가 실제로 기동하고, delegate→데코레이터 체인이 형성되는지 검증한다.
  * (1) {@code FeignConfig}가 켜져 {@code infraManagerDelegate}(Feign 어댑터)가 뜨고, (2) 같은 base-url 프로퍼티로
- * {@link TimeBoundedInfraManagerClient}({@code @ConditionalOnProperty} + {@code @Primary})가 켜져 도메인이 주입받는
+ * {@code @Primary} {@link TimeBoundedInfraManagerClient}가 그 delegate를 감싸 도메인이 주입받는
  * {@link InfraManagerClient}가 데코레이터인지 확인한다. base-url이 없으면 {@code @FeignClient} url 해석이 시작에서
  * 깨지므로, 이 테스트는 그 경로가 정상 기동함도 함께 증명한다.
  */

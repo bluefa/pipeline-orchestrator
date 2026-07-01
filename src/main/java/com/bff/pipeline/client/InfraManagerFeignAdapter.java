@@ -1,6 +1,8 @@
 package com.bff.pipeline.client;
 
 import com.bff.pipeline.dto.TerraformPoll;
+import com.bff.pipeline.client.condition.ConditionOperationBinding;
+import com.bff.pipeline.client.terraform.TerraformOperationBinding;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -8,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import feign.FeignException;
 import java.util.List;
 import java.util.function.Supplier;
+import com.bff.pipeline.exception.CallFailedException;
 
 /**
  * 도메인이 요구하는 {@link InfraManagerClient} 계약의 프로덕션 delegate다. {@code FeignConfig}가 이 인스턴스를
@@ -21,7 +24,7 @@ import java.util.function.Supplier;
  * switch하지 않는다 — 새 operation은 바인딩 하나 추가로 끝난다.
  *
  * <p><b>예외 경계.</b> Feign 전송 실패({@link FeignException} — HTTP 4xx/5xx, {@link feign.RetryableException} — 연결
- * 거부·소켓 타임아웃)를 닫힌 어휘 {@link InfraManagerClient.CallFailedException}으로 변환한다({@link #translating}).
+ * 거부·소켓 타임아웃)를 닫힌 어휘 {@link CallFailedException}으로 변환한다({@link #translating}).
  * 바인딩이 던지는 응답 방어용 {@code CallFailedException}은 그대로 통과한다. {@code RuntimeException}을 통째로 잡지는
  * 않는다 — 매핑 로직 버그·바인딩 누락은 fail-fast로 전파돼야 한다. 호출별 타임아웃/인터럽트는 데코레이터가 소유한다.
  */

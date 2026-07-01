@@ -10,6 +10,9 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.bff.pipeline.client.condition.NetworkReadyBinding;
+import com.bff.pipeline.client.terraform.ApplyNetworkBinding;
+import com.bff.pipeline.client.terraform.DestroyNetworkBinding;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
@@ -28,10 +31,11 @@ import org.springframework.cloud.openfeign.support.SpringDecoder;
 import org.springframework.cloud.openfeign.support.SpringEncoder;
 import org.springframework.cloud.openfeign.support.SpringMvcContract;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import com.bff.pipeline.exception.CallFailedException;
 
 /**
  * 실제 Feign 스택(SpringMvcContract + Spring encoder/decoder + 기본 ErrorDecoder)을 WireMock에 붙여, HTTP 실패가
- * {@link InfraManagerFeignAdapter}를 통해 닫힌 어휘 {@link InfraManagerClient.CallFailedException}으로 귀결되는지
+ * {@link InfraManagerFeignAdapter}를 통해 닫힌 어휘 {@link CallFailedException}으로 귀결되는지
  * 관통 검증한다. 200 정상 / 5xx / malformed 바디 / read timeout 경로를 각각 본다.
  */
 class InfraManagerFeignIntegrationTest {
@@ -90,7 +94,7 @@ class InfraManagerFeignIntegrationTest {
                 .willReturn(aResponse().withStatus(503)));
 
         assertThatThrownBy(() -> adapter.terraformJobStatus("job-7", TaskOperation.APPLY_NETWORK))
-                .isInstanceOf(InfraManagerClient.CallFailedException.class);
+                .isInstanceOf(CallFailedException.class);
     }
 
     @Test
@@ -100,7 +104,7 @@ class InfraManagerFeignIntegrationTest {
                         .withBody("not-json")));
 
         assertThatThrownBy(() -> adapter.terraformJobStatus("job-7", TaskOperation.APPLY_NETWORK))
-                .isInstanceOf(InfraManagerClient.CallFailedException.class);
+                .isInstanceOf(CallFailedException.class);
     }
 
     @Test
@@ -112,7 +116,7 @@ class InfraManagerFeignIntegrationTest {
 
         // 이 클라이언트의 readTimeout은 500ms(@BeforeEach) — 1000ms 지연 응답은 RetryableException → CallFailed 로 귀결.
         assertThatThrownBy(() -> adapter.terraformJobStatus("job-7", TaskOperation.APPLY_NETWORK))
-                .isInstanceOf(InfraManagerClient.CallFailedException.class);
+                .isInstanceOf(CallFailedException.class);
     }
 
     @Test

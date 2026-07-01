@@ -1,6 +1,7 @@
-package com.bff.pipeline.client;
+package com.bff.pipeline.client.condition;
 
 import com.bff.pipeline.enums.TaskOperation;
+import com.bff.pipeline.exception.CallFailedException;
 
 /**
  * 한 CONDITION_CHECK operation의 InfraManager API 바인딩이다 — 그 operation의 조건 탐색 실제 호출과 응답 변환을 응집한다.
@@ -17,7 +18,7 @@ public interface ConditionOperationBinding {
     /** 조건 응답 방어 — null이면 쓸 수 없는 외부 응답이므로 CallFailed. */
     static boolean requireMet(Boolean met, TaskOperation operation) {
         if (met == null) {
-            throw new InfraManagerClient.CallFailedException("InfraManager returned no condition result for " + operation);
+            throw new CallFailedException("InfraManager returned no condition result for " + operation);
         }
         return met;
     }

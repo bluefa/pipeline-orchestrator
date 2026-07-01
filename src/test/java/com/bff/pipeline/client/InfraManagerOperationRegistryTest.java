@@ -3,6 +3,8 @@ package com.bff.pipeline.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.bff.pipeline.client.condition.ConditionOperationBinding;
+import com.bff.pipeline.client.terraform.TerraformOperationBinding;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.TaskOperation;
 import java.util.List;

@@ -1,8 +1,9 @@
-package com.bff.pipeline.client;
+package com.bff.pipeline.client.terraform;
 
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.TaskOperation;
 import java.util.List;
+import com.bff.pipeline.exception.CallFailedException;
 
 /**
  * 한 TERRAFORM_JOB operation의 InfraManager API 바인딩이다 — 그 operation의 dispatch/status 실제 호출과 operation별
@@ -12,7 +13,7 @@ import java.util.List;
  * 강제하고, 빠뜨리면 registry 검증이 부팅/CI에서 실패한다.
  *
  * <p>Feign 전송 예외(FeignException)는 여기서 잡지 않는다 — {@code InfraManagerFeignAdapter}의 단일 경계가 닫힌 어휘로
- * 변환한다. 이 바인딩은 operation별 <em>응답 방어</em>(null·누락·불가능 조합)만 {@link InfraManagerClient.CallFailedException}으로 닫는다.
+ * 변환한다. 이 바인딩은 operation별 <em>응답 방어</em>(null·누락·불가능 조합)만 {@link CallFailedException}으로 닫는다.
  */
 public interface TerraformOperationBinding {
 
@@ -27,7 +28,7 @@ public interface TerraformOperationBinding {
     /** dispatch 응답의 job id 목록 방어 — 응답/목록이 null이면 쓸 수 없는 외부 응답이므로 CallFailed. */
     static List<String> requireJobIds(List<String> jobIds) {
         if (jobIds == null) {
-            throw new InfraManagerClient.CallFailedException("InfraManager returned no dispatch body");
+            throw new CallFailedException("InfraManager returned no dispatch body");
         }
         return jobIds;
     }
@@ -35,12 +36,12 @@ public interface TerraformOperationBinding {
     /** operation별 status 필드(nullable Boolean)를 도메인 {@link TerraformPoll}로 정규화. null·누락·불가능 조합은 CallFailed. */
     static TerraformPoll toPoll(Boolean finished, Boolean succeeded, String jobId) {
         if (finished == null || succeeded == null) {
-            throw new InfraManagerClient.CallFailedException("InfraManager returned an incomplete status for job " + jobId);
+            throw new CallFailedException("InfraManager returned an incomplete status for job " + jobId);
         }
         try {
             return new TerraformPoll(finished, succeeded);
         } catch (IllegalArgumentException impossibleState) {
-            throw new InfraManagerClient.CallFailedException("InfraManager returned an impossible poll state for job " + jobId);
+            throw new CallFailedException("InfraManager returned an impossible poll state for job " + jobId);
         }
     }
 }

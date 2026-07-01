@@ -19,6 +19,7 @@ import java.time.Clock;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import com.bff.pipeline.exception.CallFailedException;
 
 /**
  * Terraform 잡을 디스패치하고 완료까지 폴링하는 {@link TaskType} 구현체다(ADR-016 ed97ec0 §5). {@code execute}는 한 번의
@@ -66,7 +67,7 @@ public class TerraformTask implements TaskType {
     public DispatchResult execute(String target, Task task) {
         String response = infraManagerClient.runTerraform(target, task.getOperation());
         if (response == null || response.isBlank()) {
-            throw new InfraManagerClient.CallFailedException(
+            throw new CallFailedException(
                     "InfraManager returned no dispatch response for " + task.getOperation());
         }
         return DispatchResult.withResponse(response);
@@ -113,7 +114,7 @@ public class TerraformTask implements TaskType {
         for (String jobId : jobIds) {
             TerraformPoll poll = infraManagerClient.terraformJobStatus(jobId, task.getOperation());
             if (poll == null) {
-                throw new InfraManagerClient.CallFailedException("InfraManager returned no status for job " + jobId);
+                throw new CallFailedException("InfraManager returned no status for job " + jobId);
             }
             if (poll.finished()) {
                 if (!poll.succeeded()) {

@@ -1,13 +1,13 @@
-package com.bff.pipeline.client;
+package com.bff.pipeline.client.condition;
+
+import com.bff.pipeline.client.InfraManagerFeignClient;
 
 import com.bff.pipeline.dto.NetworkReadyResponse;
 import com.bff.pipeline.enums.TaskOperation;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /** NETWORK_READY operation의 InfraManager API 바인딩. */
 @Component
-@ConditionalOnProperty(prefix = "infra-manager", name = "base-url")
 public class NetworkReadyBinding implements ConditionOperationBinding {
 
     private final InfraManagerFeignClient feign;

@@ -20,7 +20,7 @@
 ```
 StepRunner  (외부 호출 지점, @Transactional 없음 — 트랜잭션 밖에서 돎)
   └ InfraManagerClient  (도메인이 주입받는 것 = @Primary 데코레이터)
-       = TimeBoundedInfraManagerClient   @Primary, @ConditionalOnProperty("infra-manager.base-url")
+       = TimeBoundedInfraManagerClient   @Primary (delegate를 @Qualifier로 감쌈)
             · 별도 풀(infraManagerCallPool)에서 future.get(apiCallTimeout)로 호출별 타임아웃 강제
             · timeout → CallTimeout,  interrupt → CallInterrupted(+플래그 복원)
             · 그 밖의 RuntimeException은 언랩해 그대로 전파(fail-fast)
@@ -158,19 +158,11 @@ RequestInterceptor infraManagerAuth(@Value("${infra-manager.auth-token}") String
 
 ## 8. 빈 배선 / 테스트 격리
 
-- **`FeignConfig` 클래스 전체를 `@ConditionalOnProperty("infra-manager.base-url")`로 게이트한다.** `@EnableFeignClients`가 클래스에 달려 있어, base-url이 없으면 `@FeignClient` url 플레이스홀더 해석이 시작 시점에 터지는 것(P1, codex/opus)을 이 클래스 게이트가 막는다. delegate @Bean만 게이트하면 늦다.
-  ```java
-  @Configuration
-  @ConditionalOnProperty(prefix = "infra-manager", name = "base-url")
-  @EnableFeignClients(clients = InfraManagerFeignClient.class)
-  class FeignConfig {
-      @Bean RequestInterceptor infraManagerAuth(...) { /* 빈 토큰이면 fail-fast */ }
-      @Bean("infraManagerDelegate") InfraManagerClient infraManagerDelegate(...) { ... }
-  }
-  ```
-- **데코레이터 조건을 `@ConditionalOnBean` → `@ConditionalOnProperty("infra-manager.base-url")`로 바꿨다(1줄, 정확성 수정).** `@ConditionalOnBean(name="infraManagerDelegate")`는 컴포넌트 스캔 순서상 delegate 등록 **전에** 평가돼 데코레이터가 안 뜨고, 그러면 도메인이 **타임아웃 없는 raw delegate를 직접 주입**받는 버그가 실제 재현됐다(`FeignDelegateWiringTest`). delegate와 데코레이터를 **같은 프로퍼티**로 켜면 조건 순서와 무관하고, 데코레이터는 delegate를 `@Qualifier`로 주입받아 의존성 해석이 생성 순서를 보장한다.
-- **테스트 격리:** 최신 main엔 (이 작업 전엔) `@SpringBootTest`가 없었다 — 모든 테스트가 `@DataJpaTest` 슬라이스 + `new FakeInfraManagerClient()`. 슬라이스는 `FeignConfig`를 스캔하지 않고 base-url도 없으므로 delegate·데코레이터 둘 다 안 뜬다 → fake만. 빈 충돌 없음.
-- **인증:** base-url이 있는 프로덕션에서 `auth-token`이 비면 매 호출이 401→CHECK_ERROR로 조용히 실패하므로, 인터셉터 빈이 **시작 시점에 fail-fast**한다(P2, codex).
+- **base-url·auth-token은 필수 설정 — 별도 활성화 스위치 없음.** 도메인(`TerraformTask`/`ConditionCheckTask`)이 `InfraManagerClient`를 필수 주입받으므로 full 컨텍스트는 InfraManager 연동 없이는 애초에 뜰 수 없다. 그래서 과거의 `@ConditionalOnProperty`/`@ConditionalOnBean` 게이트를 **모두 제거**했다(FeignConfig·데코레이터·바인딩·레지스트리). 게이트가 있든 없든 base-url 없으면 부팅 실패라 게이트는 실패 위치만 바꿀 뿐 "base-url 없이 부팅"을 실제로 가능케 하지 못했다.
+  - base-url 미설정 → `@FeignClient` url 해석이 시작에서 실패. token 비면 → 인터셉터가 시작에서 fail-fast. 둘 다 env(`INFRA_MANAGER_BASE_URL`/`INFRA_MANAGER_TOKEN`)로 주입.
+- **delegate→데코레이터 체인:** `FeignConfig`가 `infraManagerDelegate` 빈(어댑터)을 만들고, `@Primary` `TimeBoundedInfraManagerClient`가 그것을 `@Qualifier("infraManagerDelegate")`로 주입받아 감싼다 → 의존성 해석이 생성 순서를 보장(스캔 순서에 취약한 `@ConditionalOnBean` 불필요). `FeignDelegateWiringTest`(@SpringBootTest, base-url 세팅)가 injected==데코레이터, delegate==어댑터를 검증.
+- **테스트 격리:** 슬라이스 테스트(`@DataJpaTest`)는 `FeignConfig`·바인딩·데코레이터를 컴포넌트 스캔하지 않고 `new FakeInfraManagerClient()`를 직접 주입 → 빈 충돌 없음. 유일한 full-context 테스트는 base-url·token을 세팅.
+- **인증:** `auth-token`이 비면 매 호출이 401→CHECK_ERROR로 조용히 실패하므로 인터셉터가 **시작 시점에 fail-fast**한다.
 
 ---
 
