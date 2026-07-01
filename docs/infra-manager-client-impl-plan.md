@@ -26,8 +26,8 @@ StepRunner  (외부 호출 지점, @Transactional 없음 — 트랜잭션 밖에
             · 그 밖의 RuntimeException은 언랩해 그대로 전파(fail-fast)
          └ delegate = @Qualifier("infraManagerDelegate")   ← ★ 우리가 만들 것
               = InfraManagerFeignAdapter   (@Bean("infraManagerDelegate"))
-                   · Feign 호출 + 전송 예외 → CallFailedException 번역 + jobIds 재직렬화
-                   └ InfraManagerFeignClient  @FeignClient  (raw HTTP)
+                   · operation → 구체 API 라우팅(switch) + 전송 예외 → CallFailed 번역 + jobIds 재직렬화
+                   └ InfraManagerFeignClient  @FeignClient  (operation별 구체 API 메서드)
 ```
 
 핵심: 도메인·데코레이터·per-call 타임아웃·스레드 풀은 **이미 다 있다.** 우리는 맨 밑 두 칸(raw @FeignClient + 번역 어댑터)만 채워 `infraManagerDelegate`로 등록한다.
@@ -77,20 +77,27 @@ per-call 타임아웃은 데코레이터의 `apiCallTimeout`이 authoritative다
 
 ---
 
-## 5. HTTP 계약 (가정 — 실제 InfraManager 스펙 확정 시 조정)
+## 5. HTTP 계약 — operation마다 실제 API가 다르다
 
-`@FeignClient(name = "infra-manager", url = "${infra-manager.base-url}")`
+**핵심 원칙:** `operation`은 path 변수 하나로 뭉갤 값이 아니다. operation마다 호출할 **InfraManager 실제 API 자체가 다르다.** 그래서:
+- `@FeignClient`는 operation별 **구체 API 메서드**를 각각 노출한다(`applyNetwork`, `destroyNetwork`, `networkReady`, …). path 템플릿에 `{operation}`을 끼우지 않는다.
+- **operation → 어느 구체 API를 부를지 라우팅(switch)은 어댑터가 소유한다** — 이게 delegate의 "translating" 책임이다. 매핑 없는 operation은 설정 버그이므로 `IllegalStateException`으로 fail-fast.
 
-| 도메인 메서드 | HTTP (가정) | 응답 wire DTO | 어댑터가 도메인에 넘기는 것 |
+| 도메인 메서드 | operation | Feign 구체 메서드 → HTTP (가정) | 응답 wire DTO |
 |---|---|---|---|
-| `runTerraform(target, operation)` | `POST /infra/terraform/{operation}?target=` | `{ "jobIds": ["job-1", ...] }` | **`["job-1", ...]` bare JSON 배열 문자열** (⚠️ 아래) |
-| `terraformJobStatus(jobId)` | `GET /infra/terraform/jobs/{jobId}` | `{ "finished":bool, "succeeded":bool }` | `TerraformPoll` |
-| `checkCondition(target, operation)` | `GET /infra/conditions/{operation}?target=` | `{ "met": bool }` | `boolean` |
-| `cloudProvider(target)` | `GET /infra/targets/{target}/cloud-provider` | `{ "provider": "AWS" }` | `CloudProvider` (미매칭 값 → `CallFailed`) |
+| `runTerraform(target, op)` | `APPLY_NETWORK` | `applyNetwork` → `POST /infra/network/apply?target=` | `{ "jobIds":[...] }` |
+| `runTerraform(target, op)` | `DESTROY_NETWORK` | `destroyNetwork` → `POST /infra/network/destroy?target=` | `{ "jobIds":[...] }` |
+| `checkCondition(target, op)` | `NETWORK_READY` | `networkReady` → `GET /infra/network/ready?target=` | `{ "met":bool }` |
+| `terraformJobStatus(jobId)` | — | `terraformJobStatus` → `GET /infra/terraform/jobs/{jobId}` | `{ "finished":bool,"succeeded":bool }` |
+| `cloudProvider(target)` | — | `cloudProvider` → `GET /infra/targets/{target}/cloud-provider` | `{ "provider":"AWS" }` |
 
-> ⚠️ **파서 일치:** `TerraformTask.check`는 `attempt.response`를 `List<String>` JSON, 즉 정확히 `["job-1", ...]`로 역직렬화한다(`.../task/terraform/TerraformTask.java`, `TypeReference<List<String>>`). 따라서 어댑터는 wire DTO `{jobIds:[...]}`를 받되 **`jobIds` 배열만 JSON 문자열로 재직렬화**해 넘긴다. 객체 JSON을 그대로 저장하면 모든 poll이 malformed → terminal 실패.
+operation이 늘면(예: 18개 계획) Feign 구체 메서드 + 어댑터 switch case가 함께 는다 — operation마다 다른 API라는 현실을 그대로 반영한 것.
 
-실제 경로/DTO 확정 시 `@FeignClient` 인터페이스 + wire DTO만 고친다. 단 도메인에 넘기는 형태(`["job-1",...]`)는 파서 계약이라 고정.
+> ⚠️ **파서 일치:** `TerraformTask.check`는 `attempt.response`를 `List<String>` JSON, 즉 정확히 `["job-1", ...]`로 역직렬화한다(`TypeReference<List<String>>`). 어댑터는 wire DTO `{jobIds:[...]}`를 받되 **`jobIds` 배열만 JSON 문자열로 재직렬화**해 넘긴다.
+
+> ❓ **미해결 — terraform poll 경로:** 현재 `terraformJobStatus(jobId)`는 job id 하나만 받아 단일 경로로 조회한다. 만약 terraform 잡 상태 조회 API도 operation(apply/destroy)마다 경로가 다르다면, 도메인 인터페이스가 poll 시점에 operation을 함께 넘겨야 한다(`terraformJobStatus`에 operation 인자 추가 = 도메인 변경). 아래 D-6 참조.
+
+실제 경로/DTO 확정 시 `@FeignClient` 구체 메서드 + wire DTO만 조정한다.
 
 ---
 
@@ -196,3 +203,5 @@ RequestInterceptor infraManagerAuth(@Value("${infra-manager.auth-token}") String
 - **D-4 통합테스트:** WireMock 추가.
 - **D-5 실패 세부 영속:** 신규 컬럼 없음(§6).
 - **번역 위치:** delegate 어댑터의 `catch(FeignException)` 한 경계(RetryableException 포함). 타임아웃/인터럽트는 데코레이터 소유.
+- **operation 라우팅:** operation→구체 API는 어댑터 `switch`가 소유(§5). FeignClient는 operation별 구체 메서드만.
+- **D-6 (미해결):** terraform poll(`terraformJobStatus`) 경로가 operation마다 다른가? 다르면 도메인 인터페이스에 operation을 넘겨야 함(도메인 변경). 사용자 확인 필요.

@@ -130,9 +130,10 @@ class InfraManagerFeignAdapterTest {
         StubFeignClient withCondition(ConditionResponse value) { this.condition = value; return this; }
         StubFeignClient withProvider(CloudProviderResponse value) { this.provider = value; return this; }
 
-        @Override public TerraformDispatchResponse runTerraform(TaskOperation operation, String target) { return dispatch; }
+        @Override public TerraformDispatchResponse applyNetwork(String target) { return dispatch; }
+        @Override public TerraformDispatchResponse destroyNetwork(String target) { return dispatch; }
         @Override public TerraformStatusResponse terraformJobStatus(String jobId) { return status; }
-        @Override public ConditionResponse checkCondition(TaskOperation operation, String target) { return condition; }
+        @Override public ConditionResponse networkReady(String target) { return condition; }
         @Override public CloudProviderResponse cloudProvider(String target) { return provider; }
     }
 }

@@ -63,7 +63,7 @@ class InfraManagerFeignIntegrationTest {
 
     @Test
     void reserializesDispatchJobIdsEndToEnd() {
-        wireMock.stubFor(post(urlPathMatching("/infra/terraform/.*"))
+        wireMock.stubFor(post(urlPathEqualTo("/infra/network/apply"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json")
                         .withBody("{\"jobIds\":[\"job-a\",\"job-b\"]}")));
 

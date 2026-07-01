@@ -40,12 +40,21 @@ public class InfraManagerFeignAdapter implements InfraManagerClient {
 
     @Override
     public String runTerraform(String target, TaskOperation operation) {
-        TerraformDispatchResponse response = translating(() -> feign.runTerraform(operation, target));
+        TerraformDispatchResponse response = translating(() -> dispatchApiFor(operation, target));
         List<String> jobIds = response == null ? null : response.jobIds();
         if (jobIds == null || jobIds.isEmpty()) {
             throw new CallFailedException("InfraManager returned no job ids for " + operation);
         }
         return serializeJobIds(jobIds);
+    }
+
+    /** operation → 구체 terraform dispatch API 라우팅. 매핑이 없는 operation은 설정 버그이므로 fail-fast. */
+    private TerraformDispatchResponse dispatchApiFor(TaskOperation operation, String target) {
+        return switch (operation) {
+            case APPLY_NETWORK -> feign.applyNetwork(target);
+            case DESTROY_NETWORK -> feign.destroyNetwork(target);
+            default -> throw new IllegalStateException("no terraform dispatch API mapped for operation " + operation);
+        };
     }
 
     @Override
@@ -64,11 +73,19 @@ public class InfraManagerFeignAdapter implements InfraManagerClient {
 
     @Override
     public boolean checkCondition(String target, TaskOperation operation) {
-        ConditionResponse response = translating(() -> feign.checkCondition(operation, target));
+        ConditionResponse response = translating(() -> conditionApiFor(operation, target));
         if (response == null || response.met() == null) {
             throw new CallFailedException("InfraManager returned no condition result for " + operation);
         }
         return response.met();
+    }
+
+    /** operation → 구체 condition-check API 라우팅. 매핑이 없는 operation은 설정 버그이므로 fail-fast. */
+    private ConditionResponse conditionApiFor(TaskOperation operation, String target) {
+        return switch (operation) {
+            case NETWORK_READY -> feign.networkReady(target);
+            default -> throw new IllegalStateException("no condition-check API mapped for operation " + operation);
+        };
     }
 
     @Override
