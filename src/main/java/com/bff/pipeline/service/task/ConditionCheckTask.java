@@ -2,6 +2,7 @@ package com.bff.pipeline.service.task;
 
 import com.bff.pipeline.client.InfraManagerClient;
 import com.bff.pipeline.dto.ConditionPoll;
+import com.bff.pipeline.exception.CallFailedException;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.enums.TaskOperation;
@@ -42,6 +43,9 @@ public class ConditionCheckTask implements TaskType {
     @Override
     public TaskProgress check(String target, Task task, TaskAttempt attempt) {
         ConditionPoll poll = infraManagerClient.checkCondition(target, task.getOperation());
+        if (poll == null) {   // 경계 방어: 쓸 수 없는 외부 응답은 raw NPE가 아니라 닫힌 어휘로(TerraformTask와 동일)
+            throw new CallFailedException("InfraManager returned no condition result for " + task.getOperation());
+        }
         return poll.met()
                 ? TaskProgress.met(poll.response())
                 : TaskProgress.notMet(poll.response());

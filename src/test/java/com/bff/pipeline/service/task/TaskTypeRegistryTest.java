@@ -10,6 +10,7 @@ import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -53,7 +54,7 @@ class TaskTypeRegistryTest {
     }
 
     private static Set<String> mechanismsInCatalog() {
-        return java.util.Arrays.stream(TaskDefinition.values())
+        return Arrays.stream(TaskDefinition.values())
                 .map(TaskDefinition::mechanism)
                 .collect(Collectors.toUnmodifiableSet());
     }

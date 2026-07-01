@@ -9,7 +9,7 @@ import java.util.Objects;
  * 비즈니스 실패는 여기서 던져지는 예외가 아니라 데이터다 — 영속화되는 {@code ErrorCode}
  * ({@code docs/exception-strategy.md} 참조). 엔진은 변형(variant)을 완전 열거(exhaustive)해 분기한다.
  *
- * <p>{@code Succeeded}/{@code Pending}/{@code Failed}는 TERRAFORM_JOB이 쓰고, {@code Met}/{@code NotMet}은
+ * {@code Succeeded}/{@code Pending}/{@code Failed}는 TERRAFORM_JOB이 쓰고, {@code Met}/{@code NotMet}은
  * CONDITION_CHECK 전용이다 — 조건 폴은 매번 원시 payload({@code response})를 남기고, not-met은 실패한 폴로서
  * failCount를 올린다(ADR-016 §6). 두 kind의 경로는 서로 독립적이다.
  */

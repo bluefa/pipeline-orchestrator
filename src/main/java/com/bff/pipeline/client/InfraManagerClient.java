@@ -42,7 +42,7 @@ public interface InfraManagerClient {
     TerraformPoll terraformJobStatus(String jobId, TaskOperation operation);
 
     /**
-     * operation의 조건을 한 번 확인하고 <b>충족 여부와 원시 check payload</b>를 함께 반환한다(ADR-016 §3).
+     * operation의 조건을 한 번 확인하고 충족 여부와 원시 check payload를 함께 반환한다(ADR-016 §3).
      * 조건은 dispatch가 no-op이라 이 payload가 해당 폴의 {@code task_attempt.response}에 기록된다.
      */
     ConditionPoll checkCondition(String target, TaskOperation operation);

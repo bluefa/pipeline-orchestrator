@@ -5,6 +5,7 @@ import com.bff.pipeline.dto.Claim;
 import com.bff.pipeline.client.InfraManagerClient;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -45,7 +46,7 @@ public class PipelineScheduler {
     private final ExecutorService pipelineWorkerPool;
     private final ExecutionSettings executionSettings;
     private final Duration initialDelay;
-    private final java.time.Clock clock;
+    private final Clock clock;
 
     private final ScheduledExecutorService scheduler =
             Executors.newSingleThreadScheduledExecutor(runnable -> {
@@ -58,7 +59,7 @@ public class PipelineScheduler {
     public PipelineScheduler(PipelineWorker pipelineWorker, PipelineClaimer pipelineClaimer,
             @Qualifier("pipelineWorkerPool") ExecutorService pipelineWorkerPool, ExecutionSettings executionSettings,
             @Value("${pipeline.execution.scheduler-initial-delay:PT5S}") Duration initialDelay,
-            java.time.Clock clock) {
+            Clock clock) {
         this.pipelineWorker = pipelineWorker;
         this.pipelineClaimer = pipelineClaimer;
         this.pipelineWorkerPool = pipelineWorkerPool;
