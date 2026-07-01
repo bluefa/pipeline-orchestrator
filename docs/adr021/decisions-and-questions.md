@@ -14,7 +14,7 @@
 - **되돌리기**: 기존 브랜치를 rebase해서 살리고 싶다면 가능하나 충돌 해소 비용이 큼. 현재 선택이 더 안전하다고 판단.
 - **확인 요청**: 이 방향이 맞는지. (기존 `feat/adr-021-execution-model` 브랜치/워크트리는 건드리지 않고 보존해 둠.)
 
-## D-D. `docs/acceptance-criteria.md` 재조정 — 후속 문서 작업으로 분리 ✅ 결정함(오너)
+## D-D. `docs/acceptance-criteria.md` 재조정 — ✅ 완료(2026-07-01)
 
 - **발견**: acceptance-criteria.md 전체(참조 36곳)가 claim-pull 이전 설계(`PipelineEngine.advance` 단일 진입점,
   `finish()` CAS, `PipelineEngineTest`/`PipelineEngineTransactionTest`)로 작성돼 있다. 해당 클래스/테스트는 코드에서
@@ -24,6 +24,12 @@
   오히려 부정확할 위험 → 별도 후속 문서 작업으로 분리한다. 문서 상단에 stale 배너를 달아 오해를 방지한다.
 - **후속 범위**: 36개 참조를 현재 claim-pull 구조/현재 테스트명으로 매핑. `PipelineEngineTransactionTest`가 커버하던
   tx-가시성/@Version 경합 항목(A3/H4)은 현재 동등 테스트 유무를 확인해 재서술 또는 커버리지 보강.
+- **완료**: 전 criteria 표의 evidence 컬럼을 claim-pull 심볼로 재매핑
+  (`PipelineEngine.advance`→`PipelineScheduler.runSweep`→`PipelineWorker.process`→`StepRunner.runStep`→
+  `StepReporter.writeBack`; `finish()`-CAS→가드 write-back; `PipelineEngineTest`/`…TransactionTest`→
+  `PipelineExecutionTest`). A3/H4는 토큰-소유권 + 파이프라인 `FOR UPDATE` 락으로 재서술하고
+  `PipelineExecutionTest` cancel Case A/B·stale-straggler 테스트로 매핑. D2/D3는 §4 반전(409)에 맞춰 갱신.
+  잔여 갭: F4(condition TTL)는 메커니즘(`TaskSettings.isPastDeadline`)+`ErrorCode`만 있고 전용 동작 테스트 없음.
 
 ## D-C. ADR-016 §4 반전: 중복 create → 기존 반환(idempotent) 대신 409 Conflict ✅ 결정함(오너)
 
