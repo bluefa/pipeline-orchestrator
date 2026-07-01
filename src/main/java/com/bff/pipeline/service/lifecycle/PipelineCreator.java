@@ -9,6 +9,7 @@ import com.bff.pipeline.exception.PipelineAlreadyActiveException;
 import com.bff.pipeline.exception.PipelinePersistenceException;
 import com.bff.pipeline.exception.ProviderLookupException;
 import com.bff.pipeline.exception.UnsupportedRecipeException;
+import com.bff.pipeline.model.PipelinePlan;
 import java.util.Locale;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -45,7 +46,7 @@ public class PipelineCreator {
         RecipeDefinition recipe = recipeCatalog.forProviderAndType(provider, type)
                 .orElseThrow(() -> new UnsupportedRecipeException(provider, type));
         try {
-            return pipelineInserter.insert(target, type, provider, recipe);
+            return pipelineInserter.insert(new PipelinePlan(target, recipe));
         } catch (DataIntegrityViolationException violation) {
             if (isActiveTargetViolation(violation)) {
                 throw new PipelineAlreadyActiveException(target);

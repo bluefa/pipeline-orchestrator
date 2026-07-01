@@ -2,12 +2,11 @@ package com.bff.pipeline.service.lifecycle;
 
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
-import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
-import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.RecipeDefinition;
 import com.bff.pipeline.enums.TaskDefinition;
 import com.bff.pipeline.enums.TaskStatus;
+import com.bff.pipeline.model.PipelinePlan;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import java.time.Clock;
@@ -39,12 +38,14 @@ public class PipelineInserter {
     }
 
     @Transactional
-    public Pipeline insert(String target, PipelineType type, CloudProvider provider, RecipeDefinition recipe) {
+    public Pipeline insert(PipelinePlan plan) {
         Instant now = clock.instant();
+        String target = plan.target();
+        RecipeDefinition recipe = plan.recipe();
         Pipeline pipeline = pipelineRepository.saveAndFlush(Pipeline.builder()
-                .type(type)
+                .type(recipe.pipelineType())
                 .target(target)
-                .cloudProvider(provider)
+                .cloudProvider(recipe.provider())
                 .recipeDefinition(recipe.name())
                 .status(PipelineStatus.RUNNING)
                 .activeTarget(target)
