@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import com.bff.pipeline.entity.Pipeline;
-import com.bff.pipeline.exception.BadRequestException;
+import com.bff.pipeline.exception.MissingPipelineIdException;
 import com.bff.pipeline.exception.PipelineNotFoundException;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.PipelineStatus;
@@ -74,7 +74,8 @@ class PipelineControlTest {
 
     @Test
     void cancelRejectsANullPipelineIdAsABadRequest() {
-        BadRequestException exception = catchThrowableOfType(() -> control.cancel(null), BadRequestException.class);
+        MissingPipelineIdException exception =
+                catchThrowableOfType(() -> control.cancel(null), MissingPipelineIdException.class);
 
         assertThat(exception.status()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(exception.code()).isEqualTo("ORCHESTRATION_PIPELINE_ID_REQUIRED");

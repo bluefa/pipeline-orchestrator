@@ -2,7 +2,7 @@ package com.bff.pipeline.service.lifecycle;
 import com.bff.pipeline.service.task.TaskCanceller;
 
 import com.bff.pipeline.entity.Pipeline;
-import com.bff.pipeline.exception.BadRequestException;
+import com.bff.pipeline.exception.MissingPipelineIdException;
 import com.bff.pipeline.exception.PipelineNotFoundException;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
@@ -47,7 +47,7 @@ public class PipelineControl {
     @Transactional
     public Pipeline cancel(Long pipelineId) {
         if (pipelineId == null) {
-            throw new BadRequestException("ORCHESTRATION_PIPELINE_ID_REQUIRED", "pipelineId must not be null");
+            throw new MissingPipelineIdException();
         }
         if (!pipelineRepository.existsById(pipelineId)) {
             throw new PipelineNotFoundException(pipelineId);

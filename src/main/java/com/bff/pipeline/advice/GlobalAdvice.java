@@ -15,8 +15,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * 이어질 이음새(seam)로 미리 둔다.
  *
  * <p>{@link OrchestrationException}은 자신이 매핑될 HTTP status와 안정적인 {@code ORCHESTRATION_*} code를
- * 직접 들고 오므로 한 핸들러가 그대로 옮긴다. 그 밖의 {@code IllegalArgumentException}은 일반 400,
- * catch-all은 원인을 스택 트레이스까지 로깅한 뒤 500으로 내려준다(원인을 삼키지 않는다).
+ * 직접 들고 오므로 한 핸들러가 그대로 옮긴다(케이스마다 전용 서브타입 — 제네릭 400 버킷을 두지 않는다).
+ * catch-all은 예상 밖 예외의 원인을 스택 트레이스까지 로깅한 뒤 500으로 내려준다(원인을 삼키지 않는다).
  */
 @Slf4j
 @RestControllerAdvice
@@ -25,12 +25,6 @@ public class GlobalAdvice {
     @ExceptionHandler(OrchestrationException.class)
     public ResponseEntity<ErrorResponse> onOrchestration(OrchestrationException exception) {
         return ResponseEntity.status(exception.status()).body(body(exception.code(), exception.getMessage()));
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorResponse onIllegalArgument(IllegalArgumentException exception) {
-        return body("ORCHESTRATION_BAD_REQUEST", exception.getMessage());
     }
 
     @ExceptionHandler(Exception.class)
