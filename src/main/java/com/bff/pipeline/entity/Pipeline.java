@@ -37,7 +37,10 @@ import lombok.Setter;
         uniqueConstraints = @UniqueConstraint(name = Pipeline.ACTIVE_TARGET_CONSTRAINT, columnNames = "active_target"),
         indexes = {
                 @Index(name = "idx_pipeline_claim", columnList = "status, next_due_at"),
-                @Index(name = "idx_pipeline_claimed_until", columnList = "claimed_until")
+                @Index(name = "idx_pipeline_claimed_until", columnList = "claimed_until"),
+                // Admin 조회 API(P2/P3/P7) 지원: 상태별 기간 집계·목록, target 이력 최신순.
+                @Index(name = "idx_pipeline_status_created", columnList = "status, created_at"),
+                @Index(name = "idx_pipeline_target_created", columnList = "target, created_at")
         })
 @Getter
 @Setter

@@ -1,12 +1,16 @@
 package com.bff.pipeline.repository;
 
 import com.bff.pipeline.entity.Pipeline;
+import com.bff.pipeline.enums.CloudProvider;
+import com.bff.pipeline.enums.PipelineStatus;
 import jakarta.persistence.LockModeType;
 import jakarta.persistence.QueryHint;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Limit;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -68,4 +72,34 @@ public interface PipelineRepository extends JpaRepository<Pipeline, Long> {
     @Query("select min(p.nextDueAt) from Pipeline p where p.status = com.bff.pipeline.enums.PipelineStatus.RUNNING "
             + "and (p.claimedUntil is null or p.claimedUntil < :now)")
     Optional<Instant> findNearestClaimableDueAt(@Param("now") Instant now);
+
+    // ── Admin 조회 API(P1~P8) 읽기 질의. 실행 경로와 무관한 대시보드/이력용이다. ──
+
+    /** 실시간 현황(P1): status별 순간 개수. */
+    long countByStatus(PipelineStatus status);
+
+    /** 기간 통계(P2): createdAt이 기간 하한 이후인 pipeline을 status별로 집계한다. */
+    @Query("select p.status as status, count(p) as count from Pipeline p "
+            + "where p.createdAt >= :since group by p.status")
+    List<PipelineStatusCount> countByStatusSince(@Param("since") Instant since);
+
+    /** 대시보드 목록(P3): status/provider/기간(createdAt) 선택 필터 + 페이지네이션. null 인자는 해당 필터를 건너뛴다. */
+    @Query(value = "select p from Pipeline p where "
+            + "(:status is null or p.status = :status) and "
+            + "(:provider is null or p.cloudProvider = :provider) and "
+            + "(:since is null or p.createdAt >= :since)",
+            countQuery = "select count(p) from Pipeline p where "
+            + "(:status is null or p.status = :status) and "
+            + "(:provider is null or p.cloudProvider = :provider) and "
+            + "(:since is null or p.createdAt >= :since)")
+    Page<Pipeline> search(@Param("status") PipelineStatus status,
+            @Param("provider") CloudProvider provider,
+            @Param("since") Instant since,
+            Pageable pageable);
+
+    /** 대상 이력 목록(P7): 특정 target의 실행. 정렬은 호출측 Pageable(기본 created_at desc, id desc 결정적 순서)이 정한다. */
+    Page<Pipeline> findByTarget(String target, Pageable pageable);
+
+    /** 최근 파이프라인 카드(P8): 특정 target의 가장 최근 실행 1건(상태 무관). id를 tiebreaker로 결정적 선택. */
+    Optional<Pipeline> findFirstByTargetOrderByCreatedAtDescIdDesc(String target);
 }

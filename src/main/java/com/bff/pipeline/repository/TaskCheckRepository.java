@@ -1,6 +1,8 @@
 package com.bff.pipeline.repository;
 
 import com.bff.pipeline.entity.TaskCheck;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -12,4 +14,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface TaskCheckRepository extends JpaRepository<TaskCheck, Long> {
 
     Optional<TaskCheck> findByTaskAttemptId(Long taskAttemptId);
+
+    /** P5 상세: attempt 여러 건의 폴 요약을 한 번에 배치 로드한다(per-poll condition attempt N+1 회피). */
+    List<TaskCheck> findByTaskAttemptIdIn(Collection<Long> taskAttemptIds);
 }

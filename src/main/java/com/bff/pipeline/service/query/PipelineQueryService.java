@@ -1,0 +1,220 @@
+package com.bff.pipeline.service.query;
+
+import com.bff.pipeline.config.ExecutionSettings;
+import com.bff.pipeline.config.PipelineSettings;
+import com.bff.pipeline.dto.pipeline.LivePipelineStatistics;
+import com.bff.pipeline.dto.pipeline.PipelineDetail;
+import com.bff.pipeline.dto.pipeline.PipelineStatistics;
+import com.bff.pipeline.dto.pipeline.PipelineSummary;
+import com.bff.pipeline.dto.pipeline.TaskAttemptView;
+import com.bff.pipeline.dto.pipeline.TaskDetail;
+import com.bff.pipeline.dto.pipeline.TaskSummary;
+import com.bff.pipeline.entity.Pipeline;
+import com.bff.pipeline.entity.Task;
+import com.bff.pipeline.enums.CloudProvider;
+import com.bff.pipeline.enums.PipelineStatus;
+import com.bff.pipeline.enums.StatisticsPeriod;
+import com.bff.pipeline.enums.TaskStatus;
+import com.bff.pipeline.exception.PipelineNotFoundException;
+import com.bff.pipeline.exception.TaskNotFoundException;
+import com.bff.pipeline.repository.PipelineRepository;
+import com.bff.pipeline.repository.PipelineStatusCount;
+import com.bff.pipeline.repository.PipelineTaskStatusCount;
+import com.bff.pipeline.repository.TaskAttemptRepository;
+import com.bff.pipeline.repository.TaskCheckRepository;
+import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.entity.TaskAttempt;
+import com.bff.pipeline.entity.TaskCheck;
+import com.bff.pipeline.utils.TaskSettingsResolver;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * 관리자 대시보드용 pipeline 조회/집계/파생을 담는 읽기 전용 서비스다(P1~P8). 실행 경로(claim/write-back)와는
+ * 무관하며 상태를 바꾸지 않는다 — 명령(cancel/create)은 lifecycle 서비스가 담당하고, 그 결과 Pipeline을
+ * {@link #toDetail}로 상세 응답으로 바꿔 재사용한다.
+ *
+ * <p>현재 task는 ADR-016 정의대로 최저 순번의 READY/IN_PROGRESS task이며 없으면 null이다. 진행 N/M은
+ * 분모 = 전체 task 수, 분자 = DONE 수로 센다(CANCELLED/BLOCKED/FAILED는 분자 제외). 목록의 진행 집계는
+ * 페이지 단위 배치 질의로 계산해 행마다 task를 다시 읽는 N+1을 피한다. leased/dueLagMillis는 주입된 Clock 기준이다.
+ *
+ * <p>메서드마다 여러 read를 엮으므로(예: pipeline + 그 task 체인), 클래스 전체를 {@code readOnly} 트랜잭션으로
+ * 묶어 한 스냅샷에서 읽는다 — 동시 write-back이 중간에 끼어들어 "낡은 pipeline 상태 + 새 task 집계" 같은 불가능한
+ * 조합이 나오지 않게 한다. 명령(cancel/create)은 자신의 트랜잭션에서 커밋한 뒤, {@link #toDetail}가 새 read 트랜잭션에서
+ * 커밋된 결과를 읽는다.
+ */
+@Service
+@Transactional(readOnly = true)
+public class PipelineQueryService {
+
+    private static final long[] NO_TASKS = {0L, 0L};   // [done, total] 기본값(읽기 전용으로만 쓴다)
+
+    private final PipelineRepository pipelines;
+    private final TaskRepository tasks;
+    private final TaskAttemptRepository attempts;
+    private final TaskCheckRepository checks;
+    private final ExecutionSettings executionSettings;
+    private final PipelineSettings pipelineSettings;
+    private final Clock clock;
+
+    public PipelineQueryService(PipelineRepository pipelines, TaskRepository tasks,
+            TaskAttemptRepository attempts, TaskCheckRepository checks,
+            ExecutionSettings executionSettings, PipelineSettings pipelineSettings, Clock clock) {
+        this.pipelines = pipelines;
+        this.tasks = tasks;
+        this.attempts = attempts;
+        this.checks = checks;
+        this.executionSettings = executionSettings;
+        this.pipelineSettings = pipelineSettings;
+        this.clock = clock;
+    }
+
+    public LivePipelineStatistics liveStatistics() {
+        return new LivePipelineStatistics(
+                pipelines.countByStatus(PipelineStatus.RUNNING),
+                tasks.countByConsumesTerraformSlotIsTrueAndStatus(TaskStatus.IN_PROGRESS),
+                executionSettings.terraformSlotCap(),
+                executionSettings.runningPipelineCap(),
+                pipelines.countByClaimedUntilAfter(clock.instant()));
+    }
+
+    public PipelineStatistics statistics(StatisticsPeriod period) {
+        Instant since = clock.instant().minus(period.window());
+        Map<PipelineStatus, Long> byStatus = new EnumMap<>(PipelineStatus.class);
+        for (PipelineStatusCount row : pipelines.countByStatusSince(since)) {
+            byStatus.put(row.getStatus(), row.getCount());
+        }
+        long running = byStatus.getOrDefault(PipelineStatus.RUNNING, 0L);
+        long failed = byStatus.getOrDefault(PipelineStatus.FAILED, 0L);
+        long done = byStatus.getOrDefault(PipelineStatus.DONE, 0L);
+        long cancelled = byStatus.getOrDefault(PipelineStatus.CANCELLED, 0L);
+        return new PipelineStatistics(period, since, running, failed, done, cancelled,
+                running + failed + done + cancelled);
+    }
+
+    public Page<PipelineSummary> list(PipelineStatus status, CloudProvider provider,
+            StatisticsPeriod period, Pageable pageable) {
+        Instant since = period == null ? null : clock.instant().minus(period.window());
+        return summarize(pipelines.search(status, provider, since, pageable));
+    }
+
+    public Page<PipelineSummary> historyByTarget(String targetSourceId, Pageable pageable) {
+        return summarize(pipelines.findByTarget(targetSourceId, pageable));
+    }
+
+    public Optional<PipelineSummary> latestByTarget(String targetSourceId) {
+        return pipelines.findFirstByTargetOrderByCreatedAtDescIdDesc(targetSourceId).map(pipeline -> {
+            List<Task> chain = tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId());
+            return PipelineSummary.from(pipeline, countDone(chain), chain.size());
+        });
+    }
+
+    public PipelineDetail detail(Long pipelineId) {
+        Pipeline pipeline = pipelines.findById(pipelineId)
+                .orElseThrow(() -> new PipelineNotFoundException(pipelineId));
+        return toDetail(pipeline);
+    }
+
+    /** 명령(cancel P6 / create P10) 결과 Pipeline을 상세 응답으로 바꾼다 — 컨트롤러가 재사용한다. */
+    public PipelineDetail toDetail(Pipeline pipeline) {
+        List<Task> chain = tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId());
+        Instant now = clock.instant();
+        boolean leased = pipeline.getClaimedUntil() != null && pipeline.getClaimedUntil().isAfter(now);
+        long dueLagMillis = Math.max(0L, Duration.between(pipeline.getNextDueAt(), now).toMillis());
+        Task current = currentTask(chain);
+        Integer finalSequence = chain.isEmpty() ? null : chain.get(chain.size() - 1).getSequence();
+        return new PipelineDetail(
+                pipeline.getId(), pipeline.getType(), pipeline.getTarget(), pipeline.getCloudProvider(),
+                pipeline.getRecipeDefinition(), pipeline.getStatus(), pipeline.getCreatedAt(),
+                pipeline.getLastActivityAt(), pipeline.getNextDueAt(), leased, pipeline.isCancelRequested(),
+                dueLagMillis,
+                current == null ? null : current.getSequence(),
+                finalSequence,
+                current == null ? null : current.getFailCount(),
+                current == null ? null : TaskSettingsResolver.resolveMaxFailCount(current, pipelineSettings),
+                countDone(chain), chain.size(),
+                chain.stream().map(TaskSummary::from).toList());
+    }
+
+    public TaskDetail taskDetail(Long pipelineId, Long taskId) {
+        if (!pipelines.existsById(pipelineId)) {
+            throw new PipelineNotFoundException(pipelineId);
+        }
+        Task task = tasks.findById(taskId)
+                .filter(candidate -> candidate.getPipelineId().equals(pipelineId))
+                .orElseThrow(() -> new TaskNotFoundException(pipelineId, taskId));
+        return new TaskDetail(
+                task.getId(), task.getPipelineId(), task.getSequence(), task.getTaskName(),
+                task.getTaskDefinition(), task.getOperation(), task.getStatus(), task.getFailCount(),
+                task.getErrorCode(), task.getConsumesTerraformSlot(), task.getStartedAt(), task.getReadyAt(),
+                task.getFinishedAt(), task.getNextCheckAt(),
+                TaskSettingsResolver.resolvePollingInterval(task, pipelineSettings),
+                effectiveExecutionTimeout(task),
+                TaskSettingsResolver.resolveMaxFailCount(task, pipelineSettings),
+                attemptViews(taskId));
+    }
+
+    /** execution timeout은 TERRAFORM_JOB 전용이다(#15). CONDITION_CHECK는 maxFailCount로 경계되므로 null. */
+    private Duration effectiveExecutionTimeout(Task task) {
+        return task.getOperation().consumesTerraformSlot()
+                ? TaskSettingsResolver.resolveExecutionTimeout(task, pipelineSettings)
+                : null;
+    }
+
+    /** attempt별 폴 요약을 한 번의 in 질의로 배치 로드해 매핑한다(per-poll condition attempt에서 N+1을 피한다). */
+    private List<TaskAttemptView> attemptViews(Long taskId) {
+        List<TaskAttempt> attemptList = attempts.findByTaskIdOrderByAttemptNumberAsc(taskId);
+        Map<Long, TaskCheck> checkByAttemptId = checks
+                .findByTaskAttemptIdIn(attemptList.stream().map(TaskAttempt::getId).toList()).stream()
+                .collect(Collectors.toMap(TaskCheck::getTaskAttemptId, Function.identity()));
+        return attemptList.stream()
+                .map(attempt -> TaskAttemptView.from(attempt, checkByAttemptId.get(attempt.getId())))
+                .toList();
+    }
+
+    private Page<PipelineSummary> summarize(Page<Pipeline> page) {
+        Map<Long, long[]> counts = taskCounts(page.map(Pipeline::getId).getContent());
+        return page.map(pipeline -> {
+            long[] doneTotal = counts.getOrDefault(pipeline.getId(), NO_TASKS);
+            return PipelineSummary.from(pipeline, doneTotal[0], doneTotal[1]);
+        });
+    }
+
+    private Map<Long, long[]> taskCounts(List<Long> pipelineIds) {
+        Map<Long, long[]> counts = new HashMap<>();
+        if (pipelineIds.isEmpty()) {
+            return counts;
+        }
+        for (PipelineTaskStatusCount row : tasks.countByPipelineIdInGroupByStatus(pipelineIds)) {
+            long[] doneTotal = counts.computeIfAbsent(row.getPipelineId(), key -> new long[2]);
+            doneTotal[1] += row.getCount();
+            if (row.getStatus() == TaskStatus.DONE) {
+                doneTotal[0] += row.getCount();
+            }
+        }
+        return counts;
+    }
+
+    private static Task currentTask(List<Task> chain) {
+        return chain.stream()   // 체인은 sequence 오름차순이라 첫 매칭이 최저 순번이다
+                .filter(task -> task.getStatus() == TaskStatus.READY || task.getStatus() == TaskStatus.IN_PROGRESS)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static long countDone(List<Task> chain) {
+        return chain.stream().filter(task -> task.getStatus() == TaskStatus.DONE).count();
+    }
+}

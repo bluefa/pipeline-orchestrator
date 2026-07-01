@@ -45,12 +45,7 @@ public class PipelineCreator {
     }
 
     public Pipeline create(String target, PipelineType type) {
-        if (target == null || target.isBlank()) {           // 외부 조회 전에 입력을 검증한다
-            throw new MissingTargetException();
-        }
-        CloudProvider provider = resolveProvider(target);   // 트랜잭션 밖 외부 조회(§3)
-        RecipeDefinition recipe = recipeCatalog.forProviderAndType(provider, type)
-                .orElseThrow(() -> new UnsupportedRecipeException(provider, type));
+        RecipeDefinition recipe = resolveRecipe(target, type);   // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
         try {
             return pipelineInserter.insert(new PipelinePlan(target, recipe));
         } catch (DataIntegrityViolationException violation) {
@@ -59,6 +54,25 @@ public class PipelineCreator {
             }
             throw new PipelinePersistenceException(target, violation);
         }
+    }
+
+    /**
+     * 실행 전 recipe 미리보기(P9). create와 동일하게 target을 검증하고 provider를 조회해 recipe를 고르지만,
+     * 아무것도 저장하지 않는 읽기 전용 경로다 — 실제 실행이 만들 task 체인을 관리자에게 미리 보여준다.
+     * 실패 계약도 create와 같다(빈 target 400, provider 조회 실패 503, 미지원 recipe 400).
+     */
+    public RecipeDefinition preview(String target, PipelineType type) {
+        return resolveRecipe(target, type);
+    }
+
+    /** target 검증 → provider 조회(외부, 트랜잭션 밖) → (provider, type) recipe 선택. create와 preview가 공유한다. */
+    private RecipeDefinition resolveRecipe(String target, PipelineType type) {
+        if (target == null || target.isBlank()) {           // 외부 조회 전에 입력을 검증한다
+            throw new MissingTargetException();
+        }
+        CloudProvider provider = resolveProvider(target);   // 트랜잭션 밖 외부 조회(§3)
+        return recipeCatalog.forProviderAndType(provider, type)
+                .orElseThrow(() -> new UnsupportedRecipeException(provider, type));
     }
 
     /**
