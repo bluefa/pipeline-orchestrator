@@ -55,7 +55,8 @@ com.bff.pipeline
 │                   TaskCanceller, ObservationRecorder, ConditionCheckTask, terraform/TerraformTask
 ├── client/      InfraManager boundary (InfraManagerClient) + per-call-timeout decorator
 ├── repository/  Spring Data repositories (guarded-CAS transitions)
-├── controller/  GlobalAdvice (REST exception handler) — the REST layer added later
+├── advice/      GlobalAdvice (@RestControllerAdvice — REST exception handler)
+├── exception/   Request-contract exceptions (BadRequestException)
 └── utils/       Static helpers (TaskSettings — effective per-task setting resolution + deadlines)
 ```
 

@@ -1,4 +1,4 @@
-package com.bff.pipeline.controller;
+package com.bff.pipeline.advice;
 
 import com.bff.pipeline.dto.ErrorResponse;
 import com.bff.pipeline.exception.BadRequestException;
