@@ -20,13 +20,13 @@ public class GlobalAdvice {
     @ExceptionHandler(IllegalArgumentException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public ErrorResponse onBadRequest(IllegalArgumentException exception) {
-        return new ErrorResponse("BAD_REQUEST", exception.getMessage());
+        return ErrorResponse.builder().code("BAD_REQUEST").message(exception.getMessage()).build();
     }
 
     @ExceptionHandler(Exception.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public ErrorResponse onUnexpected(Exception exception) {
         log.error("Unhandled exception in the REST layer", exception);
-        return new ErrorResponse("INTERNAL_ERROR", "unexpected error");
+        return ErrorResponse.builder().code("INTERNAL_ERROR").message("unexpected error").build();
     }
 }

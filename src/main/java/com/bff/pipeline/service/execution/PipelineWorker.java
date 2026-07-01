@@ -13,6 +13,7 @@ import com.bff.pipeline.service.task.ObservationRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
 import java.util.List;
 import java.util.Optional;
+import lombok.Builder;
 import org.springframework.stereotype.Component;
 
 /**
@@ -27,6 +28,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class PipelineWorker {
 
+    @Builder
     private record StepContext(String target, Task currentTask, TaskAttempt attempt,
             boolean cancelRequested, boolean terraformDispatch) { }
 
@@ -83,7 +85,13 @@ public class PipelineWorker {
             boolean terraformDispatch = current != null
                     && current.getStatus() == TaskStatus.READY
                     && TerraformTask.NAME.equals(current.getTaskName());
-            return new StepContext(pipeline.getTarget(), current, attempt, pipeline.isCancelRequested(), terraformDispatch);
+            return StepContext.builder()
+                    .target(pipeline.getTarget())
+                    .currentTask(current)
+                    .attempt(attempt)
+                    .cancelRequested(pipeline.isCancelRequested())
+                    .terraformDispatch(terraformDispatch)
+                    .build();
         });
     }
 
