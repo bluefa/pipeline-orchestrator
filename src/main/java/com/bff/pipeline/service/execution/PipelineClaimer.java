@@ -1,6 +1,6 @@
 package com.bff.pipeline.service.execution;
 
-import com.bff.pipeline.ExecutionSettings;
+import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.dto.Claim;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.repository.PipelineRepository;

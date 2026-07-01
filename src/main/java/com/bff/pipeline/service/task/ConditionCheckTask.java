@@ -1,6 +1,6 @@
 package com.bff.pipeline.service.task;
 
-import com.bff.pipeline.PipelineSettings;
+import com.bff.pipeline.config.PipelineSettings;
 import com.bff.pipeline.client.InfraManagerClient;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;

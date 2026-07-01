@@ -1,4 +1,4 @@
-package com.bff.pipeline;
+package com.bff.pipeline.config;
 
 import java.time.Clock;
 import java.util.concurrent.ExecutorService;

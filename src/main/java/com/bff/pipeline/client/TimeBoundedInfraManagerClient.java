@@ -1,6 +1,6 @@
 package com.bff.pipeline.client;
 
-import com.bff.pipeline.ExecutionSettings;
+import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.TaskOperation;
 import java.util.concurrent.ExecutionException;

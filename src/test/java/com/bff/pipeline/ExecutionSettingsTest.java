@@ -3,6 +3,7 @@ package com.bff.pipeline;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.bff.pipeline.config.ExecutionSettings;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 

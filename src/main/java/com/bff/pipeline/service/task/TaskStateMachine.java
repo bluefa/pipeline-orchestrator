@@ -2,7 +2,7 @@ package com.bff.pipeline.service.task;
 import com.bff.pipeline.service.execution.StepReporter;
 import com.bff.pipeline.service.execution.StepRunner;
 
-import com.bff.pipeline.PipelineSettings;
+import com.bff.pipeline.config.PipelineSettings;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.CheckSignal;
 import com.bff.pipeline.enums.ErrorCode;

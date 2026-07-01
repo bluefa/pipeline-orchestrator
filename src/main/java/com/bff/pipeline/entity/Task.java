@@ -1,5 +1,6 @@
 package com.bff.pipeline.entity;
 
+import com.bff.pipeline.config.PipelineSettings;
 import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.enums.TaskStatus;

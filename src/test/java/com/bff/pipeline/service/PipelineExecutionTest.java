@@ -3,8 +3,8 @@ package com.bff.pipeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.bff.pipeline.ExecutionSettings;
-import com.bff.pipeline.PipelineSettings;
+import com.bff.pipeline.config.ExecutionSettings;
+import com.bff.pipeline.config.PipelineSettings;
 import com.bff.pipeline.dto.Claim;
 import com.bff.pipeline.client.FakeInfraManagerClient;
 import com.bff.pipeline.client.InfraManagerClient;

@@ -1,6 +1,6 @@
 package com.bff.pipeline.utils;
 
-import com.bff.pipeline.PipelineSettings;
+import com.bff.pipeline.config.PipelineSettings;
 import com.bff.pipeline.entity.Task;
 import java.time.Clock;
 import java.time.Duration;

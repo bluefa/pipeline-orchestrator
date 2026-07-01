@@ -3,7 +3,7 @@ package com.bff.pipeline.service.execution;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.bff.pipeline.ExecutionSettings;
+import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.dto.Claim;
 import com.bff.pipeline.client.InfraManagerClient;
 import java.time.Clock;

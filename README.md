@@ -40,7 +40,8 @@ expiry; cancel is immediate for an idle pipeline and cooperative for a running o
 
 ```
 com.bff.pipeline
-├── (root)       App bootstrap + wiring: PipelineApplication, PipelineConfig, PipelineSettings
+├── (root)       App bootstrap: PipelineApplication
+├── config/      Typed settings + bean wiring: PipelineConfig, PipelineSettings, ExecutionSettings
 ├── entity/      JPA entities (Pipeline, Task, TaskAttempt, TaskCheck)
 ├── enums/       Domain enums (PipelineStatus/Type, TaskStatus/Operation, ErrorCode, CheckSignal)
 ├── dto/         External transport values (TerraformPoll, ErrorResponse)
