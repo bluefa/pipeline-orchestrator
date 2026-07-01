@@ -35,30 +35,33 @@ TerraformTask / ConditionCheckTask  (변경 없음 — 인터페이스에만 의
 
 ## 2. 예외 번역 규약 (계약)
 
-`InfraManagerClient`가 허용하는 예외는 정확히 셋뿐. 어댑터는 raw `RuntimeException`을 절대 누출하지 않는다.
+`InfraManagerClient`가 밖으로 내보낼 수 있는 예외는 `CallTimeout` / `CallFailed` / `CallInterrupted` **딱 셋뿐**이다. 어댑터가 하는 일은 "Feign이 던진 온갖 예외 → 이 셋 중 하나"로 바꾸는 것이다.
 
-**⚠️ P1(codex): Feign은 raw `SocketTimeoutException`을 던지지 않는다.** OpenFeign `SynchronousMethodHandler`는 `IOException`을 잡아 **`feign.RetryableException`으로 래핑**하고, `feign-java11`(`Http2Client`)은 `InterruptedException`을 re-interrupt 후 `IOException`으로 감싼다. 따라서 어댑터는 예외 **원인 체인(cause chain)을 따라 분류**해야 하며, 절대 예외 타입 이름만 보고 판단하지 않는다. 분류 순서(먼저 매칭되는 것 우선):
+**주의: Feign은 진짜 원인을 한 겹 포장해서 던진다.** 예를 들어 읽기 타임아웃이 나면 어댑터가 받는 예외는 `SocketTimeoutException`이 아니라 그것을 감싼 `RetryableException`이다.
 
 ```
-1. 원인 체인에 InterruptedException / InterruptedIOException  → Thread.currentThread().interrupt()
-                                                                후 CallInterruptedException  (전파)
-2. 원인 체인에 SocketTimeoutException 또는 HttpTimeoutException → CallTimeoutException
-3. 그 외 전부 (FeignException 4xx/5xx, RetryableException, DecodeException,
-   ConnectException, 파싱 실패, null/빈 바디)                → CallFailedException
+RetryableException                        ← 겉포장 (실제로 던져지는 것)
+  └ getCause() == SocketTimeoutException   ← 진짜 원인 (안에 들어 있음)
 ```
 
-> 인터럽트 변형(opus): `java.net.http` blocking send는 인터럽트를 `InterruptedException`(checked)로 던지고 종종 `InterruptedIOException`으로 재포장된다. 둘 다 1번에서 잡고, **번역 전 인터럽트 플래그를 복원**(`Thread.currentThread().interrupt()`)한 뒤 `CallInterruptedException`을 던진다.
+그래서 `catch (SocketTimeoutException)`은 절대 걸리지 않는다(겉은 `RetryableException`이니까). **겉 예외 타입만 보지 말고, 포장을 벗겨(`getCause()`로 원인을 따라가) 안에 무엇이 있는지로 판단해야 한다.**
 
-> **catch 대상 명시(codex와 opus 이견 — codex 채택):** 어댑터의 catch는 `catch (FeignException | RetryableException e)` 로 **전송 예외만** 잡는다. opus는 "터미널 `catch(RuntimeException)`"을 제안했으나, 그러면 매핑 로직의 진짜 버그(NPE 등)까지 `CallFailed`로 삼켜 fail-fast를 깨뜨린다 — 이는 exception-strategy와 배치됨. 전송 예외만 잡고 그 외 `RuntimeException`은 전파되게 둔다(진짜 버그는 빠르게 실패).
+분류 규칙 — 위에서부터 먼저 맞는 것을 적용:
+
+1. 원인에 **인터럽트**(`InterruptedException` / `InterruptedIOException`)가 있으면 → 인터럽트 플래그를 복원(`Thread.currentThread().interrupt()`)한 뒤 `CallInterruptedException`
+2. 원인에 **타임아웃**(`SocketTimeoutException` / `HttpTimeoutException`)이 있으면 → `CallTimeoutException`
+3. 그 밖의 모든 실패(HTTP 4xx/5xx, 연결 거부, 응답 파싱 실패, null/빈 바디) → `CallFailedException`
 
 | 전송에서 일어난 일 | 어댑터가 던지는 것 | 도메인 매핑 (`TaskStateMachine`) |
 |---|---|---|
 | 응답 정상 | (정상 반환) | 진행 |
-| 원인 체인에 timeout (`RetryableException`이 감싼 `SocketTimeout`/`HttpTimeout`) | `CallTimeoutException` | `ErrorCode.CALL_TIMEOUT` (재시도 대상) |
-| 원인 체인에 인터럽트 | `CallInterruptedException` | **캐치 안 함 → 전파(fail-fast)** |
-| 그 외 전부: `FeignException`(4xx/5xx), 연결 거부, `DecodeException`, 파싱 실패, **null/빈 바디** | `CallFailedException(msg)` | `ErrorCode.CHECK_ERROR` (재시도 대상) |
+| 원인이 타임아웃 (`RetryableException`이 감싼 `SocketTimeout`/`HttpTimeout`) | `CallTimeoutException` | `ErrorCode.CALL_TIMEOUT` (재시도) |
+| 원인이 인터럽트 | `CallInterruptedException` | **catch 안 함 → 전파(fail-fast)** |
+| 그 밖의 모든 실패: `FeignException`(4xx/5xx), 연결 거부, `DecodeException`, 파싱 실패, **null/빈 바디** | `CallFailedException(msg)` | `ErrorCode.CHECK_ERROR` (재시도) |
 
-핵심: raw `RetryableException`/`FeignException`이 어댑터 밖으로 새면 `TaskStateMachine.runExternalCall`(`CallTimeout`/`CallFailed`만 catch)이 잡지 못해 실제 버그로 간주되어 fail-fast로 전파된다. 그렇다고 `RuntimeException`을 포괄적으로 catch하지도 않는다(진짜 버그를 삼키게 되므로).
+**어댑터가 잡는 범위는 `catch (FeignException | RetryableException e)` — 전송 예외만.** 이 둘을 놓치면 `TaskStateMachine.runExternalCall`이 `CallTimeout`/`CallFailed`만 잡으므로, 밖으로 새어 나간 Feign 예외는 실제 버그로 간주되어 fail-fast로 전파된다. 반대로 `RuntimeException`을 통째로 잡으면 매핑 로직 자체의 버그(NPE 등)까지 `CallFailed`로 삼켜 fail-fast가 깨진다 — 그래서 전송 예외 두 종류만 잡고 나머지는 그대로 전파한다.
+
+> 참고(리뷰 근거): 원인 포장은 OpenFeign `SynchronousMethodHandler`가 `IOException`을 `RetryableException`으로 감싸기 때문이고(codex), 인터럽트 플래그 복원은 `java.net.http` blocking send가 인터럽트를 `InterruptedException`/`InterruptedIOException`으로 올려보내기 때문이다(opus). "전송 예외만 catch"는 codex·opus 이견에서 codex 안을 채택한 것.
 
 ### 2.1 예외 변환은 두 군데에서 일어난다 (ErrorDecoder + 어댑터)
 
