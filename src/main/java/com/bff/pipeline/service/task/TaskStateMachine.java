@@ -10,7 +10,7 @@ import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.StepOutcome;
 import com.bff.pipeline.repository.TaskRepository;
-import com.bff.pipeline.utils.TaskSettings;
+import com.bff.pipeline.utils.TaskSettingsResolver;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -96,7 +96,7 @@ public class TaskStateMachine {
 
     private void recordPendingAndReschedule(Task task, CheckSignal observed) {
         observationRecorder.recordCheck(task, observed);
-        reschedule(task, TaskSettings.resolvePollingInterval(task, pipelineSettings));
+        reschedule(task, TaskSettingsResolver.resolvePollingInterval(task, pipelineSettings));
     }
 
     private void failOutright(Task task, ErrorCode reason) {
@@ -107,13 +107,13 @@ public class TaskStateMachine {
     private void retryOrFail(Task task, ErrorCode reason) {
         observationRecorder.endAttempt(task, TaskStatus.FAILED, reason);
         task.setFailCount(task.getFailCount() + 1);
-        if (task.getFailCount() >= TaskSettings.resolveMaxFailCount(task, pipelineSettings)) {
+        if (task.getFailCount() >= TaskSettingsResolver.resolveMaxFailCount(task, pipelineSettings)) {
             fail(task, reason);
             return;
         }
         task.setStatus(TaskStatus.READY);
         task.setReadyAt(clock.instant());
-        task.setNextCheckAt(clock.instant().plus(TaskSettings.resolvePollingInterval(task, pipelineSettings)));
+        task.setNextCheckAt(clock.instant().plus(TaskSettingsResolver.resolvePollingInterval(task, pipelineSettings)));
         taskRepository.save(task);
     }
 

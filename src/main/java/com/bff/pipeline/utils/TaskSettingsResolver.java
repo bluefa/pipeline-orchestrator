@@ -15,9 +15,9 @@ import java.time.Instant;
  * 재시도는 {@code startedAt}을 새로 찍는 별개의 실행이므로(ADR-016 §6), 실행 타임아웃(execution-timeout)과
  * TTL은 태스크 전체 생명주기가 아니라 attempt마다 따로 적용된다.
  */
-public final class TaskSettings {
+public final class TaskSettingsResolver {
 
-    private TaskSettings() {
+    private TaskSettingsResolver() {
     }
 
     public static Duration resolveExecutionTimeout(Task task, PipelineSettings settings) {

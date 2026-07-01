@@ -1,5 +1,6 @@
 package com.bff.pipeline.entity;
 
+import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
 import jakarta.persistence.Column;
@@ -57,6 +58,15 @@ public class Pipeline {
 
     @Column(nullable = false)
     private String target;
+
+    /** create 시점에 targetSourceId로 조회해 저장하는 cloud provider(설계 §3). recipe 선택·표시용, 격리 축 아님. nullable(데모/drain). */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "cloud_provider")
+    private CloudProvider cloudProvider;
+
+    /** 이 실행을 만든 RecipeDefinition 상수 이름. Admin API가 metadata를 조인하는 링크. nullable(데모/drain). */
+    @Column(name = "recipe_definition")
+    private String recipeDefinition;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

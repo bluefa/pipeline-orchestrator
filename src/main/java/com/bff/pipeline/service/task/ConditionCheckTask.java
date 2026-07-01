@@ -6,10 +6,11 @@ import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.enums.CheckSignal;
 import com.bff.pipeline.enums.ErrorCode;
+import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
-import com.bff.pipeline.utils.TaskSettings;
+import com.bff.pipeline.utils.TaskSettingsResolver;
 import java.time.Clock;
 import org.springframework.stereotype.Component;
 
@@ -22,7 +23,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class ConditionCheckTask implements TaskType {
 
-    public static final String NAME = "CONDITION_CHECK";
+    public static final String NAME = TaskOperation.Mechanism.CONDITION_CHECK;
 
     private final InfraManagerClient infraManagerClient;
     private final PipelineSettings pipelineSettings;
@@ -49,7 +50,7 @@ public class ConditionCheckTask implements TaskType {
         if (infraManagerClient.checkCondition(target, task.getOperation())) {
             return TaskProgress.SUCCEEDED;
         }
-        if (TaskSettings.isPastDeadline(task, TaskSettings.resolveTimeToLive(task, pipelineSettings), clock)) {
+        if (TaskSettingsResolver.isPastDeadline(task, TaskSettingsResolver.resolveTimeToLive(task, pipelineSettings), clock)) {
             return TaskProgress.failedTerminal(ErrorCode.TIME_TO_LIVE_EXPIRED);
         }
         return TaskProgress.pending(CheckSignal.NOT_MET);

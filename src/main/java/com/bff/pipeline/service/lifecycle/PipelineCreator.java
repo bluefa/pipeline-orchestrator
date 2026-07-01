@@ -1,9 +1,16 @@
 package com.bff.pipeline.service.lifecycle;
 
+import com.bff.pipeline.client.InfraManagerClient;
 import com.bff.pipeline.entity.Pipeline;
+import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineType;
+import com.bff.pipeline.enums.RecipeDefinition;
+import com.bff.pipeline.exception.MissingTargetException;
 import com.bff.pipeline.exception.PipelineAlreadyActiveException;
 import com.bff.pipeline.exception.PipelinePersistenceException;
+import com.bff.pipeline.exception.ProviderLookupException;
+import com.bff.pipeline.exception.UnsupportedRecipeException;
+import com.bff.pipeline.model.PipelinePlan;
 import java.util.Locale;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -26,20 +33,48 @@ import org.springframework.stereotype.Service;
 public class PipelineCreator {
 
     private final PipelineInserter pipelineInserter;
+    private final RecipeCatalog recipeCatalog;
+    private final InfraManagerClient infraManagerClient;
 
-    public PipelineCreator(PipelineInserter pipelineInserter) {
+    public PipelineCreator(PipelineInserter pipelineInserter, RecipeCatalog recipeCatalog, InfraManagerClient infraManagerClient) {
         this.pipelineInserter = pipelineInserter;
+        this.recipeCatalog = recipeCatalog;
+        this.infraManagerClient = infraManagerClient;
     }
 
     public Pipeline create(String target, PipelineType type) {
+        if (target == null || target.isBlank()) {           // 외부 조회 전에 입력을 검증한다
+            throw new MissingTargetException();
+        }
+        CloudProvider provider = resolveProvider(target);   // 트랜잭션 밖 외부 조회(§3)
+        RecipeDefinition recipe = recipeCatalog.forProviderAndType(provider, type)
+                .orElseThrow(() -> new UnsupportedRecipeException(provider, type));
         try {
-            return pipelineInserter.insert(target, type);
+            return pipelineInserter.insert(new PipelinePlan(target, recipe));
         } catch (DataIntegrityViolationException violation) {
             if (isActiveTargetViolation(violation)) {
                 throw new PipelineAlreadyActiveException(target);
             }
             throw new PipelinePersistenceException(target, violation);
         }
+    }
+
+    /**
+     * cloud provider를 조회한다(외부 호출). 인프라 실패(타임아웃/호출 오류)는 비즈니스 실패가 아니므로 503으로
+     * 번역한다 — raw CallTimeout/CallFailed가 catch-all로 새어 500이 되지 않게 한다(§3). CallInterrupted는 잡지 않고
+     * 그대로 전파한다(fail-fast).
+     */
+    private CloudProvider resolveProvider(String target) {
+        CloudProvider provider;
+        try {
+            provider = infraManagerClient.cloudProvider(target);
+        } catch (InfraManagerClient.CallTimeoutException | InfraManagerClient.CallFailedException lookupFailure) {
+            throw new ProviderLookupException(target, lookupFailure);
+        }
+        if (provider == null) {   // 경계 계약 위반(null 반환)은 degraded 값으로 흘리지 않고 조회 실패로 번역한다
+            throw new ProviderLookupException(target, null);
+        }
+        return provider;
     }
 
     private static boolean isActiveTargetViolation(DataIntegrityViolationException exception) {

@@ -12,7 +12,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *
  * <p>compact constructor가 값을 검증한다. {@code pipeline.*} 키가 빠졌거나 값이 양수가 아니면 문제가 된
  * 키 이름과 함께 곧바로 시작에 실패한다(fail fast). {@code maxFailCount}가 1 미만이어도 마찬가지로 시작 시
- * 예외가 난다. 이렇게 막아 두면 데드라인 계산({@code TaskSettings})에서 나중에 NPE나 조용한 오동작으로
+ * 예외가 난다. 이렇게 막아 두면 데드라인 계산({@code TaskSettingsResolver})에서 나중에 NPE나 조용한 오동작으로
  * 번지지 않는다.
  */
 @Builder

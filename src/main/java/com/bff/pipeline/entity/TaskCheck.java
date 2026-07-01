@@ -24,7 +24,6 @@ import lombok.Setter;
  * {@link TaskAttempt}에 남는다). 하위 카운터들은 근본 원인 분석 질문에 답한다 — TTL 만료 조건이 NOT_MET이었는지
  * 아니면 API 실패(API-failed)였는지, 그리고 폴이 얼마나 헛돌았는지(churned). {@code lastExternalStatus}는 마지막
  * 폴의 자유 형식 디버그 레이블(예: "RUNNING", "NOT_MET")로, 로직에는 절대 쓰지 않는다.
- * {@code lastResponseCode}/{@code lastResponseSummary}는 앞으로 HTTP 어댑터가 채울 필드다.
  */
 @Entity
 @Table(
@@ -54,7 +53,5 @@ public class TaskCheck {
     private int callTimeoutCount;
 
     private String lastExternalStatus;
-    private Integer lastResponseCode;
-    private String lastResponseSummary;
     private Instant lastCheckedAt;
 }

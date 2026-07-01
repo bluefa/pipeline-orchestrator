@@ -47,15 +47,4 @@ public interface TaskType {
      * 값이지 예외가 아니다. 호출 실패만 {@code RuntimeException}으로 알린다.
      */
     TaskProgress check(String target, Task task, TaskAttempt attempt);
-
-    /**
-     * 이 타입의 dispatch가 {@code terraformSlotCap}으로 제한되는 희소 슬롯(예: terraform 러너 동시성)을 소비하는지 여부다.
-     * 엔진은 이 값이 {@code true}인 READY task를 dispatch하기 전에 현재 점유 슬롯 수를 {@code terraformSlotCap}과 견준다
-     * (ADR-021 Decision 7). 기본값은 {@code false} — 무거운 프로비저닝 타입만 재정의한다. 같은 슬롯을 공유하는
-     * 타입이 여럿이면(예: 여러 terraform 계열) 모두 {@code true}로 두며, 엔진은 이 플래그로 슬롯 소비 타입 전체를
-     * 이름이 아니라 타입 속성으로 집계한다.
-     */
-    default boolean consumesTerraformSlot() {
-        return false;
-    }
 }

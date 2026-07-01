@@ -7,11 +7,9 @@ import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.model.StepOutcome;
-import com.bff.pipeline.model.TaskType;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.service.task.ObservationRecorder;
-import com.bff.pipeline.service.task.TaskTypeRegistry;
 import java.util.List;
 import java.util.Optional;
 import lombok.Builder;
@@ -36,26 +34,28 @@ public class PipelineWorker {
     private final PipelineClaimer pipelineClaimer;
     private final PipelineRepository pipelineRepository;
     private final TaskRepository taskRepository;
-    private final TaskTypeRegistry taskTypeRegistry;
     private final ObservationRecorder observationRecorder;
     private final StepRunner stepRunner;
     private final StepReporter stepReporter;
     private final ExecutionSettings executionSettings;
 
     public PipelineWorker(PipelineClaimer pipelineClaimer, PipelineRepository pipelineRepository, TaskRepository taskRepository,
-            TaskTypeRegistry taskTypeRegistry, ObservationRecorder observationRecorder, StepRunner stepRunner,
+            ObservationRecorder observationRecorder, StepRunner stepRunner,
             StepReporter stepReporter, ExecutionSettings executionSettings) {
         this.pipelineClaimer = pipelineClaimer;
         this.pipelineRepository = pipelineRepository;
         this.taskRepository = taskRepository;
-        this.taskTypeRegistry = taskTypeRegistry;
         this.observationRecorder = observationRecorder;
         this.stepRunner = stepRunner;
         this.stepReporter = stepReporter;
         this.executionSettings = executionSettings;
     }
 
-    /** 편의 메서드: 한 건을 claim해 처리하고 그 pipeline id를 반환한다. 잡을 게 없으면 empty. */
+    /**
+     * 테스트 seam: 한 건을 claim해 처리하고 그 pipeline id를 반환한다(잡을 게 없으면 empty). 프로덕션 경로는
+     * {@code PipelineScheduler.drain()}이 {@link #process}를 부르는 것이고, 이 메서드는 스케줄러 없이 한 사이클을
+     * 결정적으로 돌려 검증하려는 테스트만 쓴다({@code claimOneDue} + {@code process} 합성).
+     */
     public Optional<Long> pollOnce() {
         return pipelineClaimer.claimOneDue().map(claim -> {
             process(claim);
@@ -100,7 +100,7 @@ public class PipelineWorker {
             TaskAttempt attempt = current == null ? null : observationRecorder.currentAttempt(current).orElse(null);
             boolean terraformSlotDispatch = current != null
                     && current.getStatus() == TaskStatus.READY
-                    && taskTypeRegistry.find(current.getTaskName()).map(TaskType::consumesTerraformSlot).orElse(false);
+                    && Boolean.TRUE.equals(current.getConsumesTerraformSlot());
             return StepContext.builder()
                     .target(pipeline.getTarget())
                     .currentTask(current)
@@ -116,7 +116,7 @@ public class PipelineWorker {
     }
 
     private boolean terraformSlotAvailable() {
-        return taskRepository.countByTaskNameInAndStatus(taskTypeRegistry.terraformSlotTaskNames(), TaskStatus.IN_PROGRESS)
+        return taskRepository.countByConsumesTerraformSlotIsTrueAndStatus(TaskStatus.IN_PROGRESS)
                 < executionSettings.terraformSlotCap();
     }
 }

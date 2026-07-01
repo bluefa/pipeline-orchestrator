@@ -2,6 +2,7 @@ package com.bff.pipeline.client;
 
 import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.dto.TerraformPoll;
+import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -57,6 +58,11 @@ public class TimeBoundedInfraManagerClient implements InfraManagerClient {
     @Override
     public boolean checkCondition(String target, TaskOperation operation) {
         return withTimeout(() -> delegate.checkCondition(target, operation));
+    }
+
+    @Override
+    public CloudProvider cloudProvider(String target) {
+        return withTimeout(() -> delegate.cloudProvider(target));
     }
 
     private <T> T withTimeout(Supplier<T> call) {

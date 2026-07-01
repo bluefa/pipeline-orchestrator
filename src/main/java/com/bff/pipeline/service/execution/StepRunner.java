@@ -5,9 +5,11 @@ import com.bff.pipeline.service.task.TaskStateMachine;
 import com.bff.pipeline.client.InfraManagerClient;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
+import com.bff.pipeline.enums.TaskDefinition;
 import com.bff.pipeline.model.StepOutcome;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
+import java.util.Optional;
 import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -37,9 +39,37 @@ public class StepRunner {
     }
 
     public StepOutcome runStep(String target, Task task, TaskAttempt attempt) {
-        return taskTypeRegistry.find(task.getTaskName())
+        return resolveConsistentType(task)
                 .map(type -> run(target, task, attempt, type))
                 .orElseGet(StepOutcome::unknownTask);
+    }
+
+    /**
+     * 외부 호출 전에 행을 진실원(task_definition)과 대조해 검증한다(설계 §4). 정의가 미해석이거나(삭제/rename),
+     * mechanism이 registry에 없거나, 정의가 정한 mechanism/operation/slot-flag가 행의 캐시 컬럼과 어긋나면
+     * (=DB 손상/버그) 어떤 TaskType도 부르지 않고 empty를 돌려 UNKNOWN_TASK로 끊는다.
+     */
+    private Optional<TaskType> resolveConsistentType(Task task) {
+        Optional<TaskDefinition> definition = TaskDefinition.find(task.getTaskDefinition());
+        if (definition.isEmpty()) {
+            log.warn("task {} has an unresolved definition '{}' — failing as UNKNOWN_TASK",
+                    task.getId(), task.getTaskDefinition());
+            return Optional.empty();
+        }
+        TaskDefinition resolved = definition.get();
+        if (rowCacheDisagreesWith(resolved, task)) {
+            log.warn("task {} definition {} disagrees with row cache (mechanism '{}' op {} slot {}) — failing as UNKNOWN_TASK",
+                    task.getId(), resolved.name(), task.getTaskName(), task.getOperation(), task.getConsumesTerraformSlot());
+            return Optional.empty();
+        }
+        return taskTypeRegistry.find(task.getTaskName());
+    }
+
+    /** 행의 write-once 캐시(mechanism/operation/slot-flag)가 진실원인 정의와 어긋나는지 — 어긋나면 DB 손상/버그다. */
+    private static boolean rowCacheDisagreesWith(TaskDefinition definition, Task task) {
+        return !definition.mechanism().equals(task.getTaskName())
+                || definition.operation() != task.getOperation()
+                || definition.consumesTerraformSlot() != Boolean.TRUE.equals(task.getConsumesTerraformSlot());
     }
 
     private StepOutcome run(String target, Task task, TaskAttempt attempt, TaskType type) {
