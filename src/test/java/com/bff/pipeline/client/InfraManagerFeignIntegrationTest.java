@@ -51,7 +51,7 @@ class InfraManagerFeignIntegrationTest {
         InfraManagerFeignClient client = feignClient(wireMock.baseUrl(), 500);
         InfraManagerOperationRegistry registry = new InfraManagerOperationRegistry(
                 java.util.List.of(new ApplyNetworkBinding(client), new DestroyNetworkBinding(client)),
-                java.util.List.of(new NetworkReadyBinding(client)));
+                java.util.List.of(new NetworkReadyBinding(client, objectMapper)));
         adapter = new InfraManagerFeignAdapter(client, registry, objectMapper);
     }
 

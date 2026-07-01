@@ -1,5 +1,6 @@
 package com.bff.pipeline.client;
 
+import com.bff.pipeline.dto.ConditionPoll;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
@@ -40,8 +41,11 @@ public interface InfraManagerClient {
      */
     TerraformPoll terraformJobStatus(String jobId, TaskOperation operation);
 
-    /** operation의 조건이 충족됐는지 한 번 확인한다. */
-    boolean checkCondition(String target, TaskOperation operation);
+    /**
+     * operation의 조건을 한 번 확인하고 <b>충족 여부와 원시 check payload</b>를 함께 반환한다(ADR-016 §3).
+     * 조건은 dispatch가 no-op이라 이 payload가 해당 폴의 {@code task_attempt.response}에 기록된다.
+     */
+    ConditionPoll checkCondition(String target, TaskOperation operation);
 
     /**
      * target(targetSourceId 기반)이 속한 cloud provider를 조회한다(설계 §3). create 시점에 한 번 불러 recipe를 고르고

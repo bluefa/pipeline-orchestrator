@@ -90,6 +90,8 @@ public class StepRunner {
             case TaskProgress.Succeeded ignored -> StepOutcome.succeeded();
             case TaskProgress.Pending pending -> StepOutcome.pending(pending.observed());
             case TaskProgress.Failed failed -> StepOutcome.failed(failed.reason(), failed.retryable());
+            case TaskProgress.Met met -> StepOutcome.conditionMet(met.response());
+            case TaskProgress.NotMet notMet -> StepOutcome.conditionNotMet(notMet.response());
         };
     }
 

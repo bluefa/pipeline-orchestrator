@@ -2,8 +2,10 @@ package com.bff.pipeline.client.condition;
 
 import com.bff.pipeline.client.InfraManagerFeignClient;
 
+import com.bff.pipeline.dto.ConditionPoll;
 import com.bff.pipeline.dto.NetworkReadyResponse;
 import com.bff.pipeline.enums.TaskOperation;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 /** NETWORK_READY operation의 InfraManager API 바인딩. */
@@ -11,9 +13,11 @@ import org.springframework.stereotype.Component;
 public class NetworkReadyBinding implements ConditionOperationBinding {
 
     private final InfraManagerFeignClient feign;
+    private final ObjectMapper objectMapper;
 
-    public NetworkReadyBinding(InfraManagerFeignClient feign) {
+    public NetworkReadyBinding(InfraManagerFeignClient feign, ObjectMapper objectMapper) {
         this.feign = feign;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -22,8 +26,9 @@ public class NetworkReadyBinding implements ConditionOperationBinding {
     }
 
     @Override
-    public boolean check(String target) {
+    public ConditionPoll check(String target) {
         NetworkReadyResponse response = feign.networkReady(target);
-        return ConditionOperationBinding.requireMet(response == null ? null : response.met(), TaskOperation.NETWORK_READY);
+        return ConditionOperationBinding.poll(response == null ? null : response.met(), response, objectMapper,
+                TaskOperation.NETWORK_READY);
     }
 }

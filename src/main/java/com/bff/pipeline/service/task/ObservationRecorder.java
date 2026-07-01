@@ -68,7 +68,7 @@ public class ObservationRecorder {
             case NOT_MET -> check.setNotMetCount(check.getNotMetCount() + 1);
             case API_ERROR -> check.setApiErrorCount(check.getApiErrorCount() + 1);
             case CALL_TIMEOUT -> check.setCallTimeoutCount(check.getCallTimeoutCount() + 1);
-            case RUNNING -> { }
+            case RUNNING, MET -> { }
         }
         check.setLastExternalStatus(signal.name());
         check.setLastCheckedAt(clock.instant());

@@ -15,11 +15,13 @@ import com.bff.pipeline.enums.ErrorCode;
  * 뿐이고, 형식 해석은 task type 몫이며 write-back 트랜잭션은 {@code task_attempt.response}에 그대로 기록한다(ADR-016 ed97ec0).
  *
  * <p>정적 팩토리({@code unblock}, {@code dispatched}, {@code pending}, {@code succeeded},
- * {@code failed}, {@code callTimeout}, {@code callFailed}, {@code unknownTask})로 만든다.
+ * {@code failed}, {@code callTimeout}, {@code callFailed}, {@code conditionMet},
+ * {@code conditionNotMet}, {@code unknownTask})로 만든다.
  */
 public sealed interface StepOutcome
         permits StepOutcome.Unblock, StepOutcome.Dispatched, StepOutcome.Pending,
-                StepOutcome.Succeeded, StepOutcome.Failed, StepOutcome.CallFailure, StepOutcome.UnknownTask {
+                StepOutcome.Succeeded, StepOutcome.Failed, StepOutcome.CallFailure,
+                StepOutcome.ConditionMet, StepOutcome.ConditionNotMet, StepOutcome.UnknownTask {
 
     /** write-back 트랜잭션이 applyOutcome에 앞서 beginAttempt를 기록해야 하는가. */
     boolean dispatchPhase();
@@ -48,6 +50,16 @@ public sealed interface StepOutcome
         public boolean dispatchPhase() { return dispatch; }
     }
 
+    /** CONDITION_CHECK 전용: 조건 충족 폴. {@code response}는 그 폴의 원시 check payload(→ task_attempt.response). */
+    record ConditionMet(String response) implements StepOutcome {
+        public boolean dispatchPhase() { return false; }
+    }
+
+    /** CONDITION_CHECK 전용: 조건 미충족 폴 = 실패한 폴. {@code response}는 그 폴의 원시 check payload. */
+    record ConditionNotMet(String response) implements StepOutcome {
+        public boolean dispatchPhase() { return false; }
+    }
+
     record UnknownTask() implements StepOutcome {
         public boolean dispatchPhase() { return false; }
     }
@@ -59,5 +71,7 @@ public sealed interface StepOutcome
     static StepOutcome failed(ErrorCode reason, boolean retryable) { return new Failed(reason, retryable); }
     static StepOutcome callTimeout(boolean dispatch) { return new CallFailure(ErrorCode.CALL_TIMEOUT, CheckSignal.CALL_TIMEOUT, dispatch); }
     static StepOutcome callFailed(boolean dispatch) { return new CallFailure(ErrorCode.CHECK_ERROR, CheckSignal.API_ERROR, dispatch); }
+    static StepOutcome conditionMet(String response) { return new ConditionMet(response); }
+    static StepOutcome conditionNotMet(String response) { return new ConditionNotMet(response); }
     static StepOutcome unknownTask() { return new UnknownTask(); }
 }

@@ -31,7 +31,7 @@ import org.hibernate.type.SqlTypes;
  * 상태(state machine state)이며, 진행 원장(progress ledger)을 따로 두지 않는다. {@code (pipelineId, sequence)}는
  * 유일(unique)하고, 엔진은 sequence가 가장 낮은 비종료(non-terminal) task를 현재 task로 고른다.
  *
- * <p>task별 설정 필드({@code timeToLive}, {@code pollingInterval}, {@code executionTimeout},
+ * <p>task별 설정 필드({@code pollingInterval}, {@code executionTimeout},
  * {@code maxFailCount})는 nullable 오버라이드다. null이면 전역 {@code PipelineSettings} 기본값을 쓴다.
  * 이 값들은 {@link JdbcTypeCode}를 거쳐 BIGINT(나노초 단위, Hibernate의 Duration 매핑 방식)로 저장된다.
  *
@@ -104,9 +104,6 @@ public class Task {
     private Instant finishedAt;
 
     private Instant nextCheckAt;
-
-    @JdbcTypeCode(SqlTypes.BIGINT)
-    private Duration timeToLive;
 
     @JdbcTypeCode(SqlTypes.BIGINT)
     private Duration pollingInterval;

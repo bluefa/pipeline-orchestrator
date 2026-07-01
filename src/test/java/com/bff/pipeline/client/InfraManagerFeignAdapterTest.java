@@ -115,8 +115,8 @@ class InfraManagerFeignAdapterTest {
         InfraManagerFeignAdapter met = adapter(stub().withReady(new NetworkReadyResponse(true)));
         InfraManagerFeignAdapter notMet = adapter(stub().withReady(new NetworkReadyResponse(false)));
 
-        assertThat(met.checkCondition("target-a", TaskOperation.NETWORK_READY)).isTrue();
-        assertThat(notMet.checkCondition("target-a", TaskOperation.NETWORK_READY)).isFalse();
+        assertThat(met.checkCondition("target-a", TaskOperation.NETWORK_READY).met()).isTrue();
+        assertThat(notMet.checkCondition("target-a", TaskOperation.NETWORK_READY).met()).isFalse();
     }
 
     @Test
@@ -140,7 +140,7 @@ class InfraManagerFeignAdapterTest {
     private InfraManagerFeignAdapter adapter(StubFeignClient stub) {
         InfraManagerOperationRegistry registry = new InfraManagerOperationRegistry(
                 List.of(new ApplyNetworkBinding(stub), new DestroyNetworkBinding(stub)),
-                List.of(new NetworkReadyBinding(stub)));
+                List.of(new NetworkReadyBinding(stub, objectMapper)));
         return new InfraManagerFeignAdapter(stub, registry, objectMapper);
     }
 

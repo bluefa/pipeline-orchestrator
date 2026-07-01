@@ -75,7 +75,7 @@ class InfraManagerOperationRegistryTest {
     private ConditionOperationBinding condition(TaskOperation operation) {
         return new ConditionOperationBinding() {
             @Override public TaskOperation operation() { return operation; }
-            @Override public boolean check(String target) { return false; }
+            @Override public com.bff.pipeline.dto.ConditionPoll check(String target) { return new com.bff.pipeline.dto.ConditionPoll(false, "{}"); }
         };
     }
 }

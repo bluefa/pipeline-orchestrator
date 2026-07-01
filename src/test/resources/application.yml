@@ -17,6 +17,5 @@ spring:
 
 pipeline:
   execution-timeout: PT50M
-  time-to-live: P7D
   polling-interval: PT10M
   max-fail-count: 2

@@ -1,6 +1,7 @@
 package com.bff.pipeline.client;
 
 import com.bff.pipeline.config.ExecutionSettings;
+import com.bff.pipeline.dto.ConditionPoll;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
@@ -57,7 +58,7 @@ public class TimeBoundedInfraManagerClient implements InfraManagerClient {
     }
 
     @Override
-    public boolean checkCondition(String target, TaskOperation operation) {
+    public ConditionPoll checkCondition(String target, TaskOperation operation) {
         return withTimeout(() -> delegate.checkCondition(target, operation));
     }
 

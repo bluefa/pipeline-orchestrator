@@ -1,5 +1,6 @@
 package com.bff.pipeline.client;
 
+import com.bff.pipeline.dto.ConditionPoll;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.client.condition.ConditionOperationBinding;
 import com.bff.pipeline.client.terraform.TerraformOperationBinding;
@@ -54,7 +55,7 @@ public class InfraManagerFeignAdapter implements InfraManagerClient {
     }
 
     @Override
-    public boolean checkCondition(String target, TaskOperation operation) {
+    public ConditionPoll checkCondition(String target, TaskOperation operation) {
         return translating(() -> registry.condition(operation).check(target));
     }
 
