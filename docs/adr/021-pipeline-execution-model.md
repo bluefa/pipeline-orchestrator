@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — 2026-06-27.
+Proposed — 2026-06-27 (revised 2026-07-01: condition rebased from `ttl` to a retry count; see Revision history).
 
 This is the **execution half** of the install/delete pipeline design: how the durable state
 machine of [ADR-016](016-install-delete-pipeline-domain-model.md) is actually driven forward.
@@ -17,9 +17,9 @@ dispatch is idempotent (so at-least-once delivery is correct). What it does not 
 the runtime: where the orchestrator runs, how many instances, how it finds due work, and how
 it bounds concurrent external calls.
 
-The dominant runtime constraint is **unbounded external-call latency**. InfraManager's "run"
+The dominant runtime constraint is **external work that runs long relative to a DB transaction**. InfraManager's "run"
 API is asynchronous — a short call returns a job id, but the Terraform job it starts runs for
-**minutes**, and condition checks poll for seconds to days. The execution model must absorb
+**minutes**, and a condition check re-polls on its interval, bounded by a retry count (ADR-016 §6). The execution model must absorb
 that without stalling, and must survive process restarts (ADR-016 guarantees no state is
 lost, only that progress pauses).
 
@@ -52,7 +52,7 @@ this ADR is how those mechanisms work.
 | **No terminal resurrection** (a `CANCELLED`/`DONE` pipeline never reverts) | ownership-guarded write-back + exactly one `status` writer per cancel case (so **no `status` guard is needed**) | Decision 4, 6 |
 | **At-least-once is correct** (a duplicate dispatch is harmless) | infra-idempotency: TF APIs are duplicate-harmless | ADR-016 §5 |
 | **Crash recovery** (a dead worker's pipeline resumes) | lease expiry → reclaim by the next scan; no leader, no journal | Decision 5 |
-| **Completion survives a lost result** | code-level `check(attempt, task)` over the latest attempt; a lost result → `executionTimeout` → fresh idempotent re-dispatch | Decision 4, ADR-016 §5 |
+| **Completion survives a lost result** | code-level `check(attempt, task)` over the latest attempt; a lost `TERRAFORM_JOB` result → `executionTimeout` → fresh idempotent re-dispatch (a condition's lost poll heals via lease-expiry reclaim, then re-polls) | Decision 4, ADR-016 §5, §6 |
 
 ### 1. Workers pull work from the DB; no single-instance constraint, no leader election
 
@@ -149,13 +149,22 @@ transaction that advances task/pipeline state also clears `claimed_by`/`claimed_
 the new `next_due_at` (seeded at creation by the trigger endpoint). Without this release a
 pipeline that finishes a step but stays `RUNNING` would sit locked until `claimed_until` passes,
 blocking other workers. When the current task reaches `DONE`, the same tx2 flips the next task
-`BLOCKED → READY`. On dispatch the worker writes a `task_attempt` row (the attempt's `job_ids`
-set + responses), and on each poll it UPDATEs that attempt's `task_check` summary (counts + last
-response) in place; both under the verified pipeline claim (single writer, no task-level claim
-needed). Task completion is a code-level `check(attempt, task)` over the **latest** attempt row —
-the reconciler reads only that row, and only for completion; claim, scheduling, and pipeline
-transitions never read the attempt tables. A lost attempt result does not stall the task: it
-falls through to `executionTimeout` and re-dispatches a fresh `N`-job run (idempotent).
+`BLOCKED → READY`. Each attempt writes a `task_attempt` row carrying its `response`, plus a `task_check`
+summary — both under the verified pipeline claim (single writer, no task-level claim needed). The
+two kinds differ in shape: a `TERRAFORM_JOB` attempt polls job status many times, so tx2 UPDATEs
+the same attempt's `task_check` in place across polls; a `CONDITION_CHECK` poll **is** one attempt
+(ADR-016 §6), so each failed poll — not-met or check-error alike — writes a fresh
+`task_attempt`/`task_check` pair and increments `fail_count`; while `fail_count < maxFailCount` it
+reschedules the next poll (the task's `next_check_at`, projected to the pipeline's `next_due_at` for
+the claim scan) at `now() + polling_interval`, and the poll that reaches `maxFailCount` sets the task
+(and pipeline) `FAILED` with that poll's `error_code`, scheduling nothing further — no in-place poll loop. A met poll instead writes the final
+`task_attempt`/`task_check` pair (the latest row the completion `check` reads) and drives the task
+`DONE`, without incrementing `fail_count` or rescheduling.
+Task completion is a code-level `check(attempt, task)` over the **latest** attempt row — the
+reconciler reads only that row, and only for completion; claim, scheduling, and pipeline
+transitions never read the attempt tables. For a `TERRAFORM_JOB` a lost attempt result does not
+stall the task: it falls through to `executionTimeout` and re-dispatches a fresh `N`-job run
+(idempotent); a lost condition poll instead heals via lease-expiry reclaim (Decision 5) and re-polls.
 
 *The above is the mechanism; the rest is why it is race-free.*
 
@@ -181,7 +190,10 @@ windows where InfraManager may be called twice:
 
 In all three the duplicate **external call** is safe by **infra-idempotency** — TF APIs are
 duplicate-harmless (a re-dispatch may create harmless duplicate jobs; the `job_ids` recorded for
-the attempt are the latest dispatch's set). The guarded DB write solves a *different* problem:
+the attempt are the latest dispatch's set). A `CONDITION_CHECK` call is a side-effect-free **read**,
+so a repeated poll in these windows is inherently harmless (no idempotency contract needed); and
+because `fail_count`/`maxFailCount` count only *committed* attempts, a poll lost before its tx2 is
+re-run by reclaim without consuming the budget. The guarded DB write solves a *different* problem:
 stopping a stale straggler from clobbering DB state. The two are **complementary, not
 interchangeable** — idempotency covers the external duplicate, the guard covers the DB write.
 
@@ -235,8 +247,9 @@ UPDATE pipeline SET cancel_requested = true, next_due_at = now()
 The claim-holding worker reads `cancel_requested` at its safe points — right after claiming,
 before dispatch, and inside the report transaction (tx2) — and if set, terminalizes **every
 non-terminal task** (the current task plus any still-`BLOCKED` successors) and the pipeline to
-`CANCELLED` itself, then releases the claim. `next_due_at = now()` wakes a sleeping pipeline (e.g.
-one in a long poll/condition wait) so the next scan claims it promptly.
+`CANCELLED` itself, then releases the claim. `next_due_at = now()` makes the pipeline immediately due, so the next scan re-claims it promptly
+once the live claim releases. (A condition merely sleeping between polls holds no live claim and is
+cancelled immediately by Case A, not here.)
 
 **Why both cases are race-free:**
 - **vs a concurrent claim** — both contend on the pipeline row, so whichever commits first wins:
@@ -261,7 +274,8 @@ Their exact values live in operational config, not in this ADR:
 
 - **Worker count `N`** caps *concurrent external calls* (`≤ min(N, due pipelines)`). It is
   **not** a requests-per-second guarantee — `429`/`503` back off by pushing `next_due_at`
-  forward.
+  forward (for a `CONDITION_CHECK`, this backpressure deferral pushes the next poll beyond
+  `polling_interval`, extending the effective elapsed bound in ADR-016 §6).
 - **Lease duration** (`lease_seconds`) must exceed max single-call timeout plus pool queue-wait
   plus a scheduling margin (see Decision 5). Tune conservatively; a too-short lease has two
   distinct effects: (1) the **guarded write** prevents the stale straggler from clobbering DB
@@ -344,7 +358,7 @@ loop:
 | A. Multi-worker claim-pull (SKIP LOCKED + lease + guarded writes) | **Chosen** | Multi-process safe by construction; HA + horizontal scale inherent; survives cancel-vs-worker and deploy-overlap races; crash recovery via lease expiry. |
 | B. Single server (replicas=1) + in-memory in-flight guard | **Rejected** | Fails the moment there is a second writer: cancel races a worker into terminal resurrection, and any process overlap (rolling deploy / scale / restart) double-transitions status. Idempotency covers double-dispatch but not status-transition races. |
 | C. Workflow engine (Temporal / Airflow / broker) | Rejected | A 2–4 step linear chain of minute-scale polls does not justify the operational cost. |
-| D. In-memory async chain (no scan) | Rejected | Loses runs on restart/deploy; cannot durably express multi-day waits. ADR-016 already requires the DB to be the only state. |
+| D. In-memory async chain (no scan) | Rejected | Loses runs on restart/deploy; cannot durably hold delayed retries and due work across restarts. ADR-016 already requires the DB to be the only state. |
 
 ## Consequences
 
@@ -423,7 +437,7 @@ Required relationship: `leaseDuration > maxApiCallTimeout + poolQueueWait + safe
 ## Glossary
 
 - **Claim** — the act of stamping a per-claim fencing token (a fresh UUID minted at claim time) into `claimed_by`, plus a deadline into `claimed_until`, in a short committed transaction (tx1). Each claim generates a new unique token; the same worker re-claiming the same pipeline after lease expiry receives a different token, ensuring any in-flight tx2 from the prior claim is rejected by the ownership guard. On claim, the worker also checks `cancel_requested` before proceeding.
-- **Cooperative cancel (Case B)** — for a pipeline under a live lease, the Admin/API path writes only `cancel_requested = true` (and sets `next_due_at = now()` to wake a sleeping pipeline); the claim-holding worker reads the flag at its safe points and applies the terminal `CANCELLED` transition itself, remaining the sole status writer for that live-lease pipeline. (An **idle** pipeline is instead terminated immediately by the API path — Case A in Decision 6.) Neither case needs a per-write `status` guard to prevent terminal resurrection.
+- **Cooperative cancel (Case B)** — for a pipeline under a live lease, the Admin/API path writes only `cancel_requested = true` (and sets `next_due_at = now()` so the next scan re-claims it promptly once the live claim releases); the claim-holding worker reads the flag at its safe points and applies the terminal `CANCELLED` transition itself, remaining the sole status writer for that live-lease pipeline. (An **idle** pipeline is instead terminated immediately by the API path — Case A in Decision 6.) Neither case needs a per-write `status` guard to prevent terminal resurrection.
 - **Due pipeline** — one whose `next_due_at <= now()` and whose lease has expired (or was never set).
 - **Guarded write-back** — an `UPDATE ... WHERE id = :id AND claimed_by = :token` that no-ops if the ownership guard fails. Defends against lease-expired straggler clobber; a `status` guard is not required because cancel is cooperative and `status` has a single writer (Decision 6).
 - **Lease** — the `claimed_until` timestamp; expiry automatically releases the claim for reclaim by any worker.
@@ -435,3 +449,7 @@ Required relationship: `leaseDuration > maxApiCallTimeout + poolQueueWait + safe
   superseded independently of the domain model.
 - 2026-06-27: replaced the single-server/in-memory model with multi-worker claim-pull after
   the single-writer premise was found to break under concurrent cancel and multi-session.
+- 2026-07-01: aligned with ADR-016's condition rebase (wall-clock `ttl` → retry count) — a
+  `CONDITION_CHECK` poll is one attempt, failed polls (not-met or check-error) reschedule at
+  `polling_interval`, `executionTimeout` is `TERRAFORM_JOB`-only, and a lost condition poll heals
+  via lease-expiry reclaim rather than a fresh schedule.
