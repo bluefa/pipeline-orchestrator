@@ -7,7 +7,6 @@ import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.config.PipelineSettings;
 import com.bff.pipeline.dto.Claim;
 import com.bff.pipeline.client.FakeInfraManagerClient;
-import com.bff.pipeline.client.InfraManagerClient;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
@@ -16,7 +15,6 @@ import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.TaskStatus;
-import com.bff.pipeline.model.StepOutcome;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskRepository;
@@ -36,7 +34,6 @@ import com.bff.pipeline.service.task.TaskTypeRegistry;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -391,6 +388,9 @@ class PipelineExecutionTest {
             pipelineWorker.pollOnce();
             clock.advance(Duration.ofHours(1));
         }
+        assertThat(status(pipeline).isTerminal())
+                .as("pipeline did not reach a terminal state in 20 polls")
+                .isTrue();
     }
 
     private Task task(Pipeline pipeline, int sequence) {
@@ -437,6 +437,7 @@ class PipelineExecutionTest {
                     .runningPipelineCap(100).terraformSlotCap(100).terraformSlotRetry(Duration.ofSeconds(1))
                     .pollInterval(Duration.ofSeconds(1)).maxIdleSleep(Duration.ofSeconds(1))
                     .backoffBase(Duration.ofMillis(100)).backoffMax(Duration.ofSeconds(1)).jitterRatio(0.2)
+                    .schedulerInitialDelay(Duration.ofSeconds(5))
                     .build();
         }
     }

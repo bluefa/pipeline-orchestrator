@@ -34,6 +34,7 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 | **controlled-boundary-exception** — a raw infra exception (`DataIntegrityViolationException`…) is wrapped into a controlled `OrchestrationException(status+code)` at the service boundary; `GlobalAdvice` handles it in one place + a catch-all that logs the cause | (1) single-translation-boundary (changelog) · (2) ADR-021 retro #13 | agent | a raw infra exception reaching `GlobalAdvice` |
 | **no-inline-fqn** — a class is imported and used by its short name, never written fully-qualified inline in code (declaration / `new` / call / cast / type arg); JPQL enum literals in `@Query` strings and javadoc `{@link}`/`{@code}` are exempt | (1) owner (stated hard: "반드시 피해야되는 패턴") · (2) PR#15 review — codex found `PipelineScheduler` `java.time.Clock` + inline FQNs in 3 tests | rule | a `java.`/`javax.`/`com.bff.` FQN inline in code |
 | **no-html-javadoc** — javadoc is plain text; no HTML markup tags (`<b>`/`<p>`/`<em>`/`<i>`/`<strong>`). Diff-scoped: don't ADD tags (`<pre>` layout blocks allowed) | (1) owner (memory: dislikes `<b>`/`<p>`/`<em>`) · (2) PR#15 review — codex flagged added `<b>`/`<p>` | agent (diff-aware; rule too noisy — codebase is saturated) | an HTML tag added to javadoc |
+| **dto-builder** — a wide DTO (adjacent same-type or boolean components) is built with `@Builder`, never a positional `new` where a swapped argument still compiles | (1) ADR-021 retro #3 · (2) R6 post-PR#18 review — `PipelineQueryService` built `PipelineDetail`(19 args)/`TaskDetail`(18 args) positionally | agent | a positional `new` of a wide DTO |
 
 ## Watch-list (1 occurrence — recorded, promote on the next hit)
 
@@ -49,14 +50,35 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 | Prefer `Stream`/`IntStream.range` (enumerate) over a `for` loop where it reads cleanly | owner | agent |
 | Purposeful names; **no abbreviations** in ANY identifier (class, method, field, variable) — reveal the role: `ImClient`→`InfraManagerClient`, `im`→`infraManager`, `seq`→`sequence`, `ttl`→`timeToLive`, `cve`→`constraintViolation`, catch `e`→`exception`. Allowed: `id`, `main(args)` (owner stated 3×). Role-based collection names (`tasks`, `pipelines`, `settings`) are correct — reveal-the-role, not echo-the-type (ADR-021 retro #1 folded in here; owner keeps role names) | owner | agent (recurring-review pattern 6) |
 | Layered package convention: `entity / service / client / controller / dto / repository / utils` (entity also holds domain enums; dto holds transport values; app wiring at the root package) — no abbreviated package names like `im` | owner | rule (flag a new top-level pkg outside the set) |
-| REST-layer exception handling is `GlobalAdvice` (`@RestControllerAdvice`); domain failures stay values. **INCONSISTENCY to resolve (owner):** the code has it in `advice/` (PR #9) but AGENTS.md #6 text still says `controller/` holds the advice. No rule promoted until the package of record is settled | owner; AGENTS.md #6 vs code | process (owner to reconcile doc ↔ code) |
+| REST-layer exception handling is `GlobalAdvice` (`@RestControllerAdvice`); domain failures stay values. **RESOLVED (R6):** `GlobalAdvice` moved `advice/` → `controller/` to match AGENTS.md #6 ("controller — REST advice"; `advice` was never in the allowed package set). If the owner prefers a separate `advice/` package, revert the move AND amend AGENTS.md #6 together | owner; AGENTS.md #6 | resolved (code now matches the doc) |
 | A global catch-all exception handler must **log the cause** (never return a generic body and drop the trace) | sonnet R5 | agent |
-| DTO built with a positional `new` (adjacent same-type or boolean args) → `@Builder` for call-site clarity | ADR-021 retro #3 | agent |
 | Duration-typed field suffix convention: omit for `Interval`/`Timeout`/`Sleep`/`Retry`; spell out when ambiguous (`backoffBase`/`backoffMax`) — **PENDING owner decision** before promotion | ADR-021 retro #15 | (undecided) |
 | VS Code Lombok `@NonNull` false warnings → `.vscode/settings.json` `"java.compile.nullAnalysis.mode":"disabled"` (editor-only, code-unrelated) | ADR-021 retro #16 | none (editor config) |
 
 ## Changelog
 
+- **R6 — post-PR#18 whole-repo review (docs/post-pr18-code-review.md).** The engine/domain had converged
+  after prior rounds; nearly every finding sat in the freshly-merged REST layer (PR #18). Harness moves:
+  - **dto-builder** promoted to **agent** pattern 15 (2nd occurrence: ADR-021 retro #3 + the positional
+    19-arg `new PipelineDetail(...)` / 18-arg `new TaskDetail(...)` in `PipelineQueryService`). Fixed by
+    putting `@Builder` on both records.
+  - **advice-package inconsistency resolved**: `GlobalAdvice` moved to `controller/` (AGENTS.md #6 is the
+    doc of record; `advice` was outside the allowed package set). Watch-list row updated.
+  - Promoted-rule regressions found & fixed in PR #18 code: **list-get-first**
+    (`chain.get(chain.size()-1)` in `toDetail` — note: the grep only catches `.get(0)`, the `.get(size-1)`
+    half stays a human/agent catch; + 3 test `.get(0)` the grep DID catch), **optional-idiom**
+    (`currentTask(...).orElse(null)` re-checked `== null` in `PipelineQueryService`).
+  - **index-coverage PASS**: PR #18 had already added `idx_pipeline_status_created` /
+    `idx_pipeline_target_created` for its admin queries — recorded as a pass, no change.
+  - Clean-code fixes: `long[]{done,total}` magic-index aggregation → nested record `TaskProgressCount`
+    (also removed a `static final long[]` mutable-array constant); the last scattered `@Value`
+    (`scheduler-initial-delay`) folded into `ExecutionSettings` (validated like its 11 siblings);
+    terminal pipelines now report `dueLagMillis = 0` (was: grew forever after termination).
+  - Test-quality: `runUntilTerminal` helpers now fail loudly on non-termination; the
+    "WithoutHammering" scheduler test asserts the claim-attempt count (was: name promised what no assert
+    checked — discriminating-test-assert again); `WithoutNPlusOne` dropped from a test name that never
+    measured statements; 6 unused imports deleted; `PipelineQueryServiceTest` renamed to the suite's
+    camelCase convention.
 - **PR #15 review (CONDITION_CHECK ttl→retry-count) → harness.** Two owner points promoted:
   - **no-inline-fqn** → **rule** (`recurring-check.sh`). Owner stated it as a hard rule; codex found 4 inline
     FQNs (`PipelineScheduler` `java.time.Clock` field/ctor + `java.util.Arrays`/`Supplier`/`ConditionPoll`

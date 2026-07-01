@@ -27,7 +27,8 @@ public record ExecutionSettings(
         Duration maxIdleSleep,
         Duration backoffBase,
         Duration backoffMax,
-        double jitterRatio) {
+        double jitterRatio,
+        Duration schedulerInitialDelay) {
 
     public ExecutionSettings {
         requireAtLeastOne(workerPerPod, "pipeline.execution.worker-per-pod");
@@ -40,6 +41,7 @@ public record ExecutionSettings(
         requirePositive(maxIdleSleep, "pipeline.execution.max-idle-sleep");
         requirePositive(backoffBase, "pipeline.execution.backoff-base");
         requirePositive(backoffMax, "pipeline.execution.backoff-max");
+        requirePositive(schedulerInitialDelay, "pipeline.execution.scheduler-initial-delay");
         if (jitterRatio < 0.0 || jitterRatio > 1.0) {
             throw new IllegalArgumentException(
                     "pipeline.execution.jitter-ratio must be within [0.0, 1.0], was " + jitterRatio);

@@ -138,6 +138,7 @@ class PipelineSoftCapTest {
                     .runningPipelineCap(1).terraformSlotCap(1).terraformSlotRetry(Duration.ofSeconds(1))
                     .pollInterval(Duration.ofSeconds(1)).maxIdleSleep(Duration.ofSeconds(1))
                     .backoffBase(Duration.ofMillis(100)).backoffMax(Duration.ofSeconds(1)).jitterRatio(0.2)
+                    .schedulerInitialDelay(Duration.ofSeconds(5))
                     .build();
         }
     }

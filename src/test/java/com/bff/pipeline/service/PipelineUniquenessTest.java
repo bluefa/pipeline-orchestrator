@@ -32,7 +32,9 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * {@code active_target} unique constraint를 통한 target별 유일성(uniqueness)을 검증한다.
+ * 파이프라인 생성(트리거) 계약을 검증한다 — {@code active_target} unique constraint를 통한 target별
+ * 유일성(중복 트리거 409)과, 그에 앞선 입력 검증(빈 target 400)·provider 조회 실패 번역(503)·
+ * 미지원 (provider, type) 거절(400)까지 create 경로 전체를 다룬다.
  *
  * <p>{@code NOT_SUPPORTED}가 테스트 래핑 트랜잭션을 억제하므로 {@link PipelineInserter}가 독립적으로
  * 커밋한다. 두 번째 insert가 실제 unique 제약 위반을 발생시키는 것은 첫 번째 커밋이 완료된 이후에만
