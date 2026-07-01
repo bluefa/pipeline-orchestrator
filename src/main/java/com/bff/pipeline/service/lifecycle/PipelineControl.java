@@ -2,6 +2,7 @@ package com.bff.pipeline.service.lifecycle;
 import com.bff.pipeline.service.task.TaskCanceller;
 
 import com.bff.pipeline.entity.Pipeline;
+import com.bff.pipeline.exception.BadRequestException;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import java.time.Clock;
@@ -44,6 +45,9 @@ public class PipelineControl {
 
     @Transactional
     public Pipeline cancel(Long pipelineId) {
+        if (pipelineId == null) {
+            throw new BadRequestException("pipelineId must not be null");
+        }
         if (!pipelineRepository.existsById(pipelineId)) {
             throw new IllegalArgumentException("no pipeline " + pipelineId);
         }

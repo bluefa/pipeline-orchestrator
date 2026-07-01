@@ -1,8 +1,10 @@
 package com.bff.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.entity.Pipeline;
+import com.bff.pipeline.exception.BadRequestException;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
@@ -66,6 +68,12 @@ class PipelineControlTest {
         assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()))
                 .extracting(Task::getStatus)
                 .containsOnly(TaskStatus.CANCELLED);
+    }
+
+    @Test
+    void cancelRejectsANullPipelineIdAsABadRequest() {
+        assertThatThrownBy(() -> control.cancel(null))
+                .isInstanceOf(BadRequestException.class);
     }
 
     @Test

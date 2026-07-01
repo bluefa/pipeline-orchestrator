@@ -1,6 +1,7 @@
 package com.bff.pipeline.controller;
 
 import com.bff.pipeline.dto.ErrorResponse;
+import com.bff.pipeline.exception.BadRequestException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -17,9 +18,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @RestControllerAdvice
 public class GlobalAdvice {
 
-    @ExceptionHandler(IllegalArgumentException.class)
+    @ExceptionHandler({BadRequestException.class, IllegalArgumentException.class})
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ErrorResponse onBadRequest(IllegalArgumentException exception) {
+    public ErrorResponse onBadRequest(RuntimeException exception) {
         return ErrorResponse.builder().code("BAD_REQUEST").message(exception.getMessage()).build();
     }
 
