@@ -13,6 +13,9 @@ import java.util.Optional;
 import java.util.function.Supplier;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import com.bff.pipeline.exception.CallTimeoutException;
+import com.bff.pipeline.exception.CallInterruptedException;
+import com.bff.pipeline.exception.CallFailedException;
 
 /**
  * run 단계 — 외부 호출 경계다. claim 트랜잭션과 write-back 트랜잭션 <b>사이</b>에서 어떤 트랜잭션에도 속하지 않은 채
@@ -20,8 +23,8 @@ import org.springframework.stereotype.Component;
  * ({@link TaskType#execute}/{@link TaskType#check})이 실제로 일어나는 곳은 이 모듈뿐이다.
  *
  * <p>{@link StepOutcome}으로 번역하는 것은 닫힌 어휘
- * ({@link InfraManagerClient.CallTimeoutException}/{@link InfraManagerClient.CallFailedException})뿐이다.
- * {@link InfraManagerClient.CallInterruptedException}과 그 밖의 순수 {@code RuntimeException}(진짜 버그)은
+ * ({@link CallTimeoutException}/{@link CallFailedException})뿐이다.
+ * {@link CallInterruptedException}과 그 밖의 순수 {@code RuntimeException}(진짜 버그)은
  * 잡지 않고 그대로 전파한다(fail-fast — 스케줄러가 pipeline 단위로 격리한다). 비즈니스 실패는 예외가 아니라
  * {@code TaskProgress}/{@code StepOutcome} 값으로 표현한다({@code docs/exception-strategy.md}).
  *
@@ -93,10 +96,10 @@ public class StepRunner {
     private StepOutcome runExternalCall(Task task, boolean dispatch, Supplier<StepOutcome> call) {
         try {
             return call.get();
-        } catch (InfraManagerClient.CallTimeoutException exception) {
+        } catch (CallTimeoutException exception) {
             log.warn("InfraManager call timed out for task {} ({})", task.getId(), task.getTaskName());
             return StepOutcome.callTimeout(dispatch);
-        } catch (InfraManagerClient.CallFailedException exception) {
+        } catch (CallFailedException exception) {
             log.warn("InfraManager call failed for task {} ({}): {}", task.getId(), task.getTaskName(),
                     exception.getMessage());
             return StepOutcome.callFailed(dispatch);

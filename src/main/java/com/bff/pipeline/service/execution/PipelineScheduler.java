@@ -22,6 +22,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import com.bff.pipeline.exception.CallInterruptedException;
 
 /**
  * 스스로 다음 실행을 예약하는 적응형 claim-pull 루프이다(Decision 1/7). 단일 데몬
@@ -110,7 +111,7 @@ public class PipelineScheduler {
                 throw shuttingDown;
             } catch (ExecutionException executionFailure) {
                 Throwable cause = executionFailure.getCause();
-                if (cause instanceof InfraManagerClient.CallInterruptedException) {
+                if (cause instanceof CallInterruptedException) {
                     futures.forEach(f -> f.cancel(true));
                     throw new InterruptedException("pipelineWorker interrupted");
                 }
@@ -127,12 +128,12 @@ public class PipelineScheduler {
         boolean anyFound = false;
         while (true) {
             if (Thread.interrupted()) {
-                throw new InfraManagerClient.CallInterruptedException();
+                throw new CallInterruptedException();
             }
             Optional<Claim> claim;
             try {
                 claim = pipelineClaimer.claimOneDue();
-            } catch (InfraManagerClient.CallInterruptedException interrupted) {
+            } catch (CallInterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 throw interrupted;
             } catch (RuntimeException claimFailure) {
@@ -145,7 +146,7 @@ public class PipelineScheduler {
             anyFound = true;
             try {
                 pipelineWorker.process(claim.get());
-            } catch (InfraManagerClient.CallInterruptedException interrupted) {
+            } catch (CallInterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 throw interrupted;
             } catch (RuntimeException processFailure) {

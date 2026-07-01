@@ -4,6 +4,8 @@ import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
+import com.bff.pipeline.exception.CallInterruptedException;
+import com.bff.pipeline.exception.CallTimeoutException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -11,7 +13,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
@@ -25,13 +26,13 @@ import org.springframework.stereotype.Component;
  * (자기참조 회피). delegate가 던지는 닫힌 어휘 예외는 그대로 흘려보내고, 그 밖의 {@code RuntimeException}은
  * 언랩해 전파한다(fail-fast). 인터럽트는 {@link CallInterruptedException}으로 바꾸면서 인터럽트 플래그를 복원한다.
  *
- * <p>{@code @ConditionalOnBean(name = "infraManagerDelegate")} — 실제 HTTP delegate가 등록됐을 때만 활성화된다.
- * 이 데모 repo에는 프로덕션 HTTP 구현이 없으므로(테스트는 fake를 직접 주입) delegate가 없으면 데코레이터도
- * 만들어지지 않아 컨텍스트 기동을 깨뜨리지 않는다. 프로덕션은 {@code infraManagerDelegate} 빈을 제공해 켠다.
+ * <p>delegate({@code infraManagerDelegate})는 {@code FeignConfig}가 제공하며, 데코레이터는 그것을 {@code @Qualifier}로
+ * 주입받는다 — 의존성 해석이 생성 순서를 보장한다. 슬라이스 테스트(@DataJpaTest)는 이 데코레이터도 fake도 컴포넌트
+ * 스캔하지 않고 fake를 직접 주입하므로 무관하다. (base-url·token은 필수 설정이라 full 컨텍스트는 그것 없이는 뜨지 않는다 —
+ * {@code FeignConfig} 참조.)
  */
 @Primary
 @Component
-@ConditionalOnBean(name = "infraManagerDelegate")
 public class TimeBoundedInfraManagerClient implements InfraManagerClient {
 
     private final InfraManagerClient delegate;
@@ -51,8 +52,8 @@ public class TimeBoundedInfraManagerClient implements InfraManagerClient {
     }
 
     @Override
-    public TerraformPoll terraformJobStatus(String jobId) {
-        return withTimeout(() -> delegate.terraformJobStatus(jobId));
+    public TerraformPoll terraformJobStatus(String jobId, TaskOperation operation) {
+        return withTimeout(() -> delegate.terraformJobStatus(jobId, operation));
     }
 
     @Override

@@ -11,6 +11,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import com.bff.pipeline.exception.CallTimeoutException;
+import com.bff.pipeline.exception.CallInterruptedException;
+import com.bff.pipeline.exception.CallFailedException;
 
 /**
  * {@link TimeBoundedInfraManagerClient} per-call timeout 데코레이터 단위 테스트. 실제 스레드풀 + 스크립터블
@@ -48,14 +51,14 @@ class TimeBoundedInfraManagerClientTest {
             return "late";
         });
         assertThatThrownBy(() -> decorator(slow).runTerraform("t", TaskOperation.APPLY_NETWORK))
-                .isInstanceOf(InfraManagerClient.CallTimeoutException.class);
+                .isInstanceOf(CallTimeoutException.class);
     }
 
     @Test
     void aCallFailedFromTheDelegatePassesThrough() {
-        InfraManagerClient failing = delegate(() -> { throw new InfraManagerClient.CallFailedException("503"); });
+        InfraManagerClient failing = delegate(() -> { throw new CallFailedException("503"); });
         assertThatThrownBy(() -> decorator(failing).runTerraform("t", TaskOperation.APPLY_NETWORK))
-                .isInstanceOf(InfraManagerClient.CallFailedException.class)
+                .isInstanceOf(CallFailedException.class)
                 .hasMessageContaining("503");
     }
 
@@ -71,14 +74,14 @@ class TimeBoundedInfraManagerClientTest {
         InfraManagerClient delegate = delegate(() -> "value");
         Thread.currentThread().interrupt();   // get() will observe the interrupt promptly
         assertThatThrownBy(() -> decorator(delegate).runTerraform("t", TaskOperation.APPLY_NETWORK))
-                .isInstanceOf(InfraManagerClient.CallInterruptedException.class);
+                .isInstanceOf(CallInterruptedException.class);
         assertThat(Thread.interrupted()).isTrue();   // restored (and cleared for the next test)
     }
 
     private static InfraManagerClient delegate(java.util.function.Supplier<String> dispatch) {
         return new InfraManagerClient() {
             @Override public String runTerraform(String target, TaskOperation operation) { return dispatch.get(); }
-            @Override public TerraformPoll terraformJobStatus(String jobId) { return TerraformPoll.running(); }
+            @Override public TerraformPoll terraformJobStatus(String jobId, TaskOperation operation) { return TerraformPoll.running(); }
             @Override public boolean checkCondition(String target, TaskOperation operation) { return false; }
             @Override public com.bff.pipeline.enums.CloudProvider cloudProvider(String target) { return com.bff.pipeline.enums.CloudProvider.AWS; }
         };

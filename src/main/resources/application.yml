@@ -7,6 +7,15 @@ spring:
     url: ${PIPELINE_DB_URL:jdbc:mysql://localhost:3306/pipeline}
     username: ${PIPELINE_DB_USER:pipeline}
     password: ${PIPELINE_DB_PASSWORD:pipeline}
+  cloud:
+    openfeign:
+      client:
+        config:
+          infra-manager:
+            connectTimeout: 3000
+            # apiCallTimeout(데코레이터)보다 넉넉하게 — 호출별 타임아웃은 데코레이터가 소유한다.
+            readTimeout: ${INFRA_MANAGER_READ_TIMEOUT:60000}
+            loggerLevel: basic
   jpa:
     open-in-view: false
     hibernate:
@@ -40,3 +49,11 @@ pipeline:
     backoff-max: PT5S
     jitter-ratio: 0.2
     scheduler-initial-delay: PT5S
+
+# InfraManager 프로덕션 HTTP delegate. base-url·auth-token 은 필수 설정이다 — 도메인이 InfraManagerClient 를
+# 필수 주입받으므로 full 컨텍스트는 이 연동 없이는 못 뜬다(FeignConfig 참조). 값은 env 로 주입한다:
+#   INFRA_MANAGER_BASE_URL(없으면 @FeignClient url 해석 실패), INFRA_MANAGER_TOKEN(비면 인터셉터가 fail-fast).
+# base-url 은 여기 기본값을 두지 않는다(누락 시 시작 실패로 명시적 요구). 슬라이스 테스트는 fake 를 직접 주입한다.
+infra-manager:
+  # base-url 은 기본값 없이 env(INFRA_MANAGER_BASE_URL)로만 — 미설정 시 @FeignClient 가 시작에서 명확히 실패한다.
+  auth-token: ${INFRA_MANAGER_TOKEN:}

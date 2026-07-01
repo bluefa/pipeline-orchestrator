@@ -15,6 +15,8 @@ import java.util.Locale;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import com.bff.pipeline.exception.CallTimeoutException;
+import com.bff.pipeline.exception.CallFailedException;
 
 /**
  * 파이프라인 생성(트리거)을 구현한다(ADR-016 §4). 대상의 실행을 새로 시작하되, 이미 비종료 활성 실행이 있으면
@@ -68,7 +70,7 @@ public class PipelineCreator {
         CloudProvider provider;
         try {
             provider = infraManagerClient.cloudProvider(target);
-        } catch (InfraManagerClient.CallTimeoutException | InfraManagerClient.CallFailedException lookupFailure) {
+        } catch (CallTimeoutException | CallFailedException lookupFailure) {
             throw new ProviderLookupException(target, lookupFailure);
         }
         if (provider == null) {   // 경계 계약 위반(null 반환)은 degraded 값으로 흘리지 않고 조회 실패로 번역한다

@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import com.bff.pipeline.exception.CallInterruptedException;
 
 /**
  * {@link PipelineScheduler}의 순수 로직 단위 테스트(스케줄러 스레드/풀 없이). backoff 케이던스, jitter 경계,
@@ -105,12 +106,12 @@ class PipelineSchedulerTest {
         PipelineClaimer claimer = claimerYielding(1L);
         PipelineWorker worker = new PipelineWorker(null, null, null, null, null, null, null) {
             @Override public void process(Claim claim) {
-                throw new InfraManagerClient.CallInterruptedException();
+                throw new CallInterruptedException();
             }
         };
 
         assertThatThrownBy(() -> scheduler(settings(0.0), claimer, worker).drain())
-                .isInstanceOf(InfraManagerClient.CallInterruptedException.class);
+                .isInstanceOf(CallInterruptedException.class);
         assertThat(Thread.interrupted()).isTrue();   // flag restored (and cleared for the next test)
     }
 
