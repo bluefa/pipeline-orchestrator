@@ -48,7 +48,7 @@ import org.hibernate.type.SqlTypes;
 @Table(
         name = "task",
         uniqueConstraints = @UniqueConstraint(name = "uq_task_pipeline_sequence", columnNames = {"pipeline_id", "sequence"}),
-        indexes = @Index(name = "idx_task_name_status", columnList = "task_name, status"))
+        indexes = @Index(name = "idx_task_slot_status", columnList = "consumes_terraform_slot, status"))
 @Getter
 @Setter
 @NoArgsConstructor

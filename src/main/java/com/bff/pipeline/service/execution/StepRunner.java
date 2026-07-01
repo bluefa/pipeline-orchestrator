@@ -56,10 +56,12 @@ public class StepRunner {
                     task.getId(), task.getTaskDefinition());
             return Optional.empty();
         }
-        TaskDefinition def = definition.get();
-        if (!def.mechanism().equals(task.getTaskName()) || def.operation() != task.getOperation()) {
-            log.warn("task {} definition {} disagrees with row cache (mechanism '{}' op {}) — failing as UNKNOWN_TASK",
-                    task.getId(), def.name(), task.getTaskName(), task.getOperation());
+        TaskDefinition resolved = definition.get();
+        if (!resolved.mechanism().equals(task.getTaskName())
+                || resolved.operation() != task.getOperation()
+                || resolved.consumesTerraformSlot() != Boolean.TRUE.equals(task.getConsumesTerraformSlot())) {
+            log.warn("task {} definition {} disagrees with row cache (mechanism '{}' op {} slot {}) — failing as UNKNOWN_TASK",
+                    task.getId(), resolved.name(), task.getTaskName(), task.getOperation(), task.getConsumesTerraformSlot());
             return Optional.empty();
         }
         return taskTypeRegistry.find(task.getTaskName());

@@ -7,6 +7,7 @@ import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.RecipeDefinition;
 import com.bff.pipeline.exception.PipelineAlreadyActiveException;
 import com.bff.pipeline.exception.PipelinePersistenceException;
+import com.bff.pipeline.exception.ProviderLookupException;
 import com.bff.pipeline.exception.UnsupportedRecipeException;
 import java.util.Locale;
 import org.hibernate.exception.ConstraintViolationException;
@@ -40,7 +41,7 @@ public class PipelineCreator {
     }
 
     public Pipeline create(String target, PipelineType type) {
-        CloudProvider provider = infraManagerClient.cloudProvider(target);   // 트랜잭션 밖 외부 조회(§3)
+        CloudProvider provider = resolveProvider(target);   // 트랜잭션 밖 외부 조회(§3)
         RecipeDefinition recipe = recipes.forProviderAndType(provider, type)
                 .orElseThrow(() -> new UnsupportedRecipeException(provider, type));
         try {
@@ -50,6 +51,19 @@ public class PipelineCreator {
                 throw new PipelineAlreadyActiveException(target);
             }
             throw new PipelinePersistenceException(target, violation);
+        }
+    }
+
+    /**
+     * cloud provider를 조회한다(외부 호출). 인프라 실패(타임아웃/호출 오류)는 비즈니스 실패가 아니므로 503으로
+     * 번역한다 — raw CallTimeout/CallFailed가 catch-all로 새어 500이 되지 않게 한다(§3). CallInterrupted는 잡지 않고
+     * 그대로 전파한다(fail-fast).
+     */
+    private CloudProvider resolveProvider(String target) {
+        try {
+            return infraManagerClient.cloudProvider(target);
+        } catch (InfraManagerClient.CallTimeoutException | InfraManagerClient.CallFailedException lookupFailure) {
+            throw new ProviderLookupException(target, lookupFailure);
         }
     }
 
