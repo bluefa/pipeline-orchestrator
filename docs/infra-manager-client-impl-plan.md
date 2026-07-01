@@ -56,7 +56,7 @@ RetryableException                        ← 겉포장 (실제로 던져지는 
 |---|---|---|
 | 응답 정상 | (정상 반환) | 진행 |
 | 원인이 타임아웃 (`RetryableException`이 감싼 `SocketTimeout`/`HttpTimeout`) | `CallTimeoutException` | `ErrorCode.CALL_TIMEOUT` (재시도) |
-| 원인이 인터럽트 | `CallInterruptedException` | **catch 안 함 → 전파(fail-fast)** |
+| 원인이 인터럽트 | `CallInterruptedException` | **`TaskStateMachine`이 catch 안 함 → 그대로 전파(fail-fast). 스레드 중단 신호라 업무 실패로 기록하지 않고 즉시 멈춤** |
 | 그 밖의 모든 실패: `FeignException`(4xx/5xx), 연결 거부, `DecodeException`, 파싱 실패, **null/빈 바디** | `CallFailedException(msg)` | `ErrorCode.CHECK_ERROR` (재시도) |
 
 **어댑터가 잡는 범위는 `catch (FeignException | RetryableException e)` — 전송 예외만.** 이 둘을 놓치면 `TaskStateMachine.runExternalCall`이 `CallTimeout`/`CallFailed`만 잡으므로, 밖으로 새어 나간 Feign 예외는 실제 버그로 간주되어 fail-fast로 전파된다. 반대로 `RuntimeException`을 통째로 잡으면 매핑 로직 자체의 버그(NPE 등)까지 `CallFailed`로 삼켜 fail-fast가 깨진다 — 그래서 전송 예외 두 종류만 잡고 나머지는 그대로 전파한다.
