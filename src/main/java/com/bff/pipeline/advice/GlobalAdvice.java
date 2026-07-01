@@ -2,6 +2,7 @@ package com.bff.pipeline.advice;
 
 import com.bff.pipeline.dto.ErrorResponse;
 import com.bff.pipeline.exception.BadRequestException;
+import com.bff.pipeline.exception.NotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -22,6 +23,12 @@ public class GlobalAdvice {
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public ErrorResponse onBadRequest(RuntimeException exception) {
         return ErrorResponse.builder().code("BAD_REQUEST").message(exception.getMessage()).build();
+    }
+
+    @ExceptionHandler(NotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ErrorResponse onNotFound(NotFoundException exception) {
+        return ErrorResponse.builder().code("NOT_FOUND").message(exception.getMessage()).build();
     }
 
     @ExceptionHandler(Exception.class)

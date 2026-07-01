@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.exception.BadRequestException;
+import com.bff.pipeline.exception.NotFoundException;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
@@ -74,6 +75,12 @@ class PipelineControlTest {
     void cancelRejectsANullPipelineIdAsABadRequest() {
         assertThatThrownBy(() -> control.cancel(null))
                 .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void cancelRejectsAMissingPipelineAsNotFound() {
+        assertThatThrownBy(() -> control.cancel(999_999L))
+                .isInstanceOf(NotFoundException.class);
     }
 
     @Test

@@ -3,6 +3,7 @@ import com.bff.pipeline.service.task.TaskCanceller;
 
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.exception.BadRequestException;
+import com.bff.pipeline.exception.NotFoundException;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import java.time.Clock;
@@ -49,7 +50,7 @@ public class PipelineControl {
             throw new BadRequestException("pipelineId must not be null");
         }
         if (!pipelineRepository.existsById(pipelineId)) {
-            throw new IllegalArgumentException("no pipeline " + pipelineId);
+            throw new NotFoundException("no pipeline " + pipelineId);
         }
         Instant now = clock.instant();
         if (pipelineRepository.cancelIfIdle(pipelineId, now) != 0) {                       // Case A
