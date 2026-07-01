@@ -7,6 +7,15 @@ spring:
     url: ${PIPELINE_DB_URL:jdbc:mysql://localhost:3306/pipeline}
     username: ${PIPELINE_DB_USER:pipeline}
     password: ${PIPELINE_DB_PASSWORD:pipeline}
+  cloud:
+    openfeign:
+      client:
+        config:
+          infra-manager:
+            connectTimeout: 3000
+            # apiCallTimeout(데코레이터)보다 넉넉하게 — 호출별 타임아웃은 데코레이터가 소유한다.
+            readTimeout: ${INFRA_MANAGER_READ_TIMEOUT:60000}
+            loggerLevel: basic
   jpa:
     open-in-view: false
     hibernate:
@@ -40,3 +49,11 @@ pipeline:
     backoff-max: PT5S
     jitter-ratio: 0.2
     scheduler-initial-delay: PT5S
+
+# InfraManager 프로덕션 HTTP delegate.
+#  - base-url 이 설정된 컨텍스트에서만 delegate 가 뜨고(FeignConfig), 그때 TimeBoundedInfraManagerClient
+#    데코레이터가 활성화된다. 로컬/데모(미설정) 에서는 delegate off — 슬라이스 테스트는 fake 주입.
+#  - base-url 은 여기 빈 값으로 두면 @ConditionalOnProperty 가 "존재"로 매칭되므로 두지 않는다.
+#    프로덕션은 env(INFRA_MANAGER_BASE_URL)로 주입한다. 인증 토큰은 INFRA_MANAGER_TOKEN.
+infra-manager:
+  auth-token: ${INFRA_MANAGER_TOKEN:}

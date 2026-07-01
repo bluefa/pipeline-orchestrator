@@ -47,7 +47,7 @@ StepRunner  (외부 호출 지점, @Transactional 없음 — 트랜잭션 밖에
 ```java
 try {
     ... feignClient 호출 ...
-} catch (FeignException | RetryableException e) {   // 전송 예외만
+} catch (FeignException e) {   // RetryableException(연결/타임아웃)은 FeignException 하위 타입 → 함께 잡힘
     throw new CallFailedException("infra-manager: " + e.getMessage());
 }
 // 그 밖의 RuntimeException(매핑 버그 등)은 잡지 않는다 — fail-fast로 전파
@@ -119,7 +119,21 @@ spring:
 
 infra-manager:
   base-url: ${INFRA_MANAGER_URL:}     # 있을 때만 delegate 활성화(§8)
+  auth-token: ${INFRA_MANAGER_TOKEN:} # bearer token (§7.1)
 ```
+
+### 7.1 인증 — bearer token
+
+`InfraManagerFeignClient`의 모든 호출은 `Authorization: Bearer <token>` 헤더가 필요하다. Feign `RequestInterceptor` 빈으로 붙인다(엔드포인트마다 반복하지 않게 한 곳에서):
+
+```java
+@Bean
+RequestInterceptor infraManagerAuth(@Value("${infra-manager.auth-token}") String token) {
+    return template -> template.header("Authorization", "Bearer " + token);
+}
+```
+
+토큰은 우선 설정값(`infra-manager.auth-token`)에서 읽는다. 토큰이 회전(rotate)하는 방식이면 나중에 `Supplier<String>`/토큰 프로바이더로 교체하되, 지금은 정적 설정으로 시작한다.
 
 의존성: `spring-cloud-starter-openfeign` + spring-cloud BOM(2023.0.x 최신 패치로 pin, Boot 3.3 호환). `feign-java11`은 VT 전환 시점까지 보류(§4).
 
@@ -160,7 +174,7 @@ infra-manager:
 - `client/InfraManagerFeignClient.java` — `@FeignClient` raw 전송 인터페이스
 - `client/InfraManagerFeignAdapter.java` — `implements InfraManagerClient`, 전송 예외 번역 + jobIds 재직렬화 (한국어 클래스 Javadoc)
 - `dto/` 에 wire DTO record (`TerraformDispatchResponse(List<String> jobIds)`, `ConditionResponse(boolean met)`, `CloudProviderResponse(String provider)`; poll은 기존 `TerraformPoll` 재사용)
-- `config/FeignConfig.java` — `@EnableFeignClients` + `@Bean("infraManagerDelegate")`(§8) + (필요 시) `ErrorDecoder`
+- `config/FeignConfig.java` — `@EnableFeignClients` + `@Bean("infraManagerDelegate")`(§8) + `RequestInterceptor`(bearer token, §7.1) + (필요 시) `ErrorDecoder`
 - 어댑터 단위테스트 + WireMock 통합테스트
 
 변경:
@@ -178,4 +192,4 @@ infra-manager:
 - **D-3 빈 격리:** 별도 조치 불요 — `infraManagerDelegate` 이름 등록 + 기존 `@ConditionalOnBean`/`@Primary` 데코레이터로 해결. `@ConditionalOnProperty(base-url)`로 프로덕션 게이트. **테스트 무변경.**
 - **D-4 통합테스트:** WireMock 추가.
 - **D-5 실패 세부 영속:** 신규 컬럼 없음(§6).
-- **번역 위치:** delegate 어댑터의 `catch(FeignException|RetryableException)` 한 경계 + (선택) `ErrorDecoder`. 타임아웃/인터럽트는 데코레이터 소유.
+- **번역 위치:** delegate 어댑터의 `catch(FeignException)` 한 경계(RetryableException 포함). 타임아웃/인터럽트는 데코레이터 소유.

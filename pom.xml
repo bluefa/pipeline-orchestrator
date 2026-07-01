@@ -21,7 +21,21 @@
         <java.version>21</java.version>
         <!-- Override the parent's Lombok (1.18.34 fails annotation processing on JDK 23). -->
         <lombok.version>1.18.46</lombok.version>
+        <!-- Spring Cloud 2023.0.x is the release train paired with Boot 3.3. -->
+        <spring-cloud.version>2023.0.3</spring-cloud.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -33,6 +47,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- InfraManager 전송: 프로덕션 HTTP delegate(InfraManagerFeignAdapter)의 raw 전송 계층. -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
         </dependency>
 
         <!-- Production target DB. -->
@@ -70,6 +90,14 @@
                     <artifactId>mockito-junit-jupiter</artifactId>
                 </exclusion>
             </exclusions>
+        </dependency>
+
+        <!-- Feign delegate 통합테스트에서 실제 HTTP 스택을 관통시키기 위한 스텁 서버. -->
+        <dependency>
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock-standalone</artifactId>
+            <version>3.9.2</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
