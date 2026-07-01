@@ -1,6 +1,7 @@
 package com.bff.pipeline.advice;
 
 import com.bff.pipeline.dto.ErrorResponse;
+import com.bff.pipeline.exception.OrchestrationErrorCode;
 import com.bff.pipeline.exception.OrchestrationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -34,7 +35,7 @@ public class GlobalAdvice {
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public ErrorResponse onUnexpected(Exception exception) {
         log.error("Unhandled exception in the REST layer", exception);
-        return body("ORCHESTRATION_INTERNAL_ERROR", "unexpected error");
+        return body(OrchestrationErrorCode.INTERNAL_ERROR.code(), "unexpected error");
     }
 
     private static ErrorResponse body(String code, String message) {

@@ -9,6 +9,6 @@ import org.springframework.http.HttpStatus;
 public class MissingPipelineIdException extends OrchestrationException {
 
     public MissingPipelineIdException() {
-        super(HttpStatus.BAD_REQUEST, "ORCHESTRATION_PIPELINE_ID_REQUIRED", "pipelineId must not be null");
+        super(HttpStatus.BAD_REQUEST, OrchestrationErrorCode.PIPELINE_ID_REQUIRED, "pipelineId must not be null");
     }
 }

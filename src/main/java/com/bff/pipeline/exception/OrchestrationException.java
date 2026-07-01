@@ -10,16 +10,16 @@ import org.springframework.http.HttpStatus;
 public abstract class OrchestrationException extends RuntimeException {
 
     private final HttpStatus status;
-    private final String code;
+    private final OrchestrationErrorCode errorCode;
 
-    protected OrchestrationException(HttpStatus status, String code, String message) {
-        this(status, code, message, null);
+    protected OrchestrationException(HttpStatus status, OrchestrationErrorCode errorCode, String message) {
+        this(status, errorCode, message, null);
     }
 
-    protected OrchestrationException(HttpStatus status, String code, String message, Throwable cause) {
+    protected OrchestrationException(HttpStatus status, OrchestrationErrorCode errorCode, String message, Throwable cause) {
         super(message, cause);
         this.status = status;
-        this.code = code;
+        this.errorCode = errorCode;
     }
 
     public HttpStatus status() {
@@ -27,6 +27,6 @@ public abstract class OrchestrationException extends RuntimeException {
     }
 
     public String code() {
-        return code;
+        return errorCode.code();
     }
 }

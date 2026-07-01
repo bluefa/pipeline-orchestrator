@@ -10,7 +10,7 @@ import org.springframework.http.HttpStatus;
 public class PipelinePersistenceException extends OrchestrationException {
 
     public PipelinePersistenceException(String target, Throwable cause) {
-        super(HttpStatus.INTERNAL_SERVER_ERROR, "ORCHESTRATION_PIPELINE_PERSISTENCE_ERROR",
+        super(HttpStatus.INTERNAL_SERVER_ERROR, OrchestrationErrorCode.PIPELINE_PERSISTENCE_ERROR,
                 "failed to persist a pipeline for target '" + target + "'", cause);
     }
 }

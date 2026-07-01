@@ -10,7 +10,7 @@ import org.springframework.http.HttpStatus;
 public class PipelineAlreadyActiveException extends OrchestrationException {
 
     public PipelineAlreadyActiveException(String target) {
-        super(HttpStatus.CONFLICT, "ORCHESTRATION_PIPELINE_ALREADY_ACTIVE",
+        super(HttpStatus.CONFLICT, OrchestrationErrorCode.PIPELINE_ALREADY_ACTIVE,
                 "target '" + target + "' already has an active run");
     }
 }

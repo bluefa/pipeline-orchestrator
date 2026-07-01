@@ -9,6 +9,6 @@ import org.springframework.http.HttpStatus;
 public class PipelineNotFoundException extends OrchestrationException {
 
     public PipelineNotFoundException(long pipelineId) {
-        super(HttpStatus.NOT_FOUND, "ORCHESTRATION_PIPELINE_NOT_FOUND", "no pipeline " + pipelineId);
+        super(HttpStatus.NOT_FOUND, OrchestrationErrorCode.PIPELINE_NOT_FOUND, "no pipeline " + pipelineId);
     }
 }
