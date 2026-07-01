@@ -1,4 +1,4 @@
-package com.bff.pipeline.advice;
+package com.bff.pipeline.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

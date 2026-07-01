@@ -21,7 +21,6 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import com.bff.pipeline.exception.CallInterruptedException;
 
@@ -45,7 +44,6 @@ public class PipelineScheduler {
     private final PipelineClaimer pipelineClaimer;
     private final ExecutorService pipelineWorkerPool;
     private final ExecutionSettings executionSettings;
-    private final Duration initialDelay;
     private final Clock clock;
 
     private final ScheduledExecutorService scheduler =
@@ -58,20 +56,18 @@ public class PipelineScheduler {
 
     public PipelineScheduler(PipelineWorker pipelineWorker, PipelineClaimer pipelineClaimer,
             @Qualifier("pipelineWorkerPool") ExecutorService pipelineWorkerPool, ExecutionSettings executionSettings,
-            @Value("${pipeline.execution.scheduler-initial-delay:PT5S}") Duration initialDelay,
             Clock clock) {
         this.pipelineWorker = pipelineWorker;
         this.pipelineClaimer = pipelineClaimer;
         this.pipelineWorkerPool = pipelineWorkerPool;
         this.executionSettings = executionSettings;
-        this.initialDelay = initialDelay;
         this.clock = clock;
         this.idleBackoff = executionSettings.backoffBase();
     }
 
     @PostConstruct
     void start() {
-        scheduler.schedule(this::runSweep, initialDelay.toMillis(), TimeUnit.MILLISECONDS);
+        scheduler.schedule(this::runSweep, executionSettings.schedulerInitialDelay().toMillis(), TimeUnit.MILLISECONDS);
     }
 
     @PreDestroy

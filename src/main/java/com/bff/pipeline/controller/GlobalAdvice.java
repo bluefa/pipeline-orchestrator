@@ -1,4 +1,4 @@
-package com.bff.pipeline.advice;
+package com.bff.pipeline.controller;
 
 import com.bff.pipeline.dto.ErrorResponse;
 import com.bff.pipeline.exception.OrchestrationErrorCode;

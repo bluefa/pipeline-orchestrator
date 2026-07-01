@@ -78,6 +78,11 @@ flag correct code, and respect `// harness-allow:` annotations.
     "don't add more," a diff-scoped preference, not a repo-wide cleanup. `<pre>` blocks (state diagrams,
     ASCII tables) are allowed — they are layout, not prose markup.
 
+15. **dto-builder.** A wide DTO — adjacent same-type components (several `Instant`/`Integer`/`long`) or
+    boolean components — is constructed with `@Builder` (named fields), never a positional `new` where a
+    swapped argument still compiles. FLAG a positional `new` of such a DTO (the canonical miss:
+    `new PipelineDetail(19 args)`); a 2–3-arg record with distinct types is fine positionally.
+
 ## Output
 
 A short list of FLAG findings, each `file:line` + the fix, or "No findings." Review only — do not edit.

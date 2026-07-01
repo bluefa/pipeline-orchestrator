@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import lombok.Builder;
 
 /**
  * task 상세 패널이다(P5). task 자체 컬럼 + 유효 설정(오버라이드가 없으면 전역 기본으로 해석한 실제 적용값) +
@@ -14,8 +15,9 @@ import java.util.List;
  * task 행의 nullable 오버라이드 원본이 아니라 실제로 적용되는 값이다. executionTimeout은 TERRAFORM_JOB 전용이며,
  * CONDITION_CHECK는 TTL 대신 maxFailCount(재시도 예산)로 경계된다(ADR-016 §6, #15). CONDITION_CHECK는
  * 폴 하나가 곧 attempt 하나라 attempts 목록이 폴 수만큼 늘어난다(각 attempt의 check는 call_count=1).
- * 와이어 필드는 snake_case로 직렬화한다.
+ * 와이어 필드는 snake_case로 직렬화한다. 인접 동형 인자가 많아 위치 기반 생성 대신 {@code @Builder}로 만든다.
  */
+@Builder
 public record TaskDetail(
         @JsonProperty("task_id") long taskId,
         @JsonProperty("pipeline_id") long pipelineId,

@@ -30,7 +30,6 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumMap;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -59,7 +58,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(readOnly = true)
 public class PipelineQueryService {
 
-    private static final long[] NO_TASKS = {0L, 0L};   // [done, total] 기본값(읽기 전용으로만 쓴다)
+    /** 목록 진행 N/M 집계값 — done = DONE 수, total = 전체 task 수. */
+    private record TaskProgressCount(long done, long total) {
+        static final TaskProgressCount NONE = new TaskProgressCount(0, 0);
+    }
 
     private final PipelineRepository pipelines;
     private final TaskRepository tasks;
@@ -131,21 +133,42 @@ public class PipelineQueryService {
     public PipelineDetail toDetail(Pipeline pipeline) {
         List<Task> chain = tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId());
         Instant now = clock.instant();
-        boolean leased = pipeline.getClaimedUntil() != null && pipeline.getClaimedUntil().isAfter(now);
-        long dueLagMillis = Math.max(0L, Duration.between(pipeline.getNextDueAt(), now).toMillis());
-        Task current = currentTask(chain);
-        Integer finalSequence = chain.isEmpty() ? null : chain.get(chain.size() - 1).getSequence();
-        return new PipelineDetail(
-                pipeline.getId(), pipeline.getType(), pipeline.getTarget(), pipeline.getCloudProvider(),
-                pipeline.getRecipeDefinition(), pipeline.getStatus(), pipeline.getCreatedAt(),
-                pipeline.getLastActivityAt(), pipeline.getNextDueAt(), leased, pipeline.isCancelRequested(),
-                dueLagMillis,
-                current == null ? null : current.getSequence(),
-                finalSequence,
-                current == null ? null : current.getFailCount(),
-                current == null ? null : TaskSettingsResolver.resolveMaxFailCount(current, pipelineSettings),
-                countDone(chain), chain.size(),
-                chain.stream().map(TaskSummary::from).toList());
+        Optional<Task> current = currentTask(chain);
+        return PipelineDetail.builder()
+                .pipelineId(pipeline.getId())
+                .type(pipeline.getType())
+                .targetSourceId(pipeline.getTarget())
+                .cloudProvider(pipeline.getCloudProvider())
+                .recipeDefinition(pipeline.getRecipeDefinition())
+                .status(pipeline.getStatus())
+                .createdAt(pipeline.getCreatedAt())
+                .lastActivityAt(pipeline.getLastActivityAt())
+                .nextDueAt(pipeline.getNextDueAt())
+                .leased(isLeased(pipeline, now))
+                .cancelRequested(pipeline.isCancelRequested())
+                .dueLagMillis(dueLagMillis(pipeline, now))
+                .currentTaskSequence(current.map(Task::getSequence).orElse(null))
+                .finalTaskSequence(chain.isEmpty() ? null : chain.getLast().getSequence())
+                .currentFailCount(current.map(Task::getFailCount).orElse(null))
+                .currentMaxFailCount(current
+                        .map(task -> TaskSettingsResolver.resolveMaxFailCount(task, pipelineSettings))
+                        .orElse(null))
+                .doneTaskCount(countDone(chain))
+                .totalTaskCount(chain.size())
+                .tasks(chain.stream().map(TaskSummary::from).toList())
+                .build();
+    }
+
+    private static boolean isLeased(Pipeline pipeline, Instant now) {
+        return pipeline.getClaimedUntil() != null && pipeline.getClaimedUntil().isAfter(now);
+    }
+
+    /** 스케줄링 지연(now - nextDueAt)은 RUNNING에만 의미가 있다 — 종료된 pipeline은 nextDueAt이 멈춰 있어 0으로 둔다. */
+    private static long dueLagMillis(Pipeline pipeline, Instant now) {
+        if (pipeline.getStatus().isTerminal()) {
+            return 0L;
+        }
+        return Math.max(0L, Duration.between(pipeline.getNextDueAt(), now).toMillis());
     }
 
     public TaskDetail taskDetail(Long pipelineId, Long taskId) {
@@ -155,15 +178,26 @@ public class PipelineQueryService {
         Task task = tasks.findById(taskId)
                 .filter(candidate -> candidate.getPipelineId().equals(pipelineId))
                 .orElseThrow(() -> new TaskNotFoundException(pipelineId, taskId));
-        return new TaskDetail(
-                task.getId(), task.getPipelineId(), task.getSequence(), task.getTaskName(),
-                task.getTaskDefinition(), task.getOperation(), task.getStatus(), task.getFailCount(),
-                task.getErrorCode(), task.getConsumesTerraformSlot(), task.getStartedAt(), task.getReadyAt(),
-                task.getFinishedAt(), task.getNextCheckAt(),
-                TaskSettingsResolver.resolvePollingInterval(task, pipelineSettings),
-                effectiveExecutionTimeout(task),
-                TaskSettingsResolver.resolveMaxFailCount(task, pipelineSettings),
-                attemptViews(taskId));
+        return TaskDetail.builder()
+                .taskId(task.getId())
+                .pipelineId(task.getPipelineId())
+                .sequence(task.getSequence())
+                .kind(task.getTaskName())
+                .taskDefinition(task.getTaskDefinition())
+                .operation(task.getOperation())
+                .status(task.getStatus())
+                .failCount(task.getFailCount())
+                .errorCode(task.getErrorCode())
+                .consumesTerraformSlot(task.getConsumesTerraformSlot())
+                .startedAt(task.getStartedAt())
+                .readyAt(task.getReadyAt())
+                .finishedAt(task.getFinishedAt())
+                .nextCheckAt(task.getNextCheckAt())
+                .effectivePollingInterval(TaskSettingsResolver.resolvePollingInterval(task, pipelineSettings))
+                .effectiveExecutionTimeout(effectiveExecutionTimeout(task))
+                .effectiveMaxFailCount(TaskSettingsResolver.resolveMaxFailCount(task, pipelineSettings))
+                .attempts(attemptViews(taskId))
+                .build();
     }
 
     /** execution timeout은 TERRAFORM_JOB 전용이다(#15). CONDITION_CHECK는 maxFailCount로 경계되므로 null. */
@@ -185,33 +219,31 @@ public class PipelineQueryService {
     }
 
     private Page<PipelineSummary> summarize(Page<Pipeline> page) {
-        Map<Long, long[]> counts = taskCounts(page.map(Pipeline::getId).getContent());
+        Map<Long, TaskProgressCount> counts = taskCounts(page.map(Pipeline::getId).getContent());
         return page.map(pipeline -> {
-            long[] doneTotal = counts.getOrDefault(pipeline.getId(), NO_TASKS);
-            return PipelineSummary.from(pipeline, doneTotal[0], doneTotal[1]);
+            TaskProgressCount progress = counts.getOrDefault(pipeline.getId(), TaskProgressCount.NONE);
+            return PipelineSummary.from(pipeline, progress.done(), progress.total());
         });
     }
 
-    private Map<Long, long[]> taskCounts(List<Long> pipelineIds) {
-        Map<Long, long[]> counts = new HashMap<>();
+    /** (pipelineId, status)별 집계 행을 pipeline별 진행 N/M으로 접는다 — done = DONE 합, total = 전체 합. */
+    private Map<Long, TaskProgressCount> taskCounts(List<Long> pipelineIds) {
         if (pipelineIds.isEmpty()) {
-            return counts;
+            return Map.of();
         }
-        for (PipelineTaskStatusCount row : tasks.countByPipelineIdInGroupByStatus(pipelineIds)) {
-            long[] doneTotal = counts.computeIfAbsent(row.getPipelineId(), key -> new long[2]);
-            doneTotal[1] += row.getCount();
-            if (row.getStatus() == TaskStatus.DONE) {
-                doneTotal[0] += row.getCount();
-            }
-        }
-        return counts;
+        return tasks.countByPipelineIdInGroupByStatus(pipelineIds).stream()
+                .collect(Collectors.groupingBy(PipelineTaskStatusCount::getPipelineId,
+                        Collectors.teeing(
+                                Collectors.filtering(row -> row.getStatus() == TaskStatus.DONE,
+                                        Collectors.summingLong(PipelineTaskStatusCount::getCount)),
+                                Collectors.summingLong(PipelineTaskStatusCount::getCount),
+                                TaskProgressCount::new)));
     }
 
-    private static Task currentTask(List<Task> chain) {
+    private static Optional<Task> currentTask(List<Task> chain) {
         return chain.stream()   // 체인은 sequence 오름차순이라 첫 매칭이 최저 순번이다
                 .filter(task -> task.getStatus() == TaskStatus.READY || task.getStatus() == TaskStatus.IN_PROGRESS)
-                .findFirst()
-                .orElse(null);
+                .findFirst();
     }
 
     private static long countDone(List<Task> chain) {

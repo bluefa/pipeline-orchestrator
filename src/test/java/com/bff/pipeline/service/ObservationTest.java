@@ -2,8 +2,6 @@ package com.bff.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.bff.pipeline.config.ExecutionSettings;
-import com.bff.pipeline.config.PipelineSettings;
 import com.bff.pipeline.client.FakeInfraManagerClient;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.entity.Pipeline;
@@ -196,6 +194,7 @@ class ObservationTest {
                 return;
             }
         }
+        throw new AssertionError("pipeline did not reach a terminal state in 20 polls");
     }
 
     private Long taskId(Pipeline pipeline, int sequence) {

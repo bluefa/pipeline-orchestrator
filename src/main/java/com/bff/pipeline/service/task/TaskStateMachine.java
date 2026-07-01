@@ -129,9 +129,10 @@ public class TaskStateMachine {
             fail(task, reason);
             return;
         }
+        Instant now = clock.instant();
         task.setStatus(TaskStatus.READY);
-        task.setReadyAt(clock.instant());
-        task.setNextCheckAt(clock.instant().plus(TaskSettingsResolver.resolvePollingInterval(task, pipelineSettings)));
+        task.setReadyAt(now);
+        task.setNextCheckAt(now.plus(TaskSettingsResolver.resolvePollingInterval(task, pipelineSettings)));
         taskRepository.save(task);
     }
 

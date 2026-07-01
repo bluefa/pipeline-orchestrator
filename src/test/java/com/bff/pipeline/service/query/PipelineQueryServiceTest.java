@@ -70,7 +70,7 @@ class PipelineQueryServiceTest {
     }
 
     @Test
-    void liveStatistics_countsRunningPipelinesInProgressSlotsAndConfiguredCaps() {
+    void liveStatisticsCountsRunningPipelinesInProgressSlotsAndConfiguredCaps() {
         Pipeline running = save(pipeline(PipelineStatus.RUNNING, "t-1", NOW));
         save(pipeline(PipelineStatus.RUNNING, "t-2", NOW));
         save(pipeline(PipelineStatus.DONE, "t-3", NOW));
@@ -85,7 +85,7 @@ class PipelineQueryServiceTest {
     }
 
     @Test
-    void statistics_countsByStatusWithinThePeriodWindow() {
+    void statisticsCountsByStatusWithinThePeriodWindow() {
         save(pipeline(PipelineStatus.RUNNING, "t-1", NOW.minus(Duration.ofHours(2))));   // 하루 안
         save(pipeline(PipelineStatus.DONE, "t-2", NOW.minus(Duration.ofHours(5))));      // 하루 안
         save(pipeline(PipelineStatus.FAILED, "t-3", NOW.minus(Duration.ofDays(3))));     // 하루 밖 → 제외
@@ -100,7 +100,7 @@ class PipelineQueryServiceTest {
     }
 
     @Test
-    void list_filtersByStatusAndComputesProgressWithoutNPlusOne() {
+    void listFiltersByStatusAndComputesProgress() {
         Pipeline running = save(pipeline(PipelineStatus.RUNNING, "t-1", NOW));
         save(pipeline(PipelineStatus.DONE, "t-2", NOW));
         save(task(running.getId(), 0, TaskStatus.DONE, true));
@@ -109,14 +109,14 @@ class PipelineQueryServiceTest {
         Page<PipelineSummary> page = service.list(PipelineStatus.RUNNING, null, null, PageRequest.of(0, 10));
 
         assertThat(page.getTotalElements()).isEqualTo(1);
-        PipelineSummary summary = page.getContent().get(0);
+        PipelineSummary summary = page.getContent().getFirst();
         assertThat(summary.pipelineId()).isEqualTo(running.getId());
         assertThat(summary.doneTaskCount()).isEqualTo(1);
         assertThat(summary.totalTaskCount()).isEqualTo(2);
     }
 
     @Test
-    void detail_derivesCurrentTaskLeaseAndCancelFlag() {
+    void detailDerivesCurrentTaskLeaseAndCancelFlag() {
         Pipeline pipeline = pipeline(PipelineStatus.RUNNING, "t-1", NOW);
         pipeline.setClaimedUntil(NOW.plus(Duration.ofMinutes(1)));   // 미래 → leased
         pipeline.setCancelRequested(true);
@@ -136,12 +136,20 @@ class PipelineQueryServiceTest {
     }
 
     @Test
-    void detail_missingPipeline_throwsNotFound() {
+    void detailReportsZeroDueLagForATerminalPipeline() {
+        // nextDueAt이 과거(NOW-1d)에 멈춰 있어도 종료 상태면 지연으로 세지 않는다
+        Pipeline done = save(pipeline(PipelineStatus.DONE, "t-1", NOW.minus(Duration.ofDays(1))));
+
+        assertThat(service.detail(done.getId()).dueLagMillis()).isZero();
+    }
+
+    @Test
+    void detailForAMissingPipelineThrowsNotFound() {
         assertThatThrownBy(() -> service.detail(9999L)).isInstanceOf(PipelineNotFoundException.class);
     }
 
     @Test
-    void taskDetail_taskBelongingToAnotherPipeline_throwsTaskNotFound() {
+    void taskDetailForATaskOfAnotherPipelineThrowsTaskNotFound() {
         Pipeline owner = save(pipeline(PipelineStatus.RUNNING, "t-1", NOW));
         Pipeline other = save(pipeline(PipelineStatus.RUNNING, "t-2", NOW));
         Task foreign = save(task(other.getId(), 0, TaskStatus.READY, true));
@@ -151,7 +159,7 @@ class PipelineQueryServiceTest {
     }
 
     @Test
-    void taskDetail_returnsEffectiveSettingsAndAttemptWithCheck() {
+    void taskDetailReturnsEffectiveSettingsAndAttemptWithCheck() {
         Pipeline pipeline = save(pipeline(PipelineStatus.RUNNING, "t-1", NOW));
         Task task = save(task(pipeline.getId(), 0, TaskStatus.IN_PROGRESS, true));
         TaskAttempt attempt = attempts.save(TaskAttempt.builder()
@@ -166,12 +174,12 @@ class PipelineQueryServiceTest {
         assertThat(detail.effectiveMaxFailCount()).isEqualTo(2);
         assertThat(detail.effectiveExecutionTimeout()).isEqualTo(Duration.ofMinutes(50));
         assertThat(detail.attempts()).hasSize(1);
-        assertThat(detail.attempts().get(0).response()).contains("j-1");
-        assertThat(detail.attempts().get(0).check().callCount()).isEqualTo(3);
+        assertThat(detail.attempts().getFirst().response()).contains("j-1");
+        assertThat(detail.attempts().getFirst().check().callCount()).isEqualTo(3);
     }
 
     @Test
-    void taskDetail_conditionCheck_reportsNoExecutionTimeoutButKeepsMaxFailCount() {
+    void taskDetailForAConditionCheckReportsNoExecutionTimeoutButKeepsMaxFailCount() {
         Pipeline pipeline = save(pipeline(PipelineStatus.RUNNING, "t-1", NOW));
         Task conditionTask = save(task(pipeline.getId(), 0, TaskStatus.IN_PROGRESS, false));   // NETWORK_READY
 
@@ -182,7 +190,7 @@ class PipelineQueryServiceTest {
     }
 
     @Test
-    void latestByTarget_returnsMostRecentRun_orEmptyWhenNone() {
+    void latestByTargetReturnsTheMostRecentRunOrEmptyWhenNone() {
         save(pipeline(PipelineStatus.DONE, "t-1", NOW.minus(Duration.ofDays(2))));
         Pipeline newer = save(pipeline(PipelineStatus.RUNNING, "t-1", NOW.minus(Duration.ofHours(1))));
 
@@ -249,6 +257,7 @@ class PipelineQueryServiceTest {
                     .backoffBase(Duration.ofMillis(200))
                     .backoffMax(Duration.ofSeconds(5))
                     .jitterRatio(0.2)
+                    .schedulerInitialDelay(Duration.ofSeconds(5))
                     .build();
         }
 

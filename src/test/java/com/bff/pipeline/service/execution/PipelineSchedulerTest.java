@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.dto.Claim;
-import com.bff.pipeline.client.InfraManagerClient;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -33,11 +32,12 @@ class PipelineSchedulerTest {
                 .runningPipelineCap(100).terraformSlotCap(100).terraformSlotRetry(Duration.ofSeconds(1))
                 .pollInterval(Duration.ofSeconds(1)).maxIdleSleep(Duration.ofSeconds(1))
                 .backoffBase(Duration.ofMillis(100)).backoffMax(Duration.ofSeconds(1)).jitterRatio(jitterRatio)
+                .schedulerInitialDelay(Duration.ofSeconds(5))
                 .build();
     }
 
     private PipelineScheduler scheduler(ExecutionSettings settings, PipelineClaimer claimer, PipelineWorker worker) {
-        return new PipelineScheduler(worker, claimer, null, settings, Duration.ofSeconds(5), CLOCK);
+        return new PipelineScheduler(worker, claimer, null, settings, CLOCK);
     }
 
     @Test
@@ -93,12 +93,17 @@ class PipelineSchedulerTest {
 
     @Test
     void drainEndsOnAClaimFailureWithoutHammering() {
+        AtomicInteger claimAttempts = new AtomicInteger();
         PipelineClaimer claimer = new PipelineClaimer(null, null, null) {
-            @Override public Optional<Claim> claimOneDue() { throw new IllegalStateException("db down"); }
+            @Override public Optional<Claim> claimOneDue() {
+                claimAttempts.incrementAndGet();
+                throw new IllegalStateException("db down");
+            }
         };
         PipelineWorker worker = neverProcess();
 
         assertThat(scheduler(settings(0.0), claimer, worker).drain()).isFalse();
+        assertThat(claimAttempts.get()).isEqualTo(1);   // 실패 즉시 drain 종료 — 재시도(난타) 없음
     }
 
     @Test
