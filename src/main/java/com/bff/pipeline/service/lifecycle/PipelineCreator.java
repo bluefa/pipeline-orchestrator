@@ -2,6 +2,7 @@ package com.bff.pipeline.service.lifecycle;
 
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.enums.PipelineType;
+import com.bff.pipeline.exception.PipelineCreationConflictException;
 import com.bff.pipeline.repository.PipelineRepository;
 import java.util.Locale;
 import java.util.Optional;
@@ -18,11 +19,11 @@ import org.springframework.stereotype.Service;
  * 이미 커밋된 기존 실행을 읽어야 하므로 별도의 새 트랜잭션에서 돌아야 하기 때문이다. {@link DataIntegrityViolationException}은
  * 여기서 도메인 응답으로 번역하는 유일한 외부/인프라 실패다({@code docs/exception-strategy.md} 참조).
  *
- * <p>"실행이 이미 존재한다"를 뜻하는 것은 오직 active-target 유니크 위반뿐이다(제약 이름으로 판별하되, 제약 이름을 생략하는
- * 드라이버를 위해 예외 메시지를 대체 수단으로 쓴다). 나머지 무결성 위반은 진짜 버그이므로 그대로 밖으로 내보낸다. insert는
- * 정해진 횟수만큼 재시도한다. 실패한 insert와 복구 조회 사이에 활성 실행이 끝나 대상이 풀릴 수 있는데, 그 순간 조회는 빈 결과를
- * 내놓기 때문이다 — 이때 올바른 대응은 낡아버린 위반을 노출하는 게 아니라 insert를 다시 시도하는 것이다. 이 틈은 동시 종료
- * 하나당 한 번만 열리므로 두세 번이면 충분하다.
+ * <p>"실행이 이미 존재한다"를 뜻하는 것은 오직 active-target 유니크 위반뿐이다(위반 원인 체인의 제약 이름으로 판별한다).
+ * 나머지 무결성 위반은 진짜 버그이므로 그대로 밖으로 내보낸다. insert는 정해진 횟수만큼 재시도한다. 실패한 insert와 복구
+ * 조회 사이에 활성 실행이 끝나 대상이 풀릴 수 있는데, 그 순간 조회는 빈 결과를 내놓기 때문이다 — 이때 올바른 대응은 낡아버린
+ * 위반을 노출하는 게 아니라 insert를 다시 시도하는 것이다. 이 틈은 동시 종료 하나당 한 번만 열리므로 두세 번이면 충분하고,
+ * 그래도 수렴하지 못하면 {@link PipelineCreationConflictException}(409)로 알린다.
  */
 @Service
 public class PipelineCreator {
@@ -38,22 +39,30 @@ public class PipelineCreator {
     }
 
     public Pipeline create(String target, PipelineType type) {
-        DataIntegrityViolationException lastViolation = null;
-        for (int attempt = 0; attempt < DUPLICATE_CREATE_RETRY_LIMIT; attempt++) {
-            try {
-                return pipelineInserter.insert(target, type);
-            } catch (DataIntegrityViolationException duplicate) {
-                if (!isActiveTargetViolation(duplicate)) {
-                    throw duplicate;
-                }
-                Optional<Pipeline> active = pipelineRepository.findByActiveTarget(target);
-                if (active.isPresent()) {
-                    return active.get();
-                }
-                lastViolation = duplicate;
+        for (int attempt = 1; attempt <= DUPLICATE_CREATE_RETRY_LIMIT; attempt++) {
+            Optional<Pipeline> pipeline = insertOrFindActive(target, type);
+            if (pipeline.isPresent()) {
+                return pipeline.get();
             }
+            // empty = active-target 위반이었지만 그 사이 대상이 종료돼 풀림(경합) → 재시도한다.
         }
-        throw lastViolation;
+        throw new PipelineCreationConflictException(target, DUPLICATE_CREATE_RETRY_LIMIT);
+    }
+
+    /**
+     * insert를 한 번 시도한다. 성공하면 새 pipeline을, active-target 위반이면 기존 활성 실행을 담아 돌려준다.
+     * 위반이 났지만 그 사이 대상이 종료돼 활성 실행이 사라졌으면(경합) empty를 돌려 재시도를 요청한다.
+     * active-target이 아닌 무결성 위반은 진짜 버그이므로 그대로 전파한다.
+     */
+    private Optional<Pipeline> insertOrFindActive(String target, PipelineType type) {
+        try {
+            return Optional.of(pipelineInserter.insert(target, type));
+        } catch (DataIntegrityViolationException violation) {
+            if (!isActiveTargetViolation(violation)) {
+                throw violation;
+            }
+            return pipelineRepository.findByActiveTarget(target);
+        }
     }
 
     private static boolean isActiveTargetViolation(DataIntegrityViolationException exception) {
@@ -63,7 +72,7 @@ public class PipelineCreator {
                 return true;
             }
         }
-        return namesActiveTargetConstraint(exception.getMessage());
+        return false;
     }
 
     private static boolean namesActiveTargetConstraint(String value) {
