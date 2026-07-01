@@ -16,7 +16,7 @@ class ExecutionSettingsTest {
     private static ExecutionSettings.ExecutionSettingsBuilder valid() {
         return ExecutionSettings.builder()
                 .workerPerPod(4).leaseDuration(Duration.ofMinutes(2)).apiCallTimeout(Duration.ofSeconds(30))
-                .runningPipelineCap(100).slotCap(20).slotRetry(Duration.ofSeconds(30))
+                .runningPipelineCap(100).terraformSlotCap(20).terraformSlotRetry(Duration.ofSeconds(30))
                 .pollInterval(Duration.ofSeconds(1)).maxIdleSleep(Duration.ofSeconds(5))
                 .backoffBase(Duration.ofMillis(200)).backoffMax(Duration.ofSeconds(5)).jitterRatio(0.2);
     }

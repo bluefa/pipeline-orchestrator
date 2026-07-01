@@ -64,7 +64,7 @@ public class TerraformTask implements TaskType {
     }
 
     @Override
-    public boolean consumesDispatchSlot() {
+    public boolean consumesTerraformSlot() {
         return true;
     }
 

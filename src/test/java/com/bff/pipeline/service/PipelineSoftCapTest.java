@@ -39,7 +39,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * ADR-021 Decision 7 soft caps. {@code runningPipelineCap=1}로 claim 게이트를, {@code slotCap=0}으로 TF slot
+ * ADR-021 Decision 7 soft caps. {@code runningPipelineCap=1}로 claim 게이트를, {@code terraformSlotCap=0}으로 TF slot
  * 게이트를 강제한다. 두 캡 모두 soft이며 생성은 게이트하지 않는다.
  */
 @DataJpaTest
@@ -98,10 +98,10 @@ class PipelineSoftCapTest {
         assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).getFirst().getStatus())
                 .isEqualTo(TaskStatus.READY);                       // not dispatched
         assertThat(after.getClaimedBy()).isNull();                  // claim released
-        assertThat(after.getNextDueAt()).isEqualTo(START.plusSeconds(1));   // pushed by slotRetry
+        assertThat(after.getNextDueAt()).isEqualTo(START.plusSeconds(1));   // pushed by terraformSlotRetry
     }
 
-    /** slotCap=1을 채우는 IN_PROGRESS terraform task를 두되, 그 pipeline은 미래 due로 두어 claim 대상에서 제외한다. */
+    /** terraformSlotCap=1을 채우는 IN_PROGRESS terraform task를 두되, 그 pipeline은 미래 due로 두어 claim 대상에서 제외한다. */
     private void occupyTheOnlyTerraformSlot() {
         Pipeline filler = creator.create("cap-filler", PipelineType.DELETE);
         Task task = taskRepository.findByPipelineIdOrderBySequenceAsc(filler.getId()).getFirst();
@@ -135,7 +135,7 @@ class PipelineSoftCapTest {
         ExecutionSettings executionSettings() {
             return ExecutionSettings.builder()
                     .workerPerPod(2).leaseDuration(Duration.ofSeconds(30)).apiCallTimeout(Duration.ofSeconds(15))
-                    .runningPipelineCap(1).slotCap(1).slotRetry(Duration.ofSeconds(1))
+                    .runningPipelineCap(1).terraformSlotCap(1).terraformSlotRetry(Duration.ofSeconds(1))
                     .pollInterval(Duration.ofSeconds(1)).maxIdleSleep(Duration.ofSeconds(1))
                     .backoffBase(Duration.ofMillis(100)).backoffMax(Duration.ofSeconds(1)).jitterRatio(0.2)
                     .build();

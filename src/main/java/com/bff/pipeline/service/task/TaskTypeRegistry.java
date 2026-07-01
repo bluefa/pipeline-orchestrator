@@ -22,7 +22,7 @@ import org.springframework.stereotype.Component;
 public class TaskTypeRegistry {
 
     private final Map<String, TaskType> byName;
-    private final Set<String> slotConsumingTaskNames;
+    private final Set<String> terraformSlotTaskNames;
 
     public TaskTypeRegistry(List<TaskType> taskTypes) {
         Map<String, TaskType> map = new HashMap<>();
@@ -39,8 +39,8 @@ public class TaskTypeRegistry {
             }
         }
         this.byName = Map.copyOf(map);
-        this.slotConsumingTaskNames = byName.values().stream()
-                .filter(TaskType::consumesDispatchSlot)
+        this.terraformSlotTaskNames = byName.values().stream()
+                .filter(TaskType::consumesTerraformSlot)
                 .map(TaskType::taskName)
                 .collect(Collectors.toUnmodifiableSet());
     }
@@ -51,10 +51,10 @@ public class TaskTypeRegistry {
     }
 
     /**
-     * {@code slotCap}으로 제한되는 슬롯을 소비하는 모든 타입의 {@code taskName} 집합이다({@link TaskType#consumesDispatchSlot}).
+     * {@code terraformSlotCap}으로 제한되는 슬롯을 소비하는 모든 타입의 {@code taskName} 집합이다({@link TaskType#consumesTerraformSlot}).
      * 엔진의 슬롯 게이트가 이 집합으로 점유 수를 집계하므로, 슬롯을 공유하는 타입이 여럿이어도 이름을 하드코딩하지 않는다.
      */
-    public Set<String> slotConsumingTaskNames() {
-        return slotConsumingTaskNames;
+    public Set<String> terraformSlotTaskNames() {
+        return terraformSlotTaskNames;
     }
 }

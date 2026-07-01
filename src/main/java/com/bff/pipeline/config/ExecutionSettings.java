@@ -21,8 +21,8 @@ public record ExecutionSettings(
         Duration leaseDuration,
         Duration apiCallTimeout,
         int runningPipelineCap,
-        int slotCap,
-        Duration slotRetry,
+        int terraformSlotCap,
+        Duration terraformSlotRetry,
         Duration pollInterval,
         Duration maxIdleSleep,
         Duration backoffBase,
@@ -32,10 +32,10 @@ public record ExecutionSettings(
     public ExecutionSettings {
         requireAtLeastOne(workerPerPod, "pipeline.execution.worker-per-pod");
         requireAtLeastOne(runningPipelineCap, "pipeline.execution.running-pipeline-cap");
-        requireAtLeastOne(slotCap, "pipeline.execution.slot-cap");
+        requireAtLeastOne(terraformSlotCap, "pipeline.execution.terraform-slot-cap");
         requirePositive(leaseDuration, "pipeline.execution.lease-duration");
         requirePositive(apiCallTimeout, "pipeline.execution.api-call-timeout");
-        requirePositive(slotRetry, "pipeline.execution.slot-retry");
+        requirePositive(terraformSlotRetry, "pipeline.execution.terraform-slot-retry");
         requirePositive(pollInterval, "pipeline.execution.poll-interval");
         requirePositive(maxIdleSleep, "pipeline.execution.max-idle-sleep");
         requirePositive(backoffBase, "pipeline.execution.backoff-base");

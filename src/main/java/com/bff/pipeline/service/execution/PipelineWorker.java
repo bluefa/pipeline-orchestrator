@@ -24,14 +24,14 @@ import org.springframework.stereotype.Component;
  *
  * <p>cancel은 두 안전지점에서 관찰한다. 하나는 claim 직후로, {@link #loadStepContext}에서 {@code cancel_requested}이거나
  * 현재 task가 없으면 외부 호출을 건너뛰고 report로 넘어가 수렴·해제한다. 다른 하나는 tx2 안이다({@link StepReporter#report}).
- * 슬롯을 소비하는 dispatch 단계인데 빈 slot이 없으면 외부 호출 대신 reschedule로 claim을 놓는다(Decision 7).
+ * terraform slot을 소비하는 dispatch 단계인데 빈 slot이 없으면 외부 호출 대신 reschedule로 claim을 놓는다(Decision 7).
  */
 @Component
 public class PipelineWorker {
 
     @Builder
     private record StepContext(String target, Task currentTask, TaskAttempt attempt,
-            boolean cancelRequested, boolean slotConsumingDispatch) { }
+            boolean cancelRequested, boolean terraformSlotDispatch) { }
 
     private final PipelineClaimer pipelineClaimer;
     private final PipelineRepository pipelineRepository;
@@ -72,8 +72,8 @@ public class PipelineWorker {
             stepReporter.report(claim.pipelineId(), claim.token(), null);
             return;
         }
-        if (context.slotConsumingDispatch() && !slotAvailable()) {
-            stepReporter.reschedule(claim.pipelineId(), claim.token(), executionSettings.slotRetry());
+        if (context.terraformSlotDispatch() && !terraformSlotAvailable()) {
+            stepReporter.reschedule(claim.pipelineId(), claim.token(), executionSettings.terraformSlotRetry());
             return;
         }
         StepOutcome outcome = stepRunner.runStep(context.target(), context.currentTask(), context.attempt());
@@ -85,15 +85,15 @@ public class PipelineWorker {
             List<Task> chain = taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId);
             Task current = currentTask(chain).orElse(null);
             TaskAttempt attempt = current == null ? null : observationRecorder.currentAttempt(current).orElse(null);
-            boolean slotConsumingDispatch = current != null
+            boolean terraformSlotDispatch = current != null
                     && current.getStatus() == TaskStatus.READY
-                    && taskTypeRegistry.find(current.getTaskName()).map(TaskType::consumesDispatchSlot).orElse(false);
+                    && taskTypeRegistry.find(current.getTaskName()).map(TaskType::consumesTerraformSlot).orElse(false);
             return StepContext.builder()
                     .target(pipeline.getTarget())
                     .currentTask(current)
                     .attempt(attempt)
                     .cancelRequested(pipeline.isCancelRequested())
-                    .slotConsumingDispatch(slotConsumingDispatch)
+                    .terraformSlotDispatch(terraformSlotDispatch)
                     .build();
         });
     }
@@ -102,8 +102,8 @@ public class PipelineWorker {
         return chain.stream().filter(task -> !task.getStatus().isTerminal()).findFirst();
     }
 
-    private boolean slotAvailable() {
-        return taskRepository.countByTaskNameInAndStatus(taskTypeRegistry.slotConsumingTaskNames(), TaskStatus.IN_PROGRESS)
-                < executionSettings.slotCap();
+    private boolean terraformSlotAvailable() {
+        return taskRepository.countByTaskNameInAndStatus(taskTypeRegistry.terraformSlotTaskNames(), TaskStatus.IN_PROGRESS)
+                < executionSettings.terraformSlotCap();
     }
 }

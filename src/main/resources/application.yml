@@ -32,8 +32,8 @@ pipeline:
     lease-duration: PT2M
     api-call-timeout: PT30S
     running-pipeline-cap: 100   # soft: concurrently-claimed pipelines
-    slot-cap: 20                # soft: concurrent TF-dispatch occupancy
-    slot-retry: PT30S
+    terraform-slot-cap: 20                # soft: concurrent TF-dispatch occupancy
+    terraform-slot-retry: PT30S
     poll-interval: PT1S
     max-idle-sleep: PT5S
     backoff-base: PT0.2S

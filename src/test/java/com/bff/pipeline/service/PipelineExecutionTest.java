@@ -418,7 +418,7 @@ class PipelineExecutionTest {
         ExecutionSettings executionSettings() {
             return ExecutionSettings.builder()
                     .workerPerPod(2).leaseDuration(LEASE).apiCallTimeout(Duration.ofSeconds(15))
-                    .runningPipelineCap(100).slotCap(100).slotRetry(Duration.ofSeconds(1))
+                    .runningPipelineCap(100).terraformSlotCap(100).terraformSlotRetry(Duration.ofSeconds(1))
                     .pollInterval(Duration.ofSeconds(1)).maxIdleSleep(Duration.ofSeconds(1))
                     .backoffBase(Duration.ofMillis(100)).backoffMax(Duration.ofSeconds(1)).jitterRatio(0.2)
                     .build();
