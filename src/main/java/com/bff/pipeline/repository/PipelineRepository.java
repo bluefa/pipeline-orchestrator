@@ -19,14 +19,14 @@ import org.springframework.data.repository.query.Param;
  * claim/guard/cancel 질의를 얹었다.
  *
  * <p>{@code findByActiveTarget}은 해당 target의 현재 활성 실행을 돌려준다. 불변식상 비종료 상태일 때만
- * {@code active_target == target}이 성립한다. 종료 전이는 이제 별도 CAS가 아니라 tx2의 {@code FOR UPDATE} 잠금
+ * {@code active_target == target}이 성립한다. 종료 전이는 이제 별도 CAS가 아니라 write-back 트랜잭션의 {@code FOR UPDATE} 잠금
  * 아래에서 엔티티 setter로 처리한다({@code StepReporter.terminalize}/{@code cancelIfIdle}). RUNNING 가드는 그 질의들이
  * 직접 들고 있다.
  *
- * <p><b>ADR-021 claim(tx1)</b>: {@code findClaimableDuePipelines}는 due 조건을 만족하는 행 하나를
+ * <p><b>ADR-021 claim(claim 트랜잭션)</b>: {@code findClaimableDuePipelines}는 due 조건을 만족하는 행 하나를
  * {@code PESSIMISTIC_WRITE} + lock-timeout {@code -2}로 잠근다. 이 힌트는 MySQL 8에서 {@code FOR UPDATE SKIP LOCKED}로
  * 렌더링되고 H2에서는 무시돼 일반 {@code FOR UPDATE}가 된다. 덕분에 두 워커가 같은 행을 노려도 블로킹 없이 서로 다른
- * 행을 나눠 claim한다. <b>guarded write-back(tx2)</b>: {@code findByIdForUpdate}로 pipeline 행을 잠근 뒤 호출자가
+ * 행을 나눠 claim한다. <b>guarded write-back(write-back 트랜잭션)</b>: {@code findByIdForUpdate}로 pipeline 행을 잠근 뒤 호출자가
  * {@code claimed_by} 소유권을 검증한다. <b>cancel</b>: {@code cancelIfIdle}은 Case A로, claim이 없거나 만료됐으면
  * 즉시 종료하고 claim을 지운다. {@code requestCancel}은 Case B로, 플래그만 세우고 워커를 깨운다.
  * {@code countByClaimedUntilAfter}는 admission soft-cap 카운트에, {@code findNearestClaimableDueAt}은

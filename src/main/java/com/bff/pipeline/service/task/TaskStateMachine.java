@@ -17,8 +17,8 @@ import java.time.Instant;
 import org.springframework.stereotype.Component;
 
 /**
- * ADR-021 phase-B: {@link StepRunner}가 트랜잭션 밖에서 계산해 둔 {@link StepOutcome}을 tx2({@link StepReporter}) 안에서
- * 관리 태스크에 적용한다(ADR-016 §2, §6의 태스크 전환을 소유한다). 이 클래스에는 외부 호출이 전혀 없다 — phase-A가 닫힌
+ * ADR-021 write-back 단계: {@link StepRunner}가 트랜잭션 밖에서 계산해 둔 {@link StepOutcome}을 write-back 트랜잭션({@link StepReporter}) 안에서
+ * 관리 태스크에 적용한다(ADR-016 §2, §6의 태스크 전환을 소유한다). 이 클래스에는 외부 호출이 전혀 없다 — run 단계가 닫힌
  * 어휘(InfraManager 호출 실패)로 번역해 {@code StepOutcome}으로 넘겨주면, 여기서는 그것을 태스크 상태 전환으로 매핑하기만 한다.
  *
  * <pre>
@@ -31,13 +31,13 @@ import org.springframework.stereotype.Component;
  *   any          → UnknownTask  → FAILED(UNKNOWN_TASK)
  * </pre>
  *
- * <p>유일한 진입점은 {@link #applyOutcome(Task, StepOutcome)}이고, {@link StepReporter}가 tx2 안에서 호출한다.
+ * <p>유일한 진입점은 {@link #applyOutcome(Task, StepOutcome)}이고, {@link StepReporter}가 write-back 트랜잭션 안에서 호출한다.
  *
  * <p><b>불변식.</b> 디스패치는 멱등적이다(ADR-016 §5). 재시도할 때는 {@code failCount}가 늘기 전에 시도를 먼저 종료 처리해
  * 정확한 {@code attempt_number}에 기록한다. 재시도는 {@code nextCheckAt}을 {@code now + pollingInterval}로 잡는데,
  * ADR-021 claim 루프에서 곧바로 재디스패치가 InfraManager를 난타(hammer)하지 않도록 일부러 둔 케이던스다(재디스패치는 멱등이라 안전하다).
  *
- * <p><b>예외 전략.</b> 외부 호출 실패를 {@code ErrorCode}로 바꾸는 일은 {@link StepRunner}가 phase-A 경계에서 처리한다.
+ * <p><b>예외 전략.</b> 외부 호출 실패를 {@code ErrorCode}로 바꾸는 일은 {@link StepRunner}가 run 단계 경계에서 처리한다.
  * 비즈니스 결과는 결코 예외가 아니라 행에 기록되는 {@code ErrorCode} 값이다({@code docs/exception-strategy.md} 참조).
  */
 @Component

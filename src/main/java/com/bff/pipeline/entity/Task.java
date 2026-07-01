@@ -40,7 +40,7 @@ import org.hibernate.type.SqlTypes;
  * {@code task_attempt.response}에만 남고, 완료 판정은 최신 attempt를 읽는 {@code check(attempt, task)}가 한다
  * (§3 invariant 1). {@code errorCode}는 {@code status == FAILED}일 때만 채운다. {@code nextCheckAt}은 폴링 task가
  * 다음에 실행될 시각이고, null은 곧바로 실행 대상이라는 뜻이다. {@code version}은 낙관적 락(optimistic lock)이다.
- * ADR-021 실행 모델에서는 모든 task 쓰기가 tx2의 pipeline 행 {@code FOR UPDATE} 잠금 아래로 직렬화되므로
+ * ADR-021 실행 모델에서는 모든 task 쓰기가 write-back 트랜잭션의 pipeline 행 {@code FOR UPDATE} 잠금 아래로 직렬화되므로
  * (cancel도 같은 잠금을 두고 경합한다) 순서 보장은 사실상 pipeline 잠금이 도맡고, {@code @Version}은 방어적
  * 다중화(defense-in-depth)로 남는다 — 잠금 경로 밖에서 뜻밖의 동시 쓰기가 끼어들어도 stale 저장을 거부한다.
  */

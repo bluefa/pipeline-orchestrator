@@ -18,12 +18,12 @@ import lombok.Builder;
 import org.springframework.stereotype.Component;
 
 /**
- * 한 실행 사이클을 조립한다: claim(tx1, {@link PipelineClaimer}) → 외부 호출(phase-A, {@link StepRunner})
- * → report(tx2, {@link StepReporter})를 잇는다. <b>자신은 트랜잭션을 열지 않는다</b> — 외부 호출이 어떤
+ * 한 실행 사이클을 조립한다: claim(claim 트랜잭션, {@link PipelineClaimer}) → 외부 호출(run 단계, {@link StepRunner})
+ * → write-back(write-back 트랜잭션, {@link StepReporter})를 잇는다. <b>자신은 트랜잭션을 열지 않는다</b> — 외부 호출이 어떤
  * 행 락도 쥐고 있지 않게 하기 위해서다(Decision 3). 트랜잭션은 pipelineClaimer와 reporter에만 있다.
  *
  * <p>cancel은 두 안전지점에서 관찰한다. 하나는 claim 직후로, {@link #loadStepContext}에서 {@code cancel_requested}이거나
- * 현재 task가 없으면 외부 호출을 건너뛰고 report로 넘어가 수렴·해제한다. 다른 하나는 tx2 안이다({@link StepReporter#report}).
+ * 현재 task가 없으면 외부 호출을 건너뛰고 write-back으로 넘어가 수렴·해제한다. 다른 하나는 write-back 트랜잭션 안이다({@link StepReporter#writeBack}).
  * terraform slot을 소비하는 dispatch 단계인데 빈 slot이 없으면 외부 호출 대신 reschedule로 claim을 놓는다(Decision 7).
  */
 @Component
@@ -68,16 +68,29 @@ public class PipelineWorker {
     }
 
     private void processStep(Claim claim, StepContext context) {
-        if (context.cancelRequested() || context.currentTask() == null) {
-            stepReporter.report(claim.pipelineId(), claim.token(), null);
+        if (nothingToDispatch(context)) {
+            stepReporter.writeBack(claim.pipelineId(), claim.token(), null);
             return;
         }
-        if (context.terraformSlotDispatch() && !terraformSlotAvailable()) {
+        if (mustWaitForTerraformSlot(context)) {
             stepReporter.reschedule(claim.pipelineId(), claim.token(), executionSettings.terraformSlotRetry());
             return;
         }
         StepOutcome outcome = stepRunner.runStep(context.target(), context.currentTask(), context.attempt());
-        stepReporter.report(claim.pipelineId(), claim.token(), outcome);
+        stepReporter.writeBack(claim.pipelineId(), claim.token(), outcome);
+    }
+
+    /**
+     * 던질 외부 작업이 없는 경우다 — 취소가 요청됐거나(그러면 write-back 트랜잭션이 취소를 적용) 남은 비종료 task가 없다(그러면 write-back 트랜잭션이
+     * 종료 상태로 수렴). 어느 쪽이든 외부 호출을 건너뛰고 {@code outcome=null}로 write-back해 수렴·claim 해제만 맡긴다.
+     */
+    private boolean nothingToDispatch(StepContext context) {
+        return context.cancelRequested() || context.currentTask() == null;
+    }
+
+    /** 이번 스텝이 terraform 슬롯을 소비하는 dispatch인데 빈 슬롯이 없는 경우다 — 외부 호출 대신 잠시 뒤로 미룬다(reschedule). */
+    private boolean mustWaitForTerraformSlot(StepContext context) {
+        return context.terraformSlotDispatch() && !terraformSlotAvailable();
     }
 
     private Optional<StepContext> loadStepContext(long pipelineId) {

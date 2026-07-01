@@ -18,17 +18,17 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * phase-B — tx2 가드 라이트백이다(Decision 4). pipeline 행을 {@code FOR UPDATE}로 잠그고 claim 소유권을
- * 검증한 뒤(token-only: {@code claimed_by} 토큰 일치), phase-A({@link StepRunner})가 계산한 {@link StepOutcome}을
+ * write-back 단계 — write-back 트랜잭션의 가드 라이트백이다(Decision 4). pipeline 행을 {@code FOR UPDATE}로 잠그고 claim 소유권을
+ * 검증한 뒤(token-only: {@code claimed_by} 토큰 일치), run 단계({@link StepRunner})가 계산한 {@link StepOutcome}을
  * 태스크에 적용한다. 외부 호출은 이 클래스에 없다.
  *
- * <p>tx2는 순서가 고정돼 있다. (1) {@code findByIdForUpdate}로 행을 잠근다; (2) {@link #ownsClaim}으로 토큰 일치를
+ * <p>write-back 트랜잭션은 순서가 고정돼 있다. (1) {@code findByIdForUpdate}로 행을 잠근다; (2) {@link #ownsClaim}으로 토큰 일치를
  * 검증한다 — 실패하면 전체 no-op으로 stale straggler를 막는다; (3) 같은 락 아래에서 {@code cancel_requested}를
  * 읽어 협력적 취소를 경합 없이 관찰한다; (4) outcome을 적용하고 converge한 뒤 BLOCKED 후속을 승격한다;
  * (5) claim을 해제하고 next_due_at을 전진시킨다. CAS나 {@code status=:expected} 가드는 없다 —
  * {@code FOR UPDATE}에 검증된 단일 쓰기자가 더해지므로 필요 없다(Decision 4/6).
  *
- * <p>현재 태스크가 DONE이 되면 같은 tx2 안에서 다음 BLOCKED 후속 태스크를 READY로 승격한다(Decision 4 §152).
+ * <p>현재 태스크가 DONE이 되면 같은 write-back 트랜잭션 안에서 다음 BLOCKED 후속 태스크를 READY로 승격한다(Decision 4 §152).
  * 별도 claim 사이클을 거치지 않으니 트랜잭션 중간에 불변식이 깨지는 상태가 남지 않는다.
  */
 @Component
@@ -50,7 +50,7 @@ public class StepReporter {
     }
 
     @Transactional
-    public void report(long pipelineId, String claimToken, StepOutcome outcome) {
+    public void writeBack(long pipelineId, String claimToken, StepOutcome outcome) {
         claimedPipeline(pipelineId, claimToken).ifPresent(pipeline -> {
             List<Task> chain = taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId);
             if (pipeline.isCancelRequested()) { cancel(pipeline, chain); return; }

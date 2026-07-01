@@ -53,9 +53,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * ADR-021 claim-pull 실행 모델의 엔드-투-엔드 테스트이다. {@link PipelineWorker#pollOnce}가 due pipeline 하나를
- * claim(tx1) → 외부호출(phase-A) → report(tx2)로 한 단계씩 구동한다(스케줄러 스레드 없이 결정적으로). fake에 동작을
+ * claim(claim 트랜잭션) → 외부호출(run 단계) → write-back(write-back 트랜잭션)으로 한 단계씩 구동한다(스케줄러 스레드 없이 결정적으로). fake에 동작을
  * 스크립팅하고 {@link MutableClock}으로 due-ness/lease 만료를 제어한다. {@code NOT_SUPPORTED}가 테스트 래핑
- * 트랜잭션을 억제하므로 각 tx1/tx2가 프로덕션과 동일하게 독립 커밋한다.
+ * 트랜잭션을 억제하므로 각 claim 트랜잭션과 write-back 트랜잭션이 프로덕션과 동일하게 독립 커밋한다.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -118,7 +118,7 @@ class PipelineExecutionTest {
         assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.BLOCKED);
 
         pipelineWorker.pollOnce();   // dispatch terraform
-        pipelineWorker.pollOnce();   // poll terraform success → DONE + promote condition BLOCKED→READY (same tx2)
+        pipelineWorker.pollOnce();   // poll terraform success → DONE + promote condition BLOCKED→READY (same write-back 트랜잭션)
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);
         assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.READY);
 

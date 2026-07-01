@@ -80,7 +80,7 @@ public class Pipeline {
     @Column(name = "next_due_at", nullable = false)
     private Instant nextDueAt;
 
-    /** claim할 때마다 새로 발급하는 fencing token(UUID). tx2 guarded write-back의 소유권 키다. */
+    /** claim할 때마다 새로 발급하는 fencing token(UUID). write-back 트랜잭션의 guarded write-back 소유권 키다. */
     @Column(name = "claimed_by")
     private String claimedBy;
 
