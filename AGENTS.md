@@ -28,7 +28,9 @@ Java 21 / MySQL.
 4. **Separate the two failure kinds.** External-call failures are exceptions caught at the
    one engine boundary (`TaskMachine`) and translated to a persisted `ErrorCode`;
    business-rule outcomes are values (`ErrorCode`, sealed result types), never thrown. See
-   `docs/exception-strategy.md`.
+   `docs/exception-strategy.md`. An exception that can reach a controller is wrapped into a controlled
+   `OrchestrationException` (stable HTTP status + an `OrchestrationErrorCode` enum `code`, `GlobalAdvice`
+   handling it in one place); a raw infra exception must not leak past its service boundary.
 5. **Keep the file count down.** An `interface` is justified only by a real external boundary
    (`InfraManagerClient`, prod + test fake) or genuine multi-implementation polymorphism
    (`TaskType` → Terraform/Condition, resolved by `TaskTypeRegistry`) — never a single-impl
@@ -42,7 +44,8 @@ Java 21 / MySQL.
      advice · `repository` — Spring Data · `utils` — static helpers.
    Names reveal purpose — **no abbreviations** anywhere (class, method, field, variable): e.g.
    `InfraManagerClient` not `ImClient`, `sequence` not `seq`, `timeToLive` not `ttl`, `attemptNumber`
-   not `attemptNo`.
+   not `attemptNo`. Name steps/methods by their **role** (`claim`/`run`/`writeBack`), never positional
+   jargon (`tx1`/`phaseA`/`step1`); a domain noun carries the domain (`terraformSlot`, not bare `slot`).
 7. **Comments in Korean, on the class header.** Avoid inline comments; put a **detailed Korean**
    Javadoc on each major component's class declaration so its behavior and invariants are clear from the
    header alone. Identifiers and code stay in English; only the prose comments are Korean.
