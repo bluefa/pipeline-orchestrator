@@ -19,9 +19,8 @@ spring:
 # Per-task deadline defaults (domain; ADR-016).
 pipeline:
   execution-timeout: PT50M    # TERRAFORM_JOB per-task deadline
-  time-to-live: P7D           # CONDITION_CHECK per-task deadline
-  polling-interval: PT10M     # poll re-check cadence
-  max-fail-count: 2           # attempts before a task is FAILED
+  polling-interval: PT10S     # poll re-check cadence, retry backoff, and CONDITION_CHECK re-check spacing
+  max-fail-count: 2           # attempts before a task is FAILED (also bounds CONDITION_CHECK not-met polls)
 
   # ADR-021 execution model. Static server config, tuned in operation against observed InfraManager
   # latency. Hard constraint (Decision 5): lease-duration > api-call-timeout (+ pool queue wait +

@@ -129,6 +129,27 @@ class PipelineExecutionTest {
     }
 
     @Test
+    void conditionNotMetRetriesThenFailsAtMaxWithConditionNotMet() {
+        Pipeline pipeline = creator.create("e-cond", PipelineType.INSTALL);
+        infraManagerClient.onPoll(TerraformPoll::success);   // terraform succeeds so the condition runs
+        infraManagerClient.onCheck(() -> false);             // condition never met
+
+        pipelineWorker.pollOnce();   // dispatch terraform
+        pipelineWorker.pollOnce();   // poll terraform success → DONE + promote condition READY
+        pipelineWorker.pollOnce();   // dispatch condition → IN_PROGRESS (attempt 1)
+        pipelineWorker.pollOnce();   // poll condition not-met → failCount=1 → READY
+        clock.advance(Duration.ofMinutes(11));   // let the rescheduled condition become due again
+        pipelineWorker.pollOnce();   // dispatch condition → IN_PROGRESS (attempt 2)
+        pipelineWorker.pollOnce();   // poll condition not-met → failCount=2 → FAILED
+
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);
+        assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.FAILED);
+        assertThat(task(pipeline, 1).getErrorCode()).isEqualTo(ErrorCode.CONDITION_NOT_MET);
+        assertThat(task(pipeline, 1).getFailCount()).isEqualTo(2);
+        assertThat(status(pipeline)).isEqualTo(PipelineStatus.FAILED);
+    }
+
+    @Test
     void terraformFailureRetriesThenFailsAtMaxAndCascadeCancels() {
         Pipeline pipeline = creator.create("e-fail", PipelineType.INSTALL);
         infraManagerClient.onPoll(TerraformPoll::failure);
@@ -408,7 +429,6 @@ class PipelineExecutionTest {
         PipelineSettings pipelineSettings() {
             return PipelineSettings.builder()
                     .executionTimeout(Duration.ofMinutes(50))
-                    .timeToLive(Duration.ofDays(7))
                     .pollingInterval(Duration.ofMinutes(10))
                     .maxFailCount(2)
                     .build();

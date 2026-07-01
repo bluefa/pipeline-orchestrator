@@ -19,13 +19,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "pipeline")
 public record PipelineSettings(
         Duration executionTimeout,
-        Duration timeToLive,
         Duration pollingInterval,
         int maxFailCount) {
 
     public PipelineSettings {
         requirePositive(executionTimeout, "pipeline.execution-timeout");
-        requirePositive(timeToLive, "pipeline.time-to-live");
         requirePositive(pollingInterval, "pipeline.polling-interval");
         if (maxFailCount < 1) {
             throw new IllegalArgumentException("pipeline.max-fail-count must be >= 1, was " + maxFailCount);

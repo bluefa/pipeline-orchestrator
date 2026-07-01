@@ -127,7 +127,7 @@ class PipelineSoftCapTest {
         @Bean
         PipelineSettings pipelineSettings() {
             return PipelineSettings.builder()
-                    .executionTimeout(Duration.ofMinutes(50)).timeToLive(Duration.ofDays(7))
+                    .executionTimeout(Duration.ofMinutes(50))
                     .pollingInterval(Duration.ofMinutes(10)).maxFailCount(2).build();
         }
 

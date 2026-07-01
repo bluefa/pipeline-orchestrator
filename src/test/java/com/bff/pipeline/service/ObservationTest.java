@@ -114,32 +114,21 @@ class ObservationTest {
     }
 
     @Test
-    void aConditionPolledNotMetUpdatesOneCheckRowInPlace() {
-        Pipeline pipeline = createInstallAtConditionInProgress();
-        Long conditionTaskId = taskId(pipeline, 1);
+    void aTerraformPolledRunningUpdatesOneCheckRowInPlace() {
+        Pipeline pipeline = creator.create("obs-running", PipelineType.DELETE);
+        pipelineWorker.pollOnce();   // dispatch terraform → IN_PROGRESS (default onPoll = running)
 
         for (int i = 0; i < 3; i++) {
-            pipelineWorker.pollOnce();
+            pipelineWorker.pollOnce();          // poll terraform → RUNNING, updates the one check row in place
             clock.advance(Duration.ofMinutes(11));
         }
 
-        TaskAttempt attempt = taskAttemptRepository.findByTaskIdAndAttemptNumber(conditionTaskId, 1).orElseThrow();
+        TaskAttempt attempt = taskAttemptRepository.findByTaskIdAndAttemptNumber(taskId(pipeline, 0), 1).orElseThrow();
         assertThat(taskCheckRepository.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
             assertThat(check.getCallCount()).isEqualTo(3);
-            assertThat(check.getNotMetCount()).isEqualTo(3);
+            assertThat(check.getLastExternalStatus()).isEqualTo("RUNNING");
         });
         assertThat(taskCheckRepository.findAll()).hasSize(1);
-    }
-
-    private Pipeline createInstallAtConditionInProgress() {
-        Pipeline pipeline = creator.create("obs-cond", PipelineType.INSTALL);
-        infraManagerClient.onPoll(TerraformPoll::success);
-        pipelineWorker.pollOnce();   // dispatch terraform
-        pipelineWorker.pollOnce();   // poll terraform → DONE + promote condition READY
-        pipelineWorker.pollOnce();   // dispatch condition → IN_PROGRESS
-        assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).get(1).getStatus())
-                .isEqualTo(TaskStatus.IN_PROGRESS);
-        return pipeline;
     }
 
     private void runUntilTerminal(Pipeline pipeline) {
