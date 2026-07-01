@@ -25,10 +25,14 @@ public interface TerraformOperationBinding {
     /** operation 전용 status API를 호출해 job 하나의 완료 상태를 얻는다. */
     TerraformPoll poll(String jobId);
 
-    /** dispatch 응답의 job id 목록 방어 — 응답/목록이 null이면 쓸 수 없는 외부 응답이므로 CallFailed. */
+    /**
+     * dispatch 응답의 job id 목록 방어 — 목록이 null·비었거나 요소에 null·blank가 섞였으면 쓸 수 없는 외부 응답이므로
+     * {@link CallFailedException}으로 닫는다(→ StepRunner 재시도 경계). 여기서 막지 않으면 {@code [""]} 같은 응답이
+     * 성공 dispatch로 저장됐다가 poll 단계에서 terminal 실패로 바뀌어 재시도 기회를 잃는다.
+     */
     static List<String> requireJobIds(List<String> jobIds) {
-        if (jobIds == null) {
-            throw new CallFailedException("InfraManager returned no dispatch body");
+        if (jobIds == null || jobIds.isEmpty() || jobIds.stream().anyMatch(id -> id == null || id.isBlank())) {
+            throw new CallFailedException("InfraManager returned no usable job ids");
         }
         return jobIds;
     }

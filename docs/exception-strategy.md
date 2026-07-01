@@ -45,8 +45,8 @@ The translation is deliberately small and total. Every external exception maps t
 
 | Thrown at the boundary | Becomes |
 |---|---|
-| `InfraManagerClient.CallTimeoutException` (per-call timeout exceeded) | `ErrorCode.CALL_TIMEOUT` |
-| `InfraManagerClient.CallFailedException` — any other failed call (HTTP error, connection failure, rejection, malformed/empty response), incl. a `TaskType` guard rejecting a null/blank job id or null status | `ErrorCode.CHECK_ERROR` |
+| `CallTimeoutException` (per-call timeout exceeded) | `ErrorCode.CALL_TIMEOUT` |
+| `CallFailedException` — any other failed call (HTTP error, connection failure, rejection, malformed/empty response), incl. a `TaskType` guard rejecting a null/blank job id or null status | `ErrorCode.CHECK_ERROR` |
 
 The boundary (`StepRunner.runExternalCall`, the one helper wrapping execute/check) catches
 **only** `CallTimeoutException` and `CallFailedException`. `CallInterruptedException` (a shutdown
@@ -74,7 +74,7 @@ tx1 = `PipelineClaimer.claimOneDue` (claim + fencing token), then the external c
  client/     throws        ── external-call failures live here and only here
    InfraManagerClient          (interface; HTTP in prod, faked in tests). The production adapter,
                                driven by the ADR-021 runner, owns the per-call timeout and raises
-                               CallTimeoutException / CallInterruptedException (nested in the client).
+                               CallTimeoutException / CallInterruptedException (exception/ package).
       │  (exception crosses exactly one boundary)
       ▼
  service/    catches+translates
@@ -105,10 +105,10 @@ helper, the only `try/catch` in the business layer, and it does nothing but clas
 private StepOutcome runExternalCall(Task task, boolean dispatch, Supplier<StepOutcome> call) {
     try {
         return call.get();                        // the task type calls InfraManagerClient
-    } catch (InfraManagerClient.CallTimeoutException exception) {
+    } catch (CallTimeoutException exception) {
         log.warn(...);
         return StepOutcome.callTimeout(dispatch); // external timeout → value (→ CALL_TIMEOUT in tx2)
-    } catch (InfraManagerClient.CallFailedException exception) {
+    } catch (CallFailedException exception) {
         log.warn(...);
         return StepOutcome.callFailed(dispatch);  // external failure (incl. a null/malformed response) → value (→ CHECK_ERROR in tx2)
     }
@@ -123,8 +123,8 @@ private StepOutcome runExternalCall(Task task, boolean dispatch, Supplier<StepOu
 
 These exception types survive, each for a precise reason — none is a business outcome.
 
-1. **`InfraManagerClient.CallTimeoutException`** and **`InfraManagerClient.CallFailedException`** (nested
-   in `client/InfraManagerClient.java`) — the client's closed failure vocabulary. `CallTimeoutException`
+1. **`CallTimeoutException`** and **`CallFailedException`** (top-level in
+   `exception/`, the InfraManager transport-boundary vocabulary) — the client's closed failure vocabulary. `CallTimeoutException`
    signals that one InfraManager call exceeded the per-call timeout; `CallFailedException` signals any
    other failed call (HTTP error, connection failure, rejection, malformed/empty response — including a
    `TaskType` guard rejecting a null/blank job id or null status). The production adapter (driven by the
@@ -149,7 +149,7 @@ These exception types survive, each for a precise reason — none is a business 
    module's scope), which logs and skips that pipeline (it keeps its lease and is reclaimed on expiry).
    The terminal `CANCELLED` state is preserved; nothing is corrupted.
 
-A fourth, **`InfraManagerClient.CallInterruptedException`**, is the fail-fast guard: `StepRunner.runExternalCall`
+A fourth, **`CallInterruptedException`**, is the fail-fast guard: `StepRunner.runExternalCall`
 catches only `CallTimeoutException`/`CallFailedException`, so an interrupt is **not caught** — it propagates
 out of `StepRunner` / `PipelineWorker.process` as an interrupt that aborts the sweep (JVM shutdown) instead
 of being recorded as a business `CHECK_ERROR`. Likewise `IllegalArgumentException` for a missing pipeline id

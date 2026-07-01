@@ -1,6 +1,6 @@
 # InfraManagerClient 프로덕션 구현 스펙 (Feign delegate)
 
-- Status: IMPLEMENTED (최신 `origin/main` 위, ADR-021 claim-pull 모델 기준). codex 리뷰 2라운드 반영, 84 테스트 그린.
+- Status: IMPLEMENTED (최신 `origin/main` 위, ADR-021 claim-pull 모델 기준). codex·opus 리뷰 반영, 92 테스트 그린.
 - Branch: `feat/infra-manager-feign` (base = 최신 `origin/main`)
 - ⚠️ 이전 초안은 스테일 브랜치 기준이라 실행 모델을 잘못 서술했음 — 리베이스 후 전면 교정.
 
@@ -26,7 +26,7 @@ StepRunner  (외부 호출 지점, @Transactional 없음 — 트랜잭션 밖에
             · 그 밖의 RuntimeException은 언랩해 그대로 전파(fail-fast)
          └ delegate = @Qualifier("infraManagerDelegate")   ← ★ 우리가 만들 것
               = InfraManagerFeignAdapter   (@Bean("infraManagerDelegate"))
-                   · operation → 구체 API 라우팅(switch) + 전송 예외 → CallFailed 번역 + jobIds 재직렬화
+                   · operation → 바인딩 레지스트리 위임(§5.1) + 전송 예외 → CallFailed 번역 + jobIds 재직렬화
                    └ InfraManagerFeignClient  @FeignClient  (operation별 구체 API 메서드)
 ```
 
@@ -54,7 +54,7 @@ try {
 ```
 
 - `catch (RuntimeException)` 통짜 금지: 매핑 로직 자체 버그(NPE 등)까지 `CallFailed`로 삼켜 fail-fast를 깬다.
-- null/빈 바디 방어: `terraformJobStatus`가 `TerraformPoll null` → `CallFailed`(기존 `JobIdTerraformJobTest` 계약), `runTerraform` 빈 문자열 → `CallFailed`(기존 `TerraformTask.execute` blank 가드와 이중 방어).
+- null/빈 바디 방어: `terraformJobStatus`가 `TerraformPoll null` → `CallFailed`(`TerraformTask.aggregate`의 null 가드), `runTerraform` 빈 문자열 → `CallFailed`(기존 `TerraformTask.execute` blank 가드와 이중 방어).
 - `Retryer.NEVER_RETRY`: 재시도 책임은 도메인(`retryOrFail`/`nextCheckAt`)에 있다. 전송 계층이 몰래 재시도하면 멱등성·attempt 회계가 어긋난다.
 
 ### 2.1 타임아웃 경계에 대한 미세 주의
@@ -105,7 +105,7 @@ operation마다 실제 API·응답이 다르므로 "operation 하나 = 실제 AP
 
 > ⚠️ **파서 일치:** `TerraformTask.check`는 `attempt.response`를 `List<String>` JSON, 즉 정확히 `["job-1", ...]`로 역직렬화한다(`TypeReference<List<String>>`). 어댑터는 wire DTO `{jobIds:[...]}`를 받되 **`jobIds` 배열만 JSON 문자열로 재직렬화**해 넘긴다.
 
-> ✅ **terraform poll 경로도 operation별로 다르다(D-6 확정).** `terraformJobStatus`에 operation 인자를 추가했고(도메인 변경), `JobIdTerraformJob`이 자신의 operation을 지녀 poll 시 전달한다(`TerraformTask.check`가 `task.getOperation()` 주입). 어댑터가 operation→구체 상태 API(`applyJobStatus`/`destroyJobStatus`)로 라우팅.
+> ✅ **terraform poll 경로도 operation별로 다르다(D-6 확정).** `terraformJobStatus`에 operation 인자를 추가했고(도메인 변경), `TerraformTask.check`가 각 job id를 `task.getOperation()`과 함께 직접 폴링한다(폴링 로직은 model이 아닌 service). 어댑터가 operation→구체 상태 API(`applyJobStatus`/`destroyJobStatus`)로 라우팅.
 
 실제 경로/DTO 확정 시 `@FeignClient` 구체 메서드 + wire DTO만 조정한다.
 
@@ -195,8 +195,8 @@ RequestInterceptor infraManagerAuth(@Value("${infra-manager.auth-token}") String
 
 **도메인 변경(operation 라우팅 위해 최소 확장)**:
 - `InfraManagerClient.terraformJobStatus`에 `TaskOperation` 인자 추가(poll 경로가 operation별이라, D-6).
-- `JobIdTerraformJob`이 operation 보유, `TerraformTask.check`가 `task.getOperation()` 주입.
-- `TimeBoundedInfraManagerClient`: poll 시그니처 반영 + 조건 애너테이션 1줄 교체(`@ConditionalOnBean`→`@ConditionalOnProperty`, §8).
+- `TerraformTask`가 각 job id를 `task.getOperation()`과 함께 직접 폴링(폴링 로직은 model이 아닌 service).
+- `TimeBoundedInfraManagerClient`: poll 시그니처 반영 + 조건 애너테이션 제거(§8, base-url·token 필수화).
 - fake(`FakeInfraManagerClient`)와 관련 테스트의 poll 시그니처 갱신.
 
 `StepRunner`/`PipelineWorker` 등 실행 계층은 무변경.
@@ -207,9 +207,9 @@ RequestInterceptor infraManagerAuth(@Value("${infra-manager.auth-token}") String
 
 - **D-1 백엔드:** 현재 platform thread라 pinning 무관 → **기본 Feign 백엔드로 시작.** VT 전환 시 `feign-java11`로 교체(§4).
 - **D-2 HTTP 계약:** 실제 스펙 없음 → `/infra/...` 가정(§5). 확정 시 인터페이스+DTO만 조정.
-- **D-3 빈 격리:** `FeignConfig` 클래스 게이트(`@ConditionalOnProperty(base-url)`) + 데코레이터 조건을 동일 프로퍼티로 통일. `@ConditionalOnBean`의 스캔 순서 취약성 회피(§8, `FeignDelegateWiringTest`로 검증).
+- **D-3 빈 격리:** 조건 애너테이션 전부 제거(§8) — 도메인이 InfraManagerClient 필수라 base-url·token은 필수 설정. `@Primary` 데코레이터가 `@Qualifier` delegate를 감싸 체인이 결정적(`FeignDelegateWiringTest`로 검증), `@ConditionalOnBean` 스캔 순서 취약성도 사라짐.
 - **D-4 통합테스트:** WireMock 추가.
 - **D-5 실패 세부 영속:** 신규 컬럼 없음(§6).
 - **번역 위치:** delegate 어댑터의 `catch(FeignException)` 한 경계(RetryableException 포함). 타임아웃/인터럽트는 데코레이터 소유.
 - **operation 라우팅:** operation→구체 API는 어댑터 `switch`가 소유(§5). FeignClient는 operation별 구체 메서드만.
-- **D-6 (확정):** terraform poll 경로도 operation마다 다름 → `terraformJobStatus(jobId, operation)`로 도메인 인터페이스 확장. `JobIdTerraformJob`이 operation 보유, `TerraformTask.check`가 주입. 어댑터가 `applyJobStatus`/`destroyJobStatus`로 라우팅.
+- **D-6 (확정):** terraform poll 경로도 operation마다 다름 → `terraformJobStatus(jobId, operation)`로 도메인 인터페이스 확장. `TerraformTask`가 job id를 operation과 함께 직접 폴링. 어댑터가 `applyJobStatus`/`destroyJobStatus`로 라우팅.

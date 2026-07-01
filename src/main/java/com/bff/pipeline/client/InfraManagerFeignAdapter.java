@@ -43,10 +43,8 @@ public class InfraManagerFeignAdapter implements InfraManagerClient {
 
     @Override
     public String runTerraform(String target, TaskOperation operation) {
+        // 바인딩이 job id 목록 방어(null·empty·blank 요소 → CallFailed)를 소유한다(TerraformOperationBinding#requireJobIds).
         List<String> jobIds = translating(() -> registry.terraform(operation).dispatchJobIds(target));
-        if (jobIds.isEmpty()) {
-            throw new CallFailedException("InfraManager returned no job ids for " + operation);
-        }
         return serializeJobIds(jobIds);
     }
 

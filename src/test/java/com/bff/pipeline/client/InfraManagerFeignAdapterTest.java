@@ -45,6 +45,15 @@ class InfraManagerFeignAdapterTest {
     }
 
     @Test
+    void treatsBlankJobIdElementsAsACallFailure() {
+        // [""] 같은 malformed dispatch 응답이 성공으로 저장돼 poll에서 terminal 실패로 바뀌지 않도록 어댑터 경계에서 닫는다.
+        InfraManagerFeignAdapter adapter = adapter(stub().withApply(new ApplyNetworkResponse(List.of("job-1", "  "))));
+
+        assertThatThrownBy(() -> adapter.runTerraform("target-a", TaskOperation.APPLY_NETWORK))
+                .isInstanceOf(CallFailedException.class);
+    }
+
+    @Test
     void routesDestroyToItsOwnApi() {
         InfraManagerFeignAdapter adapter = adapter(stub().withDestroy(new DestroyNetworkResponse(List.of("job-x"))));
 
