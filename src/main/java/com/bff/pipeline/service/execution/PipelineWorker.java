@@ -51,7 +51,11 @@ public class PipelineWorker {
         this.executionSettings = executionSettings;
     }
 
-    /** 편의 메서드: 한 건을 claim해 처리하고 그 pipeline id를 반환한다. 잡을 게 없으면 empty. */
+    /**
+     * 테스트 seam: 한 건을 claim해 처리하고 그 pipeline id를 반환한다(잡을 게 없으면 empty). 프로덕션 경로는
+     * {@code PipelineScheduler.drain()}이 {@link #process}를 부르는 것이고, 이 메서드는 스케줄러 없이 한 사이클을
+     * 결정적으로 돌려 검증하려는 테스트만 쓴다({@code claimOneDue} + {@code process} 합성).
+     */
     public Optional<Long> pollOnce() {
         return pipelineClaimer.claimOneDue().map(claim -> {
             process(claim);

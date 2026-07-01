@@ -10,7 +10,7 @@ import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
-import com.bff.pipeline.utils.TaskSettings;
+import com.bff.pipeline.utils.TaskSettingsResolver;
 import java.time.Clock;
 import org.springframework.stereotype.Component;
 
@@ -50,7 +50,7 @@ public class ConditionCheckTask implements TaskType {
         if (infraManagerClient.checkCondition(target, task.getOperation())) {
             return TaskProgress.SUCCEEDED;
         }
-        if (TaskSettings.isPastDeadline(task, TaskSettings.resolveTimeToLive(task, pipelineSettings), clock)) {
+        if (TaskSettingsResolver.isPastDeadline(task, TaskSettingsResolver.resolveTimeToLive(task, pipelineSettings), clock)) {
             return TaskProgress.failedTerminal(ErrorCode.TIME_TO_LIVE_EXPIRED);
         }
         return TaskProgress.pending(CheckSignal.NOT_MET);

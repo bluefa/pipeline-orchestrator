@@ -13,7 +13,7 @@ import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
 import com.bff.pipeline.model.terraform.JobIdTerraformJob;
 import com.bff.pipeline.model.terraform.TerraformJob;
-import com.bff.pipeline.utils.TaskSettings;
+import com.bff.pipeline.utils.TaskSettingsResolver;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -105,7 +105,7 @@ public class TerraformTask implements TaskType {
         log.warn("task {} attempt {}: dispatch response missing after dispatch (lost DB write or crash); "
                 + "waiting for executionTimeout before an idempotent re-dispatch",
                 task.getId(), attempt == null ? -1 : attempt.getAttemptNumber());
-        if (TaskSettings.isPastDeadline(task, TaskSettings.resolveExecutionTimeout(task, pipelineSettings), clock)) {
+        if (TaskSettingsResolver.isPastDeadline(task, TaskSettingsResolver.resolveExecutionTimeout(task, pipelineSettings), clock)) {
             return TaskProgress.failedRetryable(ErrorCode.EXECUTION_TIMEOUT);
         }
         return TaskProgress.pending(CheckSignal.RUNNING);
@@ -126,7 +126,7 @@ public class TerraformTask implements TaskType {
         if (allFinished) {
             return TaskProgress.SUCCEEDED;
         }
-        if (TaskSettings.isPastDeadline(task, TaskSettings.resolveExecutionTimeout(task, pipelineSettings), clock)) {
+        if (TaskSettingsResolver.isPastDeadline(task, TaskSettingsResolver.resolveExecutionTimeout(task, pipelineSettings), clock)) {
             return TaskProgress.failedRetryable(ErrorCode.EXECUTION_TIMEOUT);
         }
         return TaskProgress.pending(CheckSignal.RUNNING);
