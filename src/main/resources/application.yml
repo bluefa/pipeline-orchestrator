@@ -16,9 +16,27 @@ spring:
     properties:
       hibernate.jdbc.time_zone: UTC
 
-# Per-task deadline defaults (the ADR-021 runner owns the tick cadence and per-call timeout).
+# Per-task deadline defaults (domain; ADR-016).
 pipeline:
   execution-timeout: PT50M    # TERRAFORM_JOB per-task deadline
   time-to-live: P7D           # CONDITION_CHECK per-task deadline
   polling-interval: PT10M     # poll re-check cadence
   max-fail-count: 2           # attempts before a task is FAILED
+
+  # ADR-021 execution model. Static server config, tuned in operation against observed InfraManager
+  # latency. Hard constraint (Decision 5): lease-duration > api-call-timeout (+ pool queue wait +
+  # margin, the latter two tuned operationally). worker-per-pod sizes BOTH the worker pool and the
+  # per-call timeout pool. Soft caps overshoot by up to C-1 by design.
+  execution:
+    worker-per-pod: 4
+    lease-duration: PT2M
+    api-call-timeout: PT30S
+    running-pipeline-cap: 100   # soft: concurrently-claimed pipelines
+    terraform-slot-cap: 20                # soft: concurrent TF-dispatch occupancy
+    terraform-slot-retry: PT30S
+    poll-interval: PT1S
+    max-idle-sleep: PT5S
+    backoff-base: PT0.2S
+    backoff-max: PT5S
+    jitter-ratio: 0.2
+    scheduler-initial-delay: PT5S

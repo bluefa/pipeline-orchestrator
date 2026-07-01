@@ -1,5 +1,15 @@
 # ADR-016 Acceptance Criteria & Test Matrix
 
+> ⚠️ **Stale — pending reconciliation.** This matrix was written against the superseded
+> `PipelineEngine.advance(...)` + `finish()`-CAS design. That layer no longer exists: execution is now
+> the ADR-021 claim-pull model (`PipelineWorker.process` → `StepRunner.runStep` → `StepReporter.writeBack`,
+> guarded write-back under `FOR UPDATE` instead of a `finish()` CAS), and the `PipelineEngineTest` /
+> `PipelineEngineTransactionTest` references now live in `PipelineExecutionTest`. **Most criteria still
+> hold** and the class/test references below are stale — but **one criterion has itself changed**:
+> ADR-016 §4's duplicate-create is now **409 Conflict** (`ORCHESTRATION_PIPELINE_ALREADY_ACTIVE`), no
+> longer an idempotent "return the existing run" (see `decisions-and-questions.md` D-C). Full
+> reconciliation is a tracked follow-up (D-D).
+
 The **definition of done** for this module, derived from
 [ADR-016](adr/016-install-delete-pipeline-domain-model.md). Each ADR decision becomes one or more
 concrete, testable criteria, each tied to the code and the test that proves it. This is the

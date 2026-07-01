@@ -1,14 +1,23 @@
 package com.bff.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import com.bff.pipeline.entity.Pipeline;
+import com.bff.pipeline.exception.MissingPipelineIdException;
+import com.bff.pipeline.exception.PipelineNotFoundException;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.lifecycle.PipelineControl;
+import com.bff.pipeline.service.lifecycle.PipelineCreator;
+import com.bff.pipeline.service.lifecycle.PipelineInserter;
+import com.bff.pipeline.service.lifecycle.Recipes;
+import com.bff.pipeline.service.task.ObservationRecorder;
+import com.bff.pipeline.service.task.TaskCanceller;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -20,6 +29,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -40,13 +50,13 @@ class PipelineControlTest {
 
     @Autowired private PipelineControl control;
     @Autowired private PipelineCreator creator;
-    @Autowired private PipelineRepository pipelines;
-    @Autowired private TaskRepository tasks;
+    @Autowired private PipelineRepository pipelineRepository;
+    @Autowired private TaskRepository taskRepository;
 
     @AfterEach
     void clean() {
-        tasks.deleteAll();
-        pipelines.deleteAll();
+        taskRepository.deleteAll();
+        pipelineRepository.deleteAll();
     }
 
     @Test
@@ -57,9 +67,27 @@ class PipelineControlTest {
 
         assertThat(cancelled.getStatus()).isEqualTo(PipelineStatus.CANCELLED);
         assertThat(cancelled.getActiveTarget()).isNull();
-        assertThat(tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId()))
+        assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()))
                 .extracting(Task::getStatus)
                 .containsOnly(TaskStatus.CANCELLED);
+    }
+
+    @Test
+    void cancelRejectsANullPipelineIdAsABadRequest() {
+        MissingPipelineIdException exception =
+                catchThrowableOfType(() -> control.cancel(null), MissingPipelineIdException.class);
+
+        assertThat(exception.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(exception.code()).isEqualTo("ORCHESTRATION_PIPELINE_ID_REQUIRED");
+    }
+
+    @Test
+    void cancelRejectsAMissingPipelineAsNotFound() {
+        PipelineNotFoundException exception =
+                catchThrowableOfType(() -> control.cancel(999_999L), PipelineNotFoundException.class);
+
+        assertThat(exception.status()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(exception.code()).isEqualTo("ORCHESTRATION_PIPELINE_NOT_FOUND");
     }
 
     @Test
@@ -85,15 +113,15 @@ class PipelineControlTest {
     @Test
     void cancelDoesNotResurrectAPipelineThatAlreadyConvergedToTerminal() {
         Pipeline pipeline = creator.create("c-4", PipelineType.DELETE);
-        Pipeline converged = pipelines.findById(pipeline.getId()).orElseThrow();
+        Pipeline converged = pipelineRepository.findById(pipeline.getId()).orElseThrow();
         converged.setStatus(PipelineStatus.DONE);
         converged.setActiveTarget(null);
-        pipelines.save(converged);
+        pipelineRepository.save(converged);
 
         Pipeline result = control.cancel(pipeline.getId());
 
         assertThat(result.getStatus()).isEqualTo(PipelineStatus.DONE);
-        assertThat(tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId()))
+        assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()))
                 .noneMatch(task -> task.getStatus() == TaskStatus.CANCELLED);
     }
 

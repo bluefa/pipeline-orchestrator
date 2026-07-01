@@ -1,20 +1,25 @@
 package com.bff.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
+import com.bff.pipeline.exception.PipelineAlreadyActiveException;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.lifecycle.PipelineCreator;
+import com.bff.pipeline.service.lifecycle.PipelineInserter;
+import com.bff.pipeline.service.lifecycle.Recipes;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -36,31 +41,31 @@ import org.springframework.transaction.annotation.Transactional;
 class PipelineUniquenessTest {
 
     @Autowired private PipelineCreator creator;
-    @Autowired private PipelineRepository pipelines;
-    @Autowired private TaskRepository tasks;
+    @Autowired private PipelineRepository pipelineRepository;
+    @Autowired private TaskRepository taskRepository;
 
     @AfterEach
     void clean() {
-        tasks.deleteAll();
-        pipelines.deleteAll();
+        taskRepository.deleteAll();
+        pipelineRepository.deleteAll();
     }
 
     @Test
-    void duplicateCreateForAnActiveTargetReturnsTheExistingRun() {
-        Pipeline first = creator.create("target-a", PipelineType.INSTALL);
-        Pipeline again = creator.create("target-a", PipelineType.INSTALL);
+    void duplicateCreateForAnActiveTargetIsRejectedAsConflict() {
+        creator.create("target-a", PipelineType.INSTALL);
 
-        assertThat(again.getId()).isEqualTo(first.getId());
-        assertThat(pipelines.findAll()).hasSize(1);
+        assertThatThrownBy(() -> creator.create("target-a", PipelineType.INSTALL))
+                .isInstanceOf(PipelineAlreadyActiveException.class);
+        assertThat(pipelineRepository.findAll()).hasSize(1);
     }
 
     @Test
-    void aDifferentTypeCreateForAnActiveTargetReturnsTheExistingRun() {
-        Pipeline install = creator.create("target-b", PipelineType.INSTALL);
-        Pipeline delete = creator.create("target-b", PipelineType.DELETE);
+    void aDifferentTypeCreateForAnActiveTargetIsRejectedAsConflict() {
+        creator.create("target-b", PipelineType.INSTALL);
 
-        assertThat(delete.getId()).isEqualTo(install.getId());
-        assertThat(delete.getType()).isEqualTo(PipelineType.INSTALL);
+        assertThatThrownBy(() -> creator.create("target-b", PipelineType.DELETE))
+                .isInstanceOf(PipelineAlreadyActiveException.class);
+        assertThat(pipelineRepository.findAll()).hasSize(1);
     }
 
     @Test
@@ -71,13 +76,13 @@ class PipelineUniquenessTest {
         Pipeline second = creator.create("target-c", PipelineType.DELETE);
 
         assertThat(second.getId()).isNotEqualTo(first.getId());
-        assertThat(pipelines.findById(first.getId()).orElseThrow().getActiveTarget()).isNull();
+        assertThat(pipelineRepository.findById(first.getId()).orElseThrow().getActiveTarget()).isNull();
     }
 
     private void terminate(Pipeline pipeline) {
         pipeline.setStatus(PipelineStatus.DONE);
         pipeline.setActiveTarget(null);
-        pipelines.save(pipeline);
+        pipelineRepository.save(pipeline);
     }
 
     @TestConfiguration

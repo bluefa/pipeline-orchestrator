@@ -1,4 +1,4 @@
-package com.bff.pipeline.service;
+package com.bff.pipeline.service.lifecycle;
 
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
@@ -16,41 +16,41 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 새 실행 하나를 단일 트랜잭션 안에 삽입한다 — {@code active_target}이 설정된 파이프라인과
- * 태스크 체인을 함께 생성한다. 첫 번째 태스크는 READY 상태로 시작하고, 나머지는 BLOCKED 상태로
- * 시작하여 선행 태스크가 완료될 때마다 하나씩 언블로킹된다 (ADR-016 §2).
+ * 새 실행 하나를 단일 트랜잭션 안에서 삽입한다 — {@code active_target}이 설정된 파이프라인과 태스크 체인을 함께 만든다.
+ * 첫 태스크는 READY로 출발하고 나머지는 BLOCKED로 두었다가, 선행 태스크가 끝날 때마다 하나씩 언블로킹한다(ADR-016 §2).
  *
- * <p>파이프라인에 대해 {@code saveAndFlush}를 사용하면 {@code active_target} 유니크 제약 위반이
- * 지연된 커밋이 아닌 이 지점에서 즉시 표면화되므로, {@link PipelineCreator}가 이를 캐치하여
- * 복구할 수 있다.
+ * <p>파이프라인을 {@code saveAndFlush}로 저장하면 {@code active_target} 유니크 제약 위반이 커밋 시점으로 미뤄지지 않고
+ * 바로 이 지점에서 드러난다. 그래야 {@link PipelineCreator}가 이를 잡아 복구할 수 있다.
  */
 @Component
 public class PipelineInserter {
 
     private final Recipes recipes;
-    private final PipelineRepository pipelines;
-    private final TaskRepository tasks;
+    private final PipelineRepository pipelineRepository;
+    private final TaskRepository taskRepository;
     private final Clock clock;
 
-    public PipelineInserter(Recipes recipes, PipelineRepository pipelines, TaskRepository tasks, Clock clock) {
+    public PipelineInserter(Recipes recipes, PipelineRepository pipelineRepository, TaskRepository taskRepository, Clock clock) {
         this.recipes = recipes;
-        this.pipelines = pipelines;
-        this.tasks = tasks;
+        this.pipelineRepository = pipelineRepository;
+        this.taskRepository = taskRepository;
         this.clock = clock;
     }
 
     @Transactional
     public Pipeline insert(String target, PipelineType type) {
         Instant now = clock.instant();
-        Pipeline pipeline = pipelines.saveAndFlush(Pipeline.builder()
+        Pipeline pipeline = pipelineRepository.saveAndFlush(Pipeline.builder()
                 .type(type)
                 .target(target)
                 .status(PipelineStatus.RUNNING)
                 .activeTarget(target)
                 .createdAt(now)
                 .lastActivityAt(now)
+                .nextDueAt(now)            // ADR-021 Decision 4: 생성 즉시 claim되도록 시딩한다(비워 두면 영영 unclaimed로 남는다)
+                .cancelRequested(false)
                 .build());
-        tasks.saveAll(buildChain(pipeline.getId(), recipes.forType(type).steps(), now));
+        taskRepository.saveAll(buildChain(pipeline.getId(), recipes.forType(type).steps(), now));
         return pipeline;
     }
 

@@ -1,9 +1,9 @@
 package com.bff.pipeline.dto;
 
 /**
- * Terraform 잡 폴링 결과를 담는 전송 값 객체(transport value)로, 영속되지 않는다.
- * compact constructor는 불가능한 상태({@code !finished && succeeded})를 거부하여
- * 불변식을 강제한다: 완료되지 않은 폴은 성공 상태일 수 없다.
+ * Terraform 잡 폴링 결과를 실어 나르는 전송 값 객체(transport value)로, 영속되지 않는다.
+ * compact constructor가 불가능한 상태({@code !finished && succeeded})를 막아 불변식을 지킨다 —
+ * 아직 끝나지 않은 폴은 성공일 수 없다.
  */
 public record TerraformPoll(boolean finished, boolean succeeded) {
 

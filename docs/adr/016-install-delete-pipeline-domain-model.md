@@ -75,9 +75,15 @@ and re-dispatches (idempotent), costing a delay, not correctness (the three inva
 
 ### 4. One active pipeline per target
 
-A uniqueness rule allows only one non-terminal pipeline per target. A duplicate create — of any
-type — returns the existing active run rather than erroring; the trigger endpoint must honor
-this **contract**. It is the premise that lets ADR-021 reason about a single owner per pipeline.
+A uniqueness rule allows only one non-terminal pipeline per target, enforced by the `active_target`
+unique constraint. A duplicate create — of any type — is **rejected with 409 Conflict**
+(`ORCHESTRATION_PIPELINE_ALREADY_ACTIVE`) rather than returning or overwriting the existing run: the
+trigger is an operator action on the web admin page (a human "try" button), not an automated
+at-least-once redelivery source, so surfacing "already an active run" is clearer than silently
+returning it. The single-owner invariant ADR-021 relies on is guaranteed by the unique constraint
+itself, independent of this trigger contract — workers claim existing pipelines and never call create.
+(This is a dispatch-independent decision: the idempotency in §5 is about InfraManager *dispatch*, which
+is unchanged.)
 
 ### 5. Correctness rests on idempotency, not exactly-once
 
