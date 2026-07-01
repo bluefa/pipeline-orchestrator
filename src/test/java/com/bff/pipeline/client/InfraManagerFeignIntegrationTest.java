@@ -21,6 +21,7 @@ import com.github.tomakehurst.wiremock.WireMockServer;
 import feign.Feign;
 import feign.Request;
 import feign.codec.ErrorDecoder;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,8 +51,8 @@ class InfraManagerFeignIntegrationTest {
         wireMock.start();
         InfraManagerFeignClient client = feignClient(wireMock.baseUrl(), 500);
         InfraManagerOperationRegistry registry = new InfraManagerOperationRegistry(
-                java.util.List.of(new ApplyNetworkBinding(client), new DestroyNetworkBinding(client)),
-                java.util.List.of(new NetworkReadyBinding(client, objectMapper)));
+                List.of(new ApplyNetworkBinding(client), new DestroyNetworkBinding(client)),
+                List.of(new NetworkReadyBinding(client, objectMapper)));
         adapter = new InfraManagerFeignAdapter(client, registry, objectMapper);
     }
 

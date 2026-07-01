@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.client.condition.ConditionOperationBinding;
 import com.bff.pipeline.client.terraform.TerraformOperationBinding;
+import com.bff.pipeline.dto.ConditionPoll;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.TaskOperation;
 import java.util.List;
@@ -75,7 +76,7 @@ class InfraManagerOperationRegistryTest {
     private ConditionOperationBinding condition(TaskOperation operation) {
         return new ConditionOperationBinding() {
             @Override public TaskOperation operation() { return operation; }
-            @Override public com.bff.pipeline.dto.ConditionPoll check(String target) { return new com.bff.pipeline.dto.ConditionPoll(false, "{}"); }
+            @Override public ConditionPoll check(String target) { return new ConditionPoll(false, "{}"); }
         };
     }
 }

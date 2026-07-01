@@ -3,6 +3,7 @@ package com.bff.pipeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
+import com.bff.pipeline.client.FakeInfraManagerClient;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.exception.MissingPipelineIdException;
 import com.bff.pipeline.exception.PipelineNotFoundException;
@@ -133,8 +134,8 @@ class PipelineControlTest {
         }
 
         @Bean
-        com.bff.pipeline.client.FakeInfraManagerClient infraManager() {
-            return new com.bff.pipeline.client.FakeInfraManagerClient();
+        FakeInfraManagerClient infraManager() {
+            return new FakeInfraManagerClient();
         }
     }
 }
