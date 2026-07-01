@@ -33,12 +33,12 @@ concentrated at the one external boundary (`StepRunner`) and expressed everywher
 
 | | External-call failure | Business-rule failure |
 |---|---|---|
-| Examples | per-call timeout, HTTP 5xx/429, connection reset | job reported FAILED, condition time-to-live expired, execution timeout |
+| Examples | per-call timeout, HTTP 5xx/429, connection reset | job reported FAILED, condition never met within maxFailCount, execution timeout |
 | Representation | **exception** (`CallTimeoutException` / `CallFailedException` — the client's closed failure vocabulary) | **value** (`ErrorCode` on the task row) |
 | Thrown? | yes — by the `client` package | no — never thrown |
 | Where handled | caught once in `StepRunner.runExternalCall` (phase-A, wrapping execute/check), translated to a `StepOutcome` | written directly to the row by `TaskStateMachine.applyOutcome` (tx2) |
 | Lifetime | dies at the `StepRunner` (phase-A) boundary | durable; part of run history; drives retry-or-fail |
-| Retryable? | yes (re-run is a fresh, idempotent attempt) | `JOB_FAILED`/`EXECUTION_TIMEOUT` retry; `TIME_TO_LIVE_EXPIRED` does not |
+| Retryable? | yes (re-run is a fresh, idempotent attempt) | `JOB_FAILED`/`EXECUTION_TIMEOUT`/`CONDITION_NOT_MET` retry within `maxFailCount`, then fail |
 
 The translation is deliberately small and total. Every external exception maps to one canonical
 `ErrorCode`:
@@ -61,7 +61,7 @@ straight to the row:
 |---|---|
 | TERRAFORM poll reported the job FAILED | `JOB_FAILED` |
 | TERRAFORM job ran past its execution timeout | `EXECUTION_TIMEOUT` |
-| CONDITION never met within its time-to-live | `TIME_TO_LIVE_EXPIRED` |
+| CONDITION not met on a poll (a failed poll; fails at `maxFailCount`) | `CONDITION_NOT_MET` |
 
 ## Where each layer sits
 

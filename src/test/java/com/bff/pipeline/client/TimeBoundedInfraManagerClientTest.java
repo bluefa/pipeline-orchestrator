@@ -4,10 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.config.ExecutionSettings;
+import com.bff.pipeline.dto.ConditionPoll;
+import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.TaskOperation;
 import java.time.Duration;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Supplier;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -78,12 +81,12 @@ class TimeBoundedInfraManagerClientTest {
         assertThat(Thread.interrupted()).isTrue();   // restored (and cleared for the next test)
     }
 
-    private static InfraManagerClient delegate(java.util.function.Supplier<String> dispatch) {
+    private static InfraManagerClient delegate(Supplier<String> dispatch) {
         return new InfraManagerClient() {
             @Override public String runTerraform(String target, TaskOperation operation) { return dispatch.get(); }
             @Override public TerraformPoll terraformJobStatus(String jobId, TaskOperation operation) { return TerraformPoll.running(); }
-            @Override public boolean checkCondition(String target, TaskOperation operation) { return false; }
-            @Override public com.bff.pipeline.enums.CloudProvider cloudProvider(String target) { return com.bff.pipeline.enums.CloudProvider.AWS; }
+            @Override public ConditionPoll checkCondition(String target, TaskOperation operation) { return new ConditionPoll(false, "{}"); }
+            @Override public CloudProvider cloudProvider(String target) { return CloudProvider.AWS; }
         };
     }
 

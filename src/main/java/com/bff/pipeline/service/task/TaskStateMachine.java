@@ -28,6 +28,8 @@ import org.springframework.stereotype.Component;
  *                  Succeeded    → DONE
  *                  Failed       → retryOrFail / failOutright
  *                  CallFailure  → recordCheck(poll phase) + retryOrFail
+ *                  ConditionMet → recordResponse + recordCheck(MET) + DONE
+ *                  ConditionNotMet → recordResponse + recordCheck(NOT_MET) + retryOrFail(CONDITION_NOT_MET)
  *   any          → UnknownTask  → FAILED(UNKNOWN_TASK)
  * </pre>
  *
@@ -68,8 +70,24 @@ public class TaskStateMachine {
                 if (!callFailure.dispatch()) observationRecorder.recordCheck(task, callFailure.signal());
                 retryOrFail(task, callFailure.reason());
             }
+            case StepOutcome.ConditionMet met -> completeCondition(task, met.response());
+            case StepOutcome.ConditionNotMet notMet -> retryCondition(task, notMet.response());
             case StepOutcome.UnknownTask ignored -> failOutright(task, ErrorCode.UNKNOWN_TASK);
         }
+    }
+
+    /** CONDITION_CHECK 충족 폴: 그 폴의 payload와 MET 관찰을 남기고 task를 완료한다(ADR-016 §6). */
+    private void completeCondition(Task task, String response) {
+        observationRecorder.recordResponse(task, response);
+        observationRecorder.recordCheck(task, CheckSignal.MET);
+        complete(task);
+    }
+
+    /** CONDITION_CHECK 미충족 폴 = 실패한 폴: payload와 NOT_MET 관찰을 남기고 failCount 예산으로 재시도/실패시킨다. */
+    private void retryCondition(Task task, String response) {
+        observationRecorder.recordResponse(task, response);
+        observationRecorder.recordCheck(task, CheckSignal.NOT_MET);
+        retryOrFail(task, ErrorCode.CONDITION_NOT_MET);
     }
 
     private void applyFailure(Task task, ErrorCode reason, boolean retryable) {

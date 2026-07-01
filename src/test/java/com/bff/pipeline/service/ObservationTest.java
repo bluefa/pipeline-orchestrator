@@ -43,8 +43,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 관찰(observation) 전용 테이블의 쓰기 동작을 검증한다(ADR-021 워커가 구동). 시도마다 올바른 {@code attempt_no}를 가진
- * {@code task_attempt} 행이 하나씩 기록되고, {@code task_check}는 폴링마다 새 행을 추가하지 않고 attempt당 한 행을
- * 제자리 갱신함을 확인한다. {@link PipelineExecutionTest.Wiring}(fake InfraManager, MutableClock, settings)을 재사용한다.
+ * {@code task_attempt} 행이 하나씩 기록되고, {@code task_check}는 TERRAFORM_JOB 시도에서는 폴링마다 새 행을 추가하지
+ * 않고 attempt당 한 행을 제자리 갱신하며(call_count 증가), CONDITION_CHECK에서는 폴 하나가 곧 시도 하나라
+ * 폴마다 새 행이 하나씩 기록됨을 확인한다(ADR-016 §6). {@link PipelineExecutionTest.Wiring}(fake InfraManager,
+ * MutableClock, settings)을 재사용한다.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -114,21 +116,65 @@ class ObservationTest {
     }
 
     @Test
-    void aConditionPolledNotMetUpdatesOneCheckRowInPlace() {
-        Pipeline pipeline = createInstallAtConditionInProgress();
-        Long conditionTaskId = taskId(pipeline, 1);
-
+    void aTerraformPolledRunningUpdatesOneCheckRowInPlace() {
+        Pipeline pipeline = creator.create("obs-tf-running", PipelineType.DELETE);
+        infraManagerClient.onPoll(TerraformPoll::running);
+        pipelineWorker.pollOnce();                  // dispatch terraform → IN_PROGRESS (attempt 1)
         for (int i = 0; i < 3; i++) {
-            pipelineWorker.pollOnce();
-            clock.advance(Duration.ofMinutes(11));
+            pipelineWorker.pollOnce();              // poll terraform → RUNNING, updated in place
+            clock.advance(Duration.ofMinutes(11));  // < execution-timeout (PT50M), so still RUNNING
         }
 
-        TaskAttempt attempt = taskAttemptRepository.findByTaskIdAndAttemptNumber(conditionTaskId, 1).orElseThrow();
+        TaskAttempt attempt = taskAttemptRepository.findByTaskIdAndAttemptNumber(taskId(pipeline, 0), 1).orElseThrow();
         assertThat(taskCheckRepository.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
             assertThat(check.getCallCount()).isEqualTo(3);
-            assertThat(check.getNotMetCount()).isEqualTo(3);
+            assertThat(check.getLastExternalStatus()).isEqualTo("RUNNING");
         });
         assertThat(taskCheckRepository.findAll()).hasSize(1);
+    }
+
+    @Test
+    void aConditionNotMetRecordsOneCheckRowPerPollAcrossAttempts() {
+        Pipeline pipeline = createInstallAtConditionInProgress();   // onCheck stays not-met (reset default)
+        Long conditionTaskId = taskId(pipeline, 1);
+
+        runUntilTerminal(pipeline);
+
+        // maxFailCount = 2: two not-met polls, each its own attempt + its own check row.
+        var attempts = taskAttemptRepository.findByTaskIdOrderByAttemptNumberAsc(conditionTaskId);
+        assertThat(attempts).extracting(TaskAttempt::getAttemptNumber).containsExactly(1, 2);
+        assertThat(attempts).allSatisfy(attempt -> {
+            assertThat(attempt.getStatus()).isEqualTo(TaskStatus.FAILED);
+            assertThat(attempt.getErrorCode()).isEqualTo(ErrorCode.CONDITION_NOT_MET);
+            assertThat(attempt.getResponse()).isEqualTo("{\"met\":false}");   // raw check payload recorded
+            assertThat(taskCheckRepository.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
+                assertThat(check.getCallCount()).isEqualTo(1);
+                assertThat(check.getNotMetCount()).isEqualTo(1);
+                assertThat(check.getLastExternalStatus()).isEqualTo("NOT_MET");
+            });
+        });
+        // one row per condition poll (2); the terraform DONE attempt records none.
+        assertThat(taskCheckRepository.findAll()).hasSize(2);
+    }
+
+    @Test
+    void aConditionMetRecordsResponseAndOneMetCheckThenDone() {
+        Pipeline pipeline = createInstallAtConditionInProgress();   // condition IN_PROGRESS, attempt 1
+        Long conditionTaskId = taskId(pipeline, 1);
+        infraManagerClient.onCheck(() -> true);                     // the next poll observes MET
+
+        pipelineWorker.pollOnce();                                  // poll condition met → DONE
+
+        TaskAttempt attempt = taskAttemptRepository.findByTaskIdAndAttemptNumber(conditionTaskId, 1).orElseThrow();
+        assertThat(attempt.getStatus()).isEqualTo(TaskStatus.DONE);
+        assertThat(attempt.getErrorCode()).isNull();
+        assertThat(attempt.getResponse()).isEqualTo("{\"met\":true}");   // raw check payload recorded on the met poll
+        assertThat(taskCheckRepository.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
+            assertThat(check.getCallCount()).isEqualTo(1);
+            assertThat(check.getLastExternalStatus()).isEqualTo("MET");
+            assertThat(check.getNotMetCount()).isEqualTo(0);
+        });
+        assertThat(taskRepository.findById(conditionTaskId).orElseThrow().getFailCount()).isEqualTo(0);   // met never fails
     }
 
     private Pipeline createInstallAtConditionInProgress() {

@@ -131,8 +131,8 @@ class PipelineUniquenessTest {
         }
 
         @Bean
-        com.bff.pipeline.client.FakeInfraManagerClient infraManager() {
-            return new com.bff.pipeline.client.FakeInfraManagerClient();
+        FakeInfraManagerClient infraManager() {
+            return new FakeInfraManagerClient();
         }
     }
 }

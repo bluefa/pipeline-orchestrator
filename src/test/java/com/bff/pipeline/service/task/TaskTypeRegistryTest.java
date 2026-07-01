@@ -9,6 +9,8 @@ import com.bff.pipeline.enums.TaskDefinition;
 import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -43,7 +45,7 @@ class TaskTypeRegistryTest {
 
     @Test
     void rejectsTwoTypesClaimingTheSameName() {
-        List<TaskType> clashing = new java.util.ArrayList<>(everyMechanism());
+        List<TaskType> clashing = new ArrayList<>(everyMechanism());
         clashing.add(fake(TaskDefinition.APPLY_NETWORK_V1.mechanism()));
 
         assertThatThrownBy(() -> new TaskTypeRegistry(clashing))
@@ -52,7 +54,7 @@ class TaskTypeRegistryTest {
     }
 
     private static Set<String> mechanismsInCatalog() {
-        return java.util.Arrays.stream(TaskDefinition.values())
+        return Arrays.stream(TaskDefinition.values())
                 .map(TaskDefinition::mechanism)
                 .collect(Collectors.toUnmodifiableSet());
     }

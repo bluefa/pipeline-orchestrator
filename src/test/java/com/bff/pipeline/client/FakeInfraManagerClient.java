@@ -1,5 +1,6 @@
 package com.bff.pipeline.client;
 
+import com.bff.pipeline.dto.ConditionPoll;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
@@ -58,8 +59,9 @@ public final class FakeInfraManagerClient implements InfraManagerClient {
     }
 
     @Override
-    public boolean checkCondition(String target, TaskOperation operation) {
-        return check.run();
+    public ConditionPoll checkCondition(String target, TaskOperation operation) {
+        boolean met = check.run();
+        return new ConditionPoll(met, "{\"met\":" + met + "}");
     }
 
     @Override
