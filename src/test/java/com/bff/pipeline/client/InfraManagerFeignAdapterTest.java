@@ -55,6 +55,13 @@ class InfraManagerFeignAdapterTest {
     }
 
     @Test
+    void routesDestroyStatusToItsOwnApi() {
+        InfraManagerFeignAdapter adapter = adapter(stub().withDestroyStatus(new DestroyJobStatusResponse(true, false)));
+
+        assertThat(adapter.terraformJobStatus("job-1", TaskOperation.DESTROY_NETWORK)).isEqualTo(TerraformPoll.failure());
+    }
+
+    @Test
     void treatsAMissingStatusAsACallFailure() {
         InfraManagerFeignAdapter adapter = adapter(stub().withApplyStatus(null));
 
@@ -130,19 +137,21 @@ class InfraManagerFeignAdapterTest {
         private ApplyNetworkResponse apply;
         private DestroyNetworkResponse destroy;
         private ApplyJobStatusResponse applyStatus;
+        private DestroyJobStatusResponse destroyStatus;
         private NetworkReadyResponse ready;
         private CloudProviderResponse provider;
 
         StubFeignClient withApply(ApplyNetworkResponse value) { this.apply = value; return this; }
         StubFeignClient withDestroy(DestroyNetworkResponse value) { this.destroy = value; return this; }
         StubFeignClient withApplyStatus(ApplyJobStatusResponse value) { this.applyStatus = value; return this; }
+        StubFeignClient withDestroyStatus(DestroyJobStatusResponse value) { this.destroyStatus = value; return this; }
         StubFeignClient withReady(NetworkReadyResponse value) { this.ready = value; return this; }
         StubFeignClient withProvider(CloudProviderResponse value) { this.provider = value; return this; }
 
         @Override public ApplyNetworkResponse applyNetwork(String target) { return apply; }
         @Override public DestroyNetworkResponse destroyNetwork(String target) { return destroy; }
         @Override public ApplyJobStatusResponse applyJobStatus(String jobId) { return applyStatus; }
-        @Override public DestroyJobStatusResponse destroyJobStatus(String jobId) { return null; }
+        @Override public DestroyJobStatusResponse destroyJobStatus(String jobId) { return destroyStatus; }
         @Override public NetworkReadyResponse networkReady(String target) { return ready; }
         @Override public CloudProviderResponse cloudProvider(String target) { return provider; }
     }

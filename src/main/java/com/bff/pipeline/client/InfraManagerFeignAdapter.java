@@ -1,7 +1,9 @@
 package com.bff.pipeline.client;
 
 import com.bff.pipeline.dto.ApplyJobStatusResponse;
+import com.bff.pipeline.dto.ApplyNetworkResponse;
 import com.bff.pipeline.dto.DestroyJobStatusResponse;
+import com.bff.pipeline.dto.DestroyNetworkResponse;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
@@ -47,14 +49,23 @@ public class InfraManagerFeignAdapter implements InfraManagerClient {
     @Override
     public String runTerraform(String target, TaskOperation operation) {
         List<String> jobIds = switch (operation) {
-            case APPLY_NETWORK -> translating(() -> feign.applyNetwork(target)).jobIds();
-            case DESTROY_NETWORK -> translating(() -> feign.destroyNetwork(target)).jobIds();
+            case APPLY_NETWORK -> jobIds(translating(() -> feign.applyNetwork(target)), ApplyNetworkResponse::jobIds);
+            case DESTROY_NETWORK -> jobIds(translating(() -> feign.destroyNetwork(target)), DestroyNetworkResponse::jobIds);
             default -> throw new IllegalStateException("no terraform dispatch API mapped for operation " + operation);
         };
-        if (jobIds == null || jobIds.isEmpty()) {
+        if (jobIds.isEmpty()) {
             throw new CallFailedException("InfraManager returned no job ids for " + operation);
         }
         return serializeJobIds(jobIds);
+    }
+
+    /** operation별 dispatch 응답에서 job id 목록을 뽑는다. 응답 null·목록 null은 쓸 수 없는 외부 응답이므로 CallFailed. */
+    private <D> List<String> jobIds(D dispatch, Function<D, List<String>> extract) {
+        List<String> jobIds = dispatch == null ? null : extract.apply(dispatch);
+        if (jobIds == null) {
+            throw new CallFailedException("InfraManager returned no dispatch body");
+        }
+        return jobIds;
     }
 
     @Override
@@ -79,7 +90,10 @@ public class InfraManagerFeignAdapter implements InfraManagerClient {
     @Override
     public boolean checkCondition(String target, TaskOperation operation) {
         Boolean met = switch (operation) {
-            case NETWORK_READY -> translating(() -> feign.networkReady(target)).met();
+            case NETWORK_READY -> {
+                var response = translating(() -> feign.networkReady(target));
+                yield response == null ? null : response.met();
+            }
             default -> throw new IllegalStateException("no condition-check API mapped for operation " + operation);
         };
         if (met == null) {
