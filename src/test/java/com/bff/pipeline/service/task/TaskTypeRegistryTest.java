@@ -35,18 +35,18 @@ class TaskTypeRegistryTest {
     @Test
     void failsBootWhenACatalogMechanismHasNoRegisteredType() {
         List<TaskType> missingOne = everyMechanism().stream()
-                .filter(type -> !type.taskName().equals(TaskDefinition.APPLY_NETWORK_V1.mechanism()))
+                .filter(type -> !type.taskName().equals(TaskDefinition.AWS_SERVICE_APPLY_V1.mechanism()))
                 .collect(Collectors.toList());
 
         assertThatThrownBy(() -> new TaskTypeRegistry(missingOne))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining(TaskDefinition.APPLY_NETWORK_V1.mechanism());
+                .hasMessageContaining(TaskDefinition.AWS_SERVICE_APPLY_V1.mechanism());
     }
 
     @Test
     void rejectsTwoTypesClaimingTheSameName() {
         List<TaskType> clashing = new ArrayList<>(everyMechanism());
-        clashing.add(fake(TaskDefinition.APPLY_NETWORK_V1.mechanism()));
+        clashing.add(fake(TaskDefinition.AWS_SERVICE_APPLY_V1.mechanism()));
 
         assertThatThrownBy(() -> new TaskTypeRegistry(clashing))
                 .isInstanceOf(IllegalStateException.class)

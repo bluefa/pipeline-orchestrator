@@ -3,104 +3,183 @@ package com.bff.pipeline.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.bff.pipeline.dto.ApplyJobStatusResponse;
-import com.bff.pipeline.dto.ApplyNetworkResponse;
 import com.bff.pipeline.client.condition.NetworkReadyBinding;
-import com.bff.pipeline.client.terraform.ApplyNetworkBinding;
-import com.bff.pipeline.client.terraform.DestroyNetworkBinding;
+import com.bff.pipeline.client.terraform.IdcTerraformType;
+import com.bff.pipeline.client.terraform.TerraformBindingCatalog;
+import com.bff.pipeline.client.terraform.TerraformJobType;
 import com.bff.pipeline.dto.CloudProviderResponse;
-import com.bff.pipeline.dto.DestroyJobStatusResponse;
-import com.bff.pipeline.dto.DestroyNetworkResponse;
+import com.bff.pipeline.dto.DispatchedJob;
 import com.bff.pipeline.dto.NetworkReadyResponse;
+import com.bff.pipeline.dto.TerraformJobStatusResponse;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import com.bff.pipeline.exception.CallFailedException;
 
 /**
- * {@link InfraManagerFeignAdapter}의 operation별 응답 변환·계약 방어를 검증한다. 전송 예외(FeignException)의 실제
- * 발생은 WireMock 통합테스트가 관통 검증하고, 여기서는 손수 구현한 Feign stub으로 매핑 로직만 본다.
+ * 카탈로그 바인딩({@link TerraformBindingCatalog} 전 행 + registry)을 관통한 {@link InfraManagerFeignAdapter}의
+ * 응답 변환·라우팅·계약 방어를 검증한다. 전송 예외(FeignException)의 실제 발생은 WireMock 통합테스트가 관통
+ * 검증하고, 여기서는 손수 구현한 Feign stub으로 매핑 로직만 본다(이 repo는 Mockito 대신 fake 사용).
  */
 class InfraManagerFeignAdapterTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // ── dispatch: job id 정규화 ──
+
     @Test
     void reserializesDispatchJobIdsAsABareJsonArray() {
-        InfraManagerFeignAdapter adapter = adapter(stub().withApply(new ApplyNetworkResponse(List.of("job-1", "job-2"))));
+        StubFeignClient stub = stub().withDispatchList(jobs(11, 12));
 
-        assertThat(adapter.runTerraform("target-a", TaskOperation.APPLY_NETWORK))
-                .isEqualTo("[\"job-1\",\"job-2\"]");
+        assertThat(adapter(stub).runTerraform("target-a", TaskOperation.AWS_SERVICE_TF_APPLY))
+                .isEqualTo("[\"11\",\"12\"]");
+        assertThat(stub.lastCall).isEqualTo("awsServiceApply");
+    }
+
+    @Test
+    void promotesASingleDispatchResponseToAJobIdList() {
+        StubFeignClient stub = stub().withDispatchSingle(new DispatchedJob(7L));
+
+        assertThat(adapter(stub).runTerraform("target-a", TaskOperation.AWS_BDC_COMMON_TF_APPLY))
+                .isEqualTo("[\"7\"]");
     }
 
     @Test
     void treatsAnEmptyJobIdListAsACallFailure() {
-        InfraManagerFeignAdapter adapter = adapter(stub().withApply(new ApplyNetworkResponse(List.of())));
+        InfraManagerFeignAdapter adapter = adapter(stub().withDispatchList(List.of()));
 
-        assertThatThrownBy(() -> adapter.runTerraform("target-a", TaskOperation.APPLY_NETWORK))
+        assertThatThrownBy(() -> adapter.runTerraform("target-a", TaskOperation.AWS_SERVICE_TF_APPLY))
                 .isInstanceOf(CallFailedException.class);
     }
 
     @Test
-    void treatsBlankJobIdElementsAsACallFailure() {
-        // [""] 같은 malformed dispatch 응답이 성공으로 저장돼 poll에서 terminal 실패로 바뀌지 않도록 어댑터 경계에서 닫는다.
-        InfraManagerFeignAdapter adapter = adapter(stub().withApply(new ApplyNetworkResponse(List.of("job-1", "  "))));
+    void treatsAMissingSingleDispatchAsACallFailure() {
+        InfraManagerFeignAdapter adapter = adapter(stub());  // dispatchSingle = null
 
-        assertThatThrownBy(() -> adapter.runTerraform("target-a", TaskOperation.APPLY_NETWORK))
+        assertThatThrownBy(() -> adapter.runTerraform("target-a", TaskOperation.AWS_BDC_SERVICE_LEVEL_TF_APPLY))
                 .isInstanceOf(CallFailedException.class);
     }
 
     @Test
-    void routesDestroyToItsOwnApi() {
-        InfraManagerFeignAdapter adapter = adapter(stub().withDestroy(new DestroyNetworkResponse(List.of("job-x"))));
+    void treatsANullJobIdElementAsACallFailure() {
+        // {"id":null} 같은 malformed dispatch 응답이 성공으로 저장돼 poll에서 terminal 실패로 바뀌지 않도록 경계에서 닫는다.
+        InfraManagerFeignAdapter adapter = adapter(stub()
+                .withDispatchList(List.of(new DispatchedJob(1L), new DispatchedJob(null))));
 
-        assertThat(adapter.runTerraform("target-a", TaskOperation.DESTROY_NETWORK)).isEqualTo("[\"job-x\"]");
+        assertThatThrownBy(() -> adapter.runTerraform("target-a", TaskOperation.AWS_SERVICE_TF_APPLY))
+                .isInstanceOf(CallFailedException.class);
+    }
+
+    // ── 라우팅: operation-결정 상수는 Feign default 메서드에 닫혀 있어야 한다 ──
+
+    @Test
+    void routesEachOperationToItsOwnApi() {
+        StubFeignClient stub = stub().withDispatchList(jobs(1));
+
+        adapter(stub).runTerraform("target-a", TaskOperation.AWS_SERVICE_TF_DESTROY);
+        assertThat(stub.lastCall).isEqualTo("awsServiceDestroy");
+
+        adapter(stub).runTerraform("target-a", TaskOperation.AZURE_BDC_TF_APPLY);
+        assertThat(stub.lastCall).isEqualTo("azureBdcApply");
     }
 
     @Test
-    void mapsStatusResponseToTerraformPoll() {
-        InfraManagerFeignAdapter adapter = adapter(stub().withApplyStatus(new ApplyJobStatusResponse(true, true)));
+    void passesTheJobTypeConstantOnSharedEndpoints() {
+        StubFeignClient stub = stub().withStatus(status("DESTROYED", null));
 
-        assertThat(adapter.terraformJobStatus("job-1", TaskOperation.APPLY_NETWORK)).isEqualTo(TerraformPoll.success());
+        adapter(stub).terraformJobStatus("job-9", TaskOperation.GCP_BDC_TF_DESTROY);
+        assertThat(stub.lastCall).isEqualTo("gcpBdcJobStatus:DESTROY");
     }
 
     @Test
-    void routesDestroyStatusToItsOwnApi() {
-        InfraManagerFeignAdapter adapter = adapter(stub().withDestroyStatus(new DestroyJobStatusResponse(true, false)));
+    void passesBothIdcConstantsOnDispatch() {
+        StubFeignClient stub = stub().withDispatchSingle(new DispatchedJob(3L));
 
-        assertThat(adapter.terraformJobStatus("job-1", TaskOperation.DESTROY_NETWORK)).isEqualTo(TerraformPoll.failure());
+        adapter(stub).runTerraform("target-a", TaskOperation.IDC_BDP_TF_APPLY);
+        assertThat(stub.lastCall).isEqualTo("idcDispatch:APPLY:BDP");
+    }
+
+    // ── status → TerraformPoll 정규화 (terraformState 매핑, owner 확정 표) ──
+
+    @Test
+    void mapsCompletedToASuccessfulPollForPlanAndApply() {
+        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("COMPLETED", "gs://r/1")));
+
+        assertThat(adapter.terraformJobStatus("job-1", TaskOperation.AWS_SERVICE_TF_APPLY))
+                .isEqualTo(TerraformPoll.success("gs://r/1"));
     }
 
     @Test
-    void treatsAMissingStatusAsACallFailure() {
-        InfraManagerFeignAdapter adapter = adapter(stub().withApplyStatus(null));
+    void mapsDestroyedToASuccessfulPollForDestroy() {
+        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("DESTROYED", null)));
 
-        assertThatThrownBy(() -> adapter.terraformJobStatus("job-1", TaskOperation.APPLY_NETWORK))
+        assertThat(adapter.terraformJobStatus("job-1", TaskOperation.AWS_SERVICE_TF_DESTROY))
+                .isEqualTo(TerraformPoll.success());
+    }
+
+    @Test
+    void mapsFailedToAFailedPoll() {
+        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("FAILED", "gs://r/f")));
+
+        assertThat(adapter.terraformJobStatus("job-1", TaskOperation.AWS_SERVICE_TF_APPLY))
+                .isEqualTo(TerraformPoll.failure("gs://r/f"));
+    }
+
+    @Test
+    void treatsUnknownStatesAsStillRunning() {
+        // TerraformState 전체 목록 미확정(owner) — terminal 세 값 외에는 전부 진행 중. executionTimeout이 상한.
+        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("PLANNING", null)));
+
+        assertThat(adapter.terraformJobStatus("job-1", TaskOperation.AWS_SERVICE_TF_APPLY))
+                .isEqualTo(TerraformPoll.running());
+    }
+
+    @Test
+    void treatsTheWrongTerminalStateAsStillRunning() {
+        // apply job이 DESTROYED를 보고하는 불가능 조합 — 성공으로 오인하지 않고 진행 중으로 두면 timeout이 회수한다.
+        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("DESTROYED", null)));
+
+        assertThat(adapter.terraformJobStatus("job-1", TaskOperation.AWS_SERVICE_TF_APPLY))
+                .isEqualTo(TerraformPoll.running());
+    }
+
+    @Test
+    void treatsAMissingOrBlankStateAsACallFailure() {
+        InfraManagerFeignAdapter missing = adapter(stub());  // status = null
+        InfraManagerFeignAdapter blank = adapter(stub().withStatus(status("  ", null)));
+
+        assertThatThrownBy(() -> missing.terraformJobStatus("job-1", TaskOperation.AWS_SERVICE_TF_APPLY))
+                .isInstanceOf(CallFailedException.class)
+                .hasMessageContaining("job-1");
+        assertThatThrownBy(() -> blank.terraformJobStatus("job-1", TaskOperation.AWS_SERVICE_TF_APPLY))
+                .isInstanceOf(CallFailedException.class);
+    }
+
+    // ── result (postCheck 관찰 창구) ──
+
+    @Test
+    void returnsTheResultBody() {
+        StubFeignClient stub = stub().withResult("Plan: 3 to add, 0 to destroy.");
+
+        assertThat(adapter(stub).terraformJobResult("job-1", TaskOperation.AWS_SERVICE_TF_PLAN))
+                .isEqualTo("Plan: 3 to add, 0 to destroy.");
+        assertThat(stub.lastCall).isEqualTo("awsServicePlanJobResult");
+    }
+
+    @Test
+    void treatsAMissingResultAsACallFailure() {
+        InfraManagerFeignAdapter adapter = adapter(stub());  // result = null
+
+        assertThatThrownBy(() -> adapter.terraformJobResult("job-1", TaskOperation.AWS_SERVICE_TF_PLAN))
                 .isInstanceOf(CallFailedException.class)
                 .hasMessageContaining("job-1");
     }
 
-    @Test
-    void treatsAnImpossiblePollStateAsACallFailure() {
-        // {finished:false, succeeded:true}는 TerraformPoll 불변식 위반 → 우리 버그가 아니라 쓸 수 없는 외부 응답.
-        InfraManagerFeignAdapter adapter = adapter(stub().withApplyStatus(new ApplyJobStatusResponse(false, true)));
-
-        assertThatThrownBy(() -> adapter.terraformJobStatus("job-9", TaskOperation.APPLY_NETWORK))
-                .isInstanceOf(CallFailedException.class)
-                .hasMessageContaining("job-9");
-    }
-
-    @Test
-    void treatsAnIncompleteStatusAsACallFailure() {
-        // 누락 필드 응답(예: {})은 Boolean이 null로 디코딩됨 → 조용히 false로 처리하지 않고 CallFailed.
-        InfraManagerFeignAdapter adapter = adapter(stub().withApplyStatus(new ApplyJobStatusResponse(null, true)));
-
-        assertThatThrownBy(() -> adapter.terraformJobStatus("job-1", TaskOperation.APPLY_NETWORK))
-                .isInstanceOf(CallFailedException.class);
-    }
+    // ── condition / cloud provider ──
 
     @Test
     void treatsAMissingConditionFieldAsACallFailure() {
@@ -139,7 +218,7 @@ class InfraManagerFeignAdapterTest {
 
     private InfraManagerFeignAdapter adapter(StubFeignClient stub) {
         InfraManagerOperationRegistry registry = new InfraManagerOperationRegistry(
-                List.of(new ApplyNetworkBinding(stub), new DestroyNetworkBinding(stub)),
+                TerraformBindingCatalog.rows(stub),
                 List.of(new NetworkReadyBinding(stub, objectMapper)));
         return new InfraManagerFeignAdapter(stub, registry, objectMapper);
     }
@@ -148,26 +227,86 @@ class InfraManagerFeignAdapterTest {
         return new StubFeignClient();
     }
 
-    /** operation별 반환값을 스크립트하는 수동 Feign stub(이 repo는 Mockito 대신 fake 사용). */
+    private static List<DispatchedJob> jobs(long... ids) {
+        return Arrays.stream(ids).mapToObj(DispatchedJob::new).toList();
+    }
+
+    private static TerraformJobStatusResponse status(String state, String resultPath) {
+        return new TerraformJobStatusResponse(state, null, resultPath);
+    }
+
+    /**
+     * 응답을 스크립트하는 수동 Feign stub — 모든 raw 엔드포인트가 종류별 공통 필드를 돌려주고, 마지막 호출과
+     * 전달된 상수를 {@code lastCall}에 남겨 라우팅을 검증한다. default 메서드는 인터페이스 것을 그대로 쓴다
+     * (그게 검증 대상이다 — 상수가 default 메서드에 닫혀 있는가).
+     */
     private static final class StubFeignClient implements InfraManagerFeignClient {
-        private ApplyNetworkResponse apply;
-        private DestroyNetworkResponse destroy;
-        private ApplyJobStatusResponse applyStatus;
-        private DestroyJobStatusResponse destroyStatus;
+        private List<DispatchedJob> dispatchList;
+        private DispatchedJob dispatchSingle;
+        private TerraformJobStatusResponse status;
+        private String result;
         private NetworkReadyResponse ready;
         private CloudProviderResponse provider;
+        private String lastCall;
 
-        StubFeignClient withApply(ApplyNetworkResponse value) { this.apply = value; return this; }
-        StubFeignClient withDestroy(DestroyNetworkResponse value) { this.destroy = value; return this; }
-        StubFeignClient withApplyStatus(ApplyJobStatusResponse value) { this.applyStatus = value; return this; }
-        StubFeignClient withDestroyStatus(DestroyJobStatusResponse value) { this.destroyStatus = value; return this; }
+        StubFeignClient withDispatchList(List<DispatchedJob> value) { this.dispatchList = value; return this; }
+        StubFeignClient withDispatchSingle(DispatchedJob value) { this.dispatchSingle = value; return this; }
+        StubFeignClient withStatus(TerraformJobStatusResponse value) { this.status = value; return this; }
+        StubFeignClient withResult(String value) { this.result = value; return this; }
         StubFeignClient withReady(NetworkReadyResponse value) { this.ready = value; return this; }
         StubFeignClient withProvider(CloudProviderResponse value) { this.provider = value; return this; }
 
-        @Override public ApplyNetworkResponse applyNetwork(String target) { return apply; }
-        @Override public DestroyNetworkResponse destroyNetwork(String target) { return destroy; }
-        @Override public ApplyJobStatusResponse applyJobStatus(String jobId) { return applyStatus; }
-        @Override public DestroyJobStatusResponse destroyJobStatus(String jobId) { return destroyStatus; }
+        private List<DispatchedJob> list(String call) { lastCall = call; return dispatchList; }
+        private DispatchedJob single(String call) { lastCall = call; return dispatchSingle; }
+        private TerraformJobStatusResponse status(String call) { lastCall = call; return status; }
+        private String result(String call) { lastCall = call; return result; }
+
+        @Override public List<DispatchedJob> awsServicePlan(String t) { return list("awsServicePlan"); }
+        @Override public List<DispatchedJob> awsServiceApply(String t) { return list("awsServiceApply"); }
+        @Override public List<DispatchedJob> awsServiceDestroy(String t) { return list("awsServiceDestroy"); }
+        @Override public TerraformJobStatusResponse awsServicePlanJobStatus(String j) { return status("awsServicePlanJobStatus"); }
+        @Override public TerraformJobStatusResponse awsServiceApplyJobStatus(String j) { return status("awsServiceApplyJobStatus"); }
+        @Override public TerraformJobStatusResponse awsServiceDestroyJobStatus(String j) { return status("awsServiceDestroyJobStatus"); }
+        @Override public String awsServicePlanJobResult(String j) { return result("awsServicePlanJobResult"); }
+        @Override public String awsServiceApplyJobResult(String j) { return result("awsServiceApplyJobResult"); }
+        @Override public String awsServiceDestroyJobResult(String j) { return result("awsServiceDestroyJobResult"); }
+
+        @Override public DispatchedJob awsBdcCommonPlan(String t) { return single("awsBdcCommonPlan"); }
+        @Override public DispatchedJob awsBdcCommonApply(String t) { return single("awsBdcCommonApply"); }
+        @Override public DispatchedJob awsBdcCommonDestroy(String t) { return single("awsBdcCommonDestroy"); }
+        @Override public TerraformJobStatusResponse awsBdcCommonJobStatus(String j, TerraformJobType type) { return status("awsBdcCommonJobStatus:" + type); }
+        @Override public String awsBdcCommonJobResult(String j, TerraformJobType type) { return result("awsBdcCommonJobResult:" + type); }
+
+        @Override public DispatchedJob awsBdcServiceLevelPlan(String t) { return single("awsBdcServiceLevelPlan"); }
+        @Override public DispatchedJob awsBdcServiceLevelApply(String t) { return single("awsBdcServiceLevelApply"); }
+        @Override public DispatchedJob awsBdcServiceLevelDestroy(String t) { return single("awsBdcServiceLevelDestroy"); }
+        @Override public TerraformJobStatusResponse awsBdcServiceLevelPlanJobStatus(String j) { return status("awsBdcServiceLevelPlanJobStatus"); }
+        @Override public String awsBdcServiceLevelPlanJobResult(String j) { return result("awsBdcServiceLevelPlanJobResult"); }
+        @Override public TerraformJobStatusResponse awsBdcServiceLevelActionJobStatus(String j, TerraformJobType type) { return status("awsBdcServiceLevelActionJobStatus:" + type); }
+        @Override public String awsBdcServiceLevelActionJobResult(String j, TerraformJobType type) { return result("awsBdcServiceLevelActionJobResult:" + type); }
+
+        @Override public List<DispatchedJob> gcpServiceDispatch(String t, TerraformJobType type) { return list("gcpServiceDispatch:" + type); }
+        @Override public TerraformJobStatusResponse gcpServiceJobStatus(String j, TerraformJobType type) { return status("gcpServiceJobStatus:" + type); }
+        @Override public String gcpServiceJobResult(String j, TerraformJobType type) { return result("gcpServiceJobResult:" + type); }
+
+        @Override public List<DispatchedJob> gcpBdcDispatch(String t, TerraformJobType type) { return list("gcpBdcDispatch:" + type); }
+        @Override public TerraformJobStatusResponse gcpBdcJobStatus(String j, TerraformJobType type) { return status("gcpBdcJobStatus:" + type); }
+        @Override public String gcpBdcJobResult(String j, TerraformJobType type) { return result("gcpBdcJobResult:" + type); }
+
+        @Override public List<DispatchedJob> azureBdcPlan(String t) { return list("azureBdcPlan"); }
+        @Override public List<DispatchedJob> azureBdcApply(String t) { return list("azureBdcApply"); }
+        @Override public List<DispatchedJob> azureBdcDestroy(String t) { return list("azureBdcDestroy"); }
+        @Override public TerraformJobStatusResponse azureBdcPlanJobStatus(String j) { return status("azureBdcPlanJobStatus"); }
+        @Override public TerraformJobStatusResponse azureBdcApplyJobStatus(String j) { return status("azureBdcApplyJobStatus"); }
+        @Override public TerraformJobStatusResponse azureBdcDestroyJobStatus(String j) { return status("azureBdcDestroyJobStatus"); }
+        @Override public String azureBdcPlanJobResult(String j) { return result("azureBdcPlanJobResult"); }
+        @Override public String azureBdcApplyJobResult(String j) { return result("azureBdcApplyJobResult"); }
+        @Override public String azureBdcDestroyJobResult(String j) { return result("azureBdcDestroyJobResult"); }
+
+        @Override public DispatchedJob idcDispatch(String t, TerraformJobType type, IdcTerraformType idcType) { return single("idcDispatch:" + type + ":" + idcType); }
+        @Override public TerraformJobStatusResponse idcJobStatus(String j, TerraformJobType type) { return status("idcJobStatus:" + type); }
+        @Override public String idcJobResult(String j, TerraformJobType type) { return result("idcJobResult:" + type); }
+
         @Override public NetworkReadyResponse networkReady(String target) { return ready; }
         @Override public CloudProviderResponse cloudProvider(String target) { return provider; }
     }

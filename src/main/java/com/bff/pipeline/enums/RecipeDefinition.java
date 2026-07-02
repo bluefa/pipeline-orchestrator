@@ -10,18 +10,20 @@ import java.util.Optional;
  * 버전 불변 규약: TaskDefinition과 동일하게 이름에 버전(_V1)을 박아 의미를 불변으로 둔다. Pipeline 행은 이 상수
  * 이름(String)을 저장한다.
  *
- * 데모: 지금은 AWS install/delete 두 항목만 placeholder로 둔다. GCP/AZURE/IDC와 provider별로 다른 step 목록은
- * 실제 도메인 데이터가 정해지면 항목으로 추가한다(각 provider의 step 수·사용 task가 다르다).
+ * 지금은 AWS install/delete 두 항목만 둔다 — AWS 서비스 terraform 실행 단위(plan → apply) 기준이며, plan step은
+ * 변경 내용 산출을 recipe에 포함한다는 owner 결정(설계 §5)을 반영한다. GCP/AZURE/IDC와 BDC 단위까지 잇는 step
+ * 목록은 provider별 실행 flow가 확정되면 항목으로 추가한다(client 카탈로그는 전 operation을 이미 바인딩한다).
  */
 public enum RecipeDefinition {
 
     AWS_NETWORK_INSTALL_V1(CloudProvider.AWS, PipelineType.INSTALL,
-            "AWS 네트워크 설치", "AWS 네트워크를 생성하고 준비 완료를 기다린다.",
-            List.of(TaskDefinition.APPLY_NETWORK_V1, TaskDefinition.NETWORK_READY_V1)),
+            "AWS 네트워크 설치", "AWS 네트워크 변경을 계획·적용하고 준비 완료를 기다린다.",
+            List.of(TaskDefinition.AWS_SERVICE_PLAN_V1, TaskDefinition.AWS_SERVICE_APPLY_V1,
+                    TaskDefinition.NETWORK_READY_V1)),
 
     AWS_NETWORK_DELETE_V1(CloudProvider.AWS, PipelineType.DELETE,
             "AWS 네트워크 삭제", "AWS 네트워크를 철거한다.",
-            List.of(TaskDefinition.DESTROY_NETWORK_V1));
+            List.of(TaskDefinition.AWS_SERVICE_DESTROY_V1));
 
     private final CloudProvider provider;
     private final PipelineType pipelineType;

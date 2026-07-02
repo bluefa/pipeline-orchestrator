@@ -8,20 +8,51 @@ package com.bff.pipeline.enums;
  * operation 자체는 데이터다 — 실제 dispatch/poll 동작은 TaskType 구현(TerraformTask/ConditionCheckTask)에 있고,
  * operation은 (a) 어느 mechanism으로 갈지 라우팅하고 (b) InfraManager 호출 때 구체 액션 값으로 전달된다.
  *
+ * TERRAFORM_JOB operation은 확정된 InfraManager Terraform API 명세의 "실행 단위 × job 타입" 격자를 그대로 반영한다
+ * (docs/terraform-client-and-postcheck-design.md §1): 실행 단위 8개(AWS 서비스/BDC common/BDC service-level,
+ * GCP 서비스/BDC, Azure BDC, IDC CX/BDP) × PLAN/APPLY/DESTROY = 24. 각 operation의 실제 API 바인딩은
+ * TerraformBindingCatalog의 행 하나이고, 행 누락은 InfraManagerOperationRegistry가 부팅에서 잡는다.
+ *
  * mechanism은 String이라 TaskType의 열린 집합을 유지한다(새 TaskType은 이름으로 자기등록, 중앙 enum 수정 없음).
  * 값은 각 TaskType.NAME과 일치해야 하며, 부팅 시 TaskTypeRegistry가 모든 operation의 mechanism이 등록된 TaskType을
  * 가리키는지 검증한다. slot 소비 여부는 mechanism의 속성이라 여기서 mechanism으로 판별한다(slot의 단일 authority).
  */
 public enum TaskOperation {
 
-    // ── TERRAFORM_JOB mechanism ──
-    /** 네트워크 인프라를 구성(apply)하는 액션. */
-    APPLY_NETWORK(Mechanism.TERRAFORM_JOB),
-    /** 네트워크 인프라를 철거(destroy)하는 액션. */
-    DESTROY_NETWORK(Mechanism.TERRAFORM_JOB),
+    // ── TERRAFORM_JOB mechanism — AWS ──
+    AWS_SERVICE_TF_PLAN(Mechanism.TERRAFORM_JOB),
+    AWS_SERVICE_TF_APPLY(Mechanism.TERRAFORM_JOB),
+    AWS_SERVICE_TF_DESTROY(Mechanism.TERRAFORM_JOB),
+    AWS_BDC_COMMON_TF_PLAN(Mechanism.TERRAFORM_JOB),
+    AWS_BDC_COMMON_TF_APPLY(Mechanism.TERRAFORM_JOB),
+    AWS_BDC_COMMON_TF_DESTROY(Mechanism.TERRAFORM_JOB),
+    AWS_BDC_SERVICE_LEVEL_TF_PLAN(Mechanism.TERRAFORM_JOB),
+    AWS_BDC_SERVICE_LEVEL_TF_APPLY(Mechanism.TERRAFORM_JOB),
+    AWS_BDC_SERVICE_LEVEL_TF_DESTROY(Mechanism.TERRAFORM_JOB),
+
+    // ── TERRAFORM_JOB mechanism — GCP (서비스 Apply → BDC Apply, BDC Destroy → 서비스 Destroy 순서는 서버가 강제) ──
+    GCP_SERVICE_TF_PLAN(Mechanism.TERRAFORM_JOB),
+    GCP_SERVICE_TF_APPLY(Mechanism.TERRAFORM_JOB),
+    GCP_SERVICE_TF_DESTROY(Mechanism.TERRAFORM_JOB),
+    GCP_BDC_TF_PLAN(Mechanism.TERRAFORM_JOB),
+    GCP_BDC_TF_APPLY(Mechanism.TERRAFORM_JOB),
+    GCP_BDC_TF_DESTROY(Mechanism.TERRAFORM_JOB),
+
+    // ── TERRAFORM_JOB mechanism — Azure ──
+    AZURE_BDC_TF_PLAN(Mechanism.TERRAFORM_JOB),
+    AZURE_BDC_TF_APPLY(Mechanism.TERRAFORM_JOB),
+    AZURE_BDC_TF_DESTROY(Mechanism.TERRAFORM_JOB),
+
+    // ── TERRAFORM_JOB mechanism — IDC (CX → BDP 순서는 서버가 강제, BDP DESTROY는 pod 삭제 동반) ──
+    IDC_CX_TF_PLAN(Mechanism.TERRAFORM_JOB),
+    IDC_CX_TF_APPLY(Mechanism.TERRAFORM_JOB),
+    IDC_CX_TF_DESTROY(Mechanism.TERRAFORM_JOB),
+    IDC_BDP_TF_PLAN(Mechanism.TERRAFORM_JOB),
+    IDC_BDP_TF_APPLY(Mechanism.TERRAFORM_JOB),
+    IDC_BDP_TF_DESTROY(Mechanism.TERRAFORM_JOB),
 
     // ── CONDITION_CHECK mechanism ──
-    /** 네트워크가 준비됐는지 확인(condition check)하는 액션. */
+    /** 네트워크가 준비됐는지 확인(condition check)하는 액션. (실제 API 미확정 — 가정 엔드포인트) */
     NETWORK_READY(Mechanism.CONDITION_CHECK);
 
     /** mechanism 이름 리터럴 — 값은 각 TaskType.NAME과 일치해야 하며 부팅 시 검증된다. */

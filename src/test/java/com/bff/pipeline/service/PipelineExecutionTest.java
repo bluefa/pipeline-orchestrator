@@ -2,6 +2,7 @@ package com.bff.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.config.PipelineSettings;
@@ -17,6 +18,8 @@ import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
+import com.bff.pipeline.repository.TerraformResultRepository;
+import com.bff.pipeline.entity.TerraformResult;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.service.execution.PipelineClaimer;
 import com.bff.pipeline.service.execution.PipelineWorker;
@@ -31,6 +34,7 @@ import com.bff.pipeline.service.task.ObservationRecorder;
 import com.bff.pipeline.service.task.TaskCanceller;
 import com.bff.pipeline.service.task.TaskStateMachine;
 import com.bff.pipeline.service.task.TaskTypeRegistry;
+import com.bff.pipeline.service.task.terraform.TerraformResultRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
 import java.time.Duration;
 import java.time.Instant;
@@ -58,7 +62,7 @@ import com.bff.pipeline.exception.CallFailedException;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
-        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, ConditionCheckTask.class,
+        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, ConditionCheckTask.class,
         ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class, PipelineInserter.class,
         PipelineControl.class, RecipeCatalog.class, PipelineExecutionTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -74,6 +78,7 @@ class PipelineExecutionTest {
     @Autowired private TaskRepository taskRepository;
     @Autowired private PipelineRepository pipelineRepository;
     @Autowired private TaskAttemptRepository taskAttemptRepository;
+    @Autowired private TerraformResultRepository terraformResultRepository;
     @Autowired private MutableClock clock;
     @Autowired private FakeInfraManagerClient infraManagerClient;
 
@@ -83,10 +88,12 @@ class PipelineExecutionTest {
         infraManagerClient.onDispatch(() -> "[\"job-1\"]");
         infraManagerClient.onPoll(TerraformPoll::running);
         infraManagerClient.onCheck(() -> false);
+        infraManagerClient.onResult(() -> "terraform: ok");
     }
 
     @AfterEach
     void clean() {
+        terraformResultRepository.deleteAll();
         taskAttemptRepository.deleteAll();
         taskRepository.deleteAll();
         pipelineRepository.deleteAll();
@@ -109,20 +116,93 @@ class PipelineExecutionTest {
     }
 
     @Test
+    void recordsATerraformResultRowPerJobOnTheConcludingTurn() {
+        Pipeline pipeline = creator.create("e-postcheck", PipelineType.DELETE);
+        infraManagerClient.onPoll(() -> TerraformPoll.success("gs://results/1"));
+        infraManagerClient.onResult(() -> "Destroy complete! Resources: 3 destroyed.");
+
+        pipelineWorker.pollOnce();   // dispatch
+        pipelineWorker.pollOnce();   // poll success → DONE + postCheck 관찰 기록(확장 A)
+
+        assertThat(terraformResultRepository.findAll()).singleElement().satisfies(row -> {
+            assertThat(row.getTaskId()).isEqualTo(task(pipeline, 0).getId());
+            assertThat(row.getAttemptNumber()).isEqualTo(1);
+            assertThat(row.getJobId()).isEqualTo("job-1");
+            assertThat(row.isSucceeded()).isTrue();
+            assertThat(row.getResultPath()).isEqualTo("gs://results/1");
+            assertThat(row.getResult()).isEqualTo("Destroy complete! Resources: 3 destroyed.");
+            assertThat(row.isTruncated()).isFalse();
+        });
+    }
+
+    @Test
+    void aFailedJobWaitsForItsSiblingsBeforeConcludingJobFailed() {
+        // 집계 정책(전원 terminal 대기): FAILED job을 봤어도 형제 job이 인프라에서 손을 뗄 때까지 판정을 미룬다.
+        Pipeline pipeline = creator.create("e-wait", PipelineType.DELETE);
+        infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
+        java.util.Map<String, TerraformPoll> polls = new java.util.HashMap<>();
+        polls.put("job-1", TerraformPoll.failure());
+        polls.put("job-2", TerraformPoll.running());
+        infraManagerClient.onPollByJob(polls::get);
+
+        pipelineWorker.pollOnce();   // dispatch (attempt 1)
+        pipelineWorker.pollOnce();   // poll: job-1 FAILED, job-2 running → 아직 판정하지 않는다
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
+        assertThat(task(pipeline, 0).getFailCount()).isZero();
+        assertThat(terraformResultRepository.findAll()).isEmpty();   // 종결 turn 전에는 기록도 없다
+
+        polls.put("job-2", TerraformPoll.success());
+        clock.advance(Duration.ofMinutes(11));   // polling_interval(PT10M) 경과 후 다음 폴 — executionTimeout(PT50M) 이내
+        pipelineWorker.pollOnce();   // 전원 terminal → JOB_FAILED(재시도 가능) + 두 job 모두 관찰 기록
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
+        assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
+        assertThat(attemptNo(pipeline, 0, 1).getErrorCode()).isEqualTo(ErrorCode.JOB_FAILED);
+        assertThat(terraformResultRepository.findAll())
+                .extracting(TerraformResult::getJobId, TerraformResult::isSucceeded)
+                .containsExactlyInAnyOrder(tuple("job-1", false), tuple("job-2", true));
+    }
+
+    @Test
+    void aDeadlineWithAFailedJobConcludesJobFailedAndRecordsOnlyFinishedJobs() {
+        Pipeline pipeline = creator.create("e-deadline", PipelineType.DELETE);
+        infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
+        java.util.Map<String, TerraformPoll> polls = new java.util.HashMap<>();
+        polls.put("job-1", TerraformPoll.failure());
+        polls.put("job-2", TerraformPoll.running());   // 데드라인까지 안 끝난다
+        infraManagerClient.onPollByJob(polls::get);
+
+        pipelineWorker.pollOnce();   // dispatch (attempt 1)
+        clock.advance(Duration.ofHours(1));   // executionTimeout(PT50M) 초과
+        pipelineWorker.pollOnce();   // 미종결 잔존 + FAILED 관측 → 원인이 정확한 JOB_FAILED로 종결
+
+        assertThat(attemptNo(pipeline, 0, 1).getErrorCode()).isEqualTo(ErrorCode.JOB_FAILED);
+        // finished였던 job만 행을 얻는다 — 미종결 job-2의 부재는 attempt errorCode가 설명한다(설계 §4.4).
+        assertThat(terraformResultRepository.findAll())
+                .extracting(TerraformResult::getJobId)
+                .containsExactly("job-1");
+    }
+
+    @Test
     void installPromotesTheSuccessorInTheSameReportAndFinishes() {
         Pipeline pipeline = creator.create("e-install", PipelineType.INSTALL);
         infraManagerClient.onPoll(TerraformPoll::success);
         infraManagerClient.onCheck(() -> true);
         assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.BLOCKED);
+        assertThat(task(pipeline, 2).getStatus()).isEqualTo(TaskStatus.BLOCKED);
 
-        pipelineWorker.pollOnce();   // dispatch terraform
-        pipelineWorker.pollOnce();   // poll terraform success → DONE + promote condition BLOCKED→READY (same write-back 트랜잭션)
+        pipelineWorker.pollOnce();   // dispatch plan terraform
+        pipelineWorker.pollOnce();   // poll plan success → DONE + promote apply BLOCKED→READY (same write-back 트랜잭션)
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);
         assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.READY);
 
+        pipelineWorker.pollOnce();   // dispatch apply terraform
+        pipelineWorker.pollOnce();   // poll apply success → DONE + promote condition BLOCKED→READY
+        assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.DONE);
+        assertThat(task(pipeline, 2).getStatus()).isEqualTo(TaskStatus.READY);
+
         pipelineWorker.pollOnce();   // dispatch condition (NONE) → IN_PROGRESS
         pipelineWorker.pollOnce();   // poll condition met → DONE → pipeline DONE
-        assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.DONE);
+        assertThat(task(pipeline, 2).getStatus()).isEqualTo(TaskStatus.DONE);
         assertThat(status(pipeline)).isEqualTo(PipelineStatus.DONE);
     }
 
@@ -134,8 +214,9 @@ class PipelineExecutionTest {
 
         runUntilTerminal(pipeline);
 
-        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);   // terraform succeeded first
-        Task condition = task(pipeline, 1);
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);   // plan succeeded first
+        assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.DONE);   // then apply
+        Task condition = task(pipeline, 2);
         assertThat(condition.getStatus()).isEqualTo(TaskStatus.FAILED);
         assertThat(condition.getErrorCode()).isEqualTo(ErrorCode.CONDITION_NOT_MET);
         assertThat(condition.getFailCount()).isEqualTo(2);   // bounded by maxFailCount, not a wall-clock ttl

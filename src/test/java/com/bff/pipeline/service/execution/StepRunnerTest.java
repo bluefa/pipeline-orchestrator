@@ -24,14 +24,14 @@ class StepRunnerTest {
 
     @Test
     void dispatchesWhenTheRowAgreesWithItsDefinition() {
-        StepOutcome outcome = stepRunner.runStep("t", readyTaskOf(TaskDefinition.APPLY_NETWORK_V1), null);
+        StepOutcome outcome = stepRunner.runStep("t", readyTaskOf(TaskDefinition.AWS_SERVICE_APPLY_V1), null);
 
         assertThat(outcome).isInstanceOf(StepOutcome.Dispatched.class);
     }
 
     @Test
     void failsAsUnknownTaskWhenTheDefinitionIsMissing() {
-        Task task = readyTaskOf(TaskDefinition.APPLY_NETWORK_V1);
+        Task task = readyTaskOf(TaskDefinition.AWS_SERVICE_APPLY_V1);
         task.setTaskDefinition(null);
 
         assertThat(stepRunner.runStep("t", task, null)).isInstanceOf(StepOutcome.UnknownTask.class);
@@ -39,23 +39,23 @@ class StepRunnerTest {
 
     @Test
     void failsAsUnknownTaskWhenTheDefinitionNameDoesNotResolve() {
-        Task task = readyTaskOf(TaskDefinition.APPLY_NETWORK_V1);
-        task.setTaskDefinition("APPLY_NETWORK_V999");
+        Task task = readyTaskOf(TaskDefinition.AWS_SERVICE_APPLY_V1);
+        task.setTaskDefinition("AWS_SERVICE_APPLY_V999");
 
         assertThat(stepRunner.runStep("t", task, null)).isInstanceOf(StepOutcome.UnknownTask.class);
     }
 
     @Test
     void failsAsUnknownTaskWhenTheCachedOperationDisagreesWithTheDefinition() {
-        Task task = readyTaskOf(TaskDefinition.APPLY_NETWORK_V1);
-        task.setOperation(TaskOperation.DESTROY_NETWORK);   // 캐시 컬럼이 정의와 어긋남 (손상)
+        Task task = readyTaskOf(TaskDefinition.AWS_SERVICE_APPLY_V1);
+        task.setOperation(TaskOperation.AWS_SERVICE_TF_DESTROY);   // 캐시 컬럼이 정의와 어긋남 (손상)
 
         assertThat(stepRunner.runStep("t", task, null)).isInstanceOf(StepOutcome.UnknownTask.class);
     }
 
     @Test
     void failsAsUnknownTaskWhenTheCachedSlotFlagDisagreesWithTheDefinition() {
-        Task task = readyTaskOf(TaskDefinition.APPLY_NETWORK_V1);   // 정의는 slot 소비 true
+        Task task = readyTaskOf(TaskDefinition.AWS_SERVICE_APPLY_V1);   // 정의는 slot 소비 true
         task.setConsumesTerraformSlot(false);                       // 캐시가 어긋남 → slot 게이트 우회 위험
 
         assertThat(stepRunner.runStep("t", task, null)).isInstanceOf(StepOutcome.UnknownTask.class);

@@ -42,6 +42,14 @@ public interface InfraManagerClient {
     TerraformPoll terraformJobStatus(String jobId, TaskOperation operation);
 
     /**
+     * job 하나의 result(= terraform log 본문)를 읽는다 — postCheck 관찰(확장 A,
+     * docs/terraform-client-and-postcheck-design.md §4). status와 마찬가지로 result API 경로가 operation별이라
+     * operation을 함께 받는다. null을 돌려주지 않는다 — 쓸 수 없는 응답은 {@link CallFailedException}으로 닫힌다.
+     * 호출자는 조회 실패를 관찰 결손으로만 다루고 태스크 상태에 반영하지 않는다.
+     */
+    String terraformJobResult(String jobId, TaskOperation operation);
+
+    /**
      * operation의 조건을 한 번 확인하고 충족 여부와 원시 check payload를 함께 반환한다(ADR-016 §3).
      * 조건은 dispatch가 no-op이라 이 payload가 해당 폴의 {@code task_attempt.response}에 기록된다.
      */

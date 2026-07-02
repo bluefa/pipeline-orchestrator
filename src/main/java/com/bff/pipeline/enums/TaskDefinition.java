@@ -15,11 +15,13 @@ import java.util.Optional;
  */
 public enum TaskDefinition {
 
-    APPLY_NETWORK_V1(CloudProvider.AWS, TaskOperation.APPLY_NETWORK,
+    AWS_SERVICE_PLAN_V1(CloudProvider.AWS, TaskOperation.AWS_SERVICE_TF_PLAN,
+            "네트워크 변경 계획", "대상 네트워크 인프라의 Terraform plan을 실행해 변경 내용을 산출한다."),
+    AWS_SERVICE_APPLY_V1(CloudProvider.AWS, TaskOperation.AWS_SERVICE_TF_APPLY,
             "네트워크 생성", "대상의 네트워크 인프라를 Terraform으로 구성(apply)한다."),
     NETWORK_READY_V1(CloudProvider.AWS, TaskOperation.NETWORK_READY,
             "네트워크 준비 확인", "네트워크가 준비 완료 상태가 될 때까지 조건을 확인한다."),
-    DESTROY_NETWORK_V1(CloudProvider.AWS, TaskOperation.DESTROY_NETWORK,
+    AWS_SERVICE_DESTROY_V1(CloudProvider.AWS, TaskOperation.AWS_SERVICE_TF_DESTROY,
             "네트워크 철거", "대상의 네트워크 인프라를 Terraform으로 철거(destroy)한다.");
 
     private final CloudProvider provider;

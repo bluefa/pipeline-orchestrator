@@ -24,6 +24,7 @@ import com.bff.pipeline.service.task.ObservationRecorder;
 import com.bff.pipeline.service.task.TaskCanceller;
 import com.bff.pipeline.service.task.TaskStateMachine;
 import com.bff.pipeline.service.task.TaskTypeRegistry;
+import com.bff.pipeline.service.task.terraform.TerraformResultRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
 import java.time.Duration;
 import java.time.Instant;
@@ -45,7 +46,7 @@ import org.springframework.transaction.annotation.Transactional;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
-        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, ConditionCheckTask.class,
+        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, ConditionCheckTask.class,
         ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class, PipelineInserter.class,
         RecipeCatalog.class, PipelineSoftCapTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)

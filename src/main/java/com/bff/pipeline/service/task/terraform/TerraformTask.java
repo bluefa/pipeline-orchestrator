@@ -16,7 +16,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import com.bff.pipeline.exception.CallFailedException;
@@ -28,9 +30,16 @@ import com.bff.pipeline.exception.CallFailedException;
  * job id 목록을 얻은 뒤, 각 job id의 상태를 {@code InfraManagerClient}로 조회해 그 결과를 task 단위로 집계한다 —
  * task별 실행 타임아웃(execution timeout)의 제약을 받는다.
  *
- * <p><b>완료 집계(N개 job, whole-task 재시도).</b> 모든 job이 success로 끝나면 {@code SUCCEEDED}, 하나라도 FAILED면 재시도
- * 가능한 {@code JOB_FAILED}, 아직 running이고 executionTimeout 전이면 {@code pending}, executionTimeout을 넘겼으면 재시도
- * 가능한 {@code EXECUTION_TIMEOUT}이다.
+ * <p><b>완료 집계 — 전원 terminal 대기(N개 job, whole-task 재시도).</b> FAILED job을 봤다고 attempt를 바로 접지 않고
+ * <b>모든 job이 terminal이 될 때까지 폴링을 계속한다</b>(설계 §4.4 집계 정책). 재시도는 fresh dispatch라서, 형제 job이
+ * 아직 인프라를 변경 중일 때 재dispatch하면 같은 대상에 terraform이 동시 실행되기 때문이다(state lock 충돌·동시 변경).
+ * 모든 job이 terminal이고 전부 성공이면 {@code SUCCEEDED}, 하나라도 실패면 재시도 가능한 {@code JOB_FAILED}다.
+ * executionTimeout 도달 시 미종결 job이 남아 있으면 — 그때까지 FAILED 관측이 있으면 {@code JOB_FAILED}, 없으면
+ * {@code EXECUTION_TIMEOUT}으로 종결한다(원인이 정확한 쪽). 셋 다 재시도 가능이라 실행 경로는 같다.
+ *
+ * <p><b>postCheck 관찰(확장 A).</b> attempt가 판정으로 종결되는 turn에는 {@link TerraformResultRecorder}가 finished
+ * job들의 result(= terraform log)를 {@code terraform_result}에 남긴다 — 전원 terminal 대기 덕에 정상 종결에서는
+ * 모든 job이 행을 얻는다. 기록 실패는 관찰 결손일 뿐 판정을 바꾸지 않는다.
  *
  * <p><b>response 유실(ADR §3 invariant 3).</b> dispatch는 됐지만 {@code response}가 최신 attempt에 남지 않은 경우(dispatch
  * 뒤 DB 기록 실패나 크래시)에는 곧바로 실패시키지 않는다. 사유를 정확히 로그로 남기고 executionTimeout까지 기다렸다가 재시도
@@ -49,11 +58,14 @@ public class TerraformTask implements TaskType {
     private static final TypeReference<List<String>> JOB_IDS = new TypeReference<>() { };
 
     private final InfraManagerClient infraManagerClient;
+    private final TerraformResultRecorder resultRecorder;
     private final PipelineSettings pipelineSettings;
     private final Clock clock;
 
-    public TerraformTask(InfraManagerClient infraManagerClient, PipelineSettings pipelineSettings, Clock clock) {
+    public TerraformTask(InfraManagerClient infraManagerClient, TerraformResultRecorder resultRecorder,
+            PipelineSettings pipelineSettings, Clock clock) {
         this.infraManagerClient = infraManagerClient;
+        this.resultRecorder = resultRecorder;
         this.pipelineSettings = pipelineSettings;
         this.clock = clock;
     }
@@ -92,7 +104,7 @@ public class TerraformTask implements TaskType {
                     task.getId(), attempt.getAttemptNumber());
             return TaskProgress.failedTerminal(ErrorCode.CHECK_ERROR);
         }
-        return aggregate(task, jobIds);
+        return aggregate(task, attempt, jobIds);
     }
 
     private boolean isBlankJobId(String jobId) {
@@ -109,27 +121,32 @@ public class TerraformTask implements TaskType {
         return TaskProgress.pending(CheckSignal.RUNNING);
     }
 
-    private TaskProgress aggregate(Task task, List<String> jobIds) {
-        boolean allFinished = true;
+    private TaskProgress aggregate(Task task, TaskAttempt attempt, List<String> jobIds) {
+        Map<String, TerraformPoll> finished = new LinkedHashMap<>();
+        boolean anyFailed = false;
         for (String jobId : jobIds) {
             TerraformPoll poll = infraManagerClient.terraformJobStatus(jobId, task.getOperation());
             if (poll == null) {
                 throw new CallFailedException("InfraManager returned no status for job " + jobId);
             }
             if (poll.finished()) {
-                if (!poll.succeeded()) {
-                    return TaskProgress.failedRetryable(ErrorCode.JOB_FAILED);
-                }
-            } else {
-                allFinished = false;
+                finished.put(jobId, poll);
+                anyFailed |= !poll.succeeded();
             }
+        }
+        boolean allFinished = finished.size() == jobIds.size();
+        if (!allFinished && !TaskSettingsResolver.isPastDeadline(
+                task, TaskSettingsResolver.resolveExecutionTimeout(task, pipelineSettings), clock)) {
+            // 전원 terminal 대기 — 실패 job이 있어도 형제 job이 인프라에서 손을 뗄 때까지 판정을 미룬다.
+            return TaskProgress.pending(CheckSignal.RUNNING);
+        }
+        resultRecorder.recordFinishedJobs(task, attempt, finished);
+        if (anyFailed) {
+            return TaskProgress.failedRetryable(ErrorCode.JOB_FAILED);
         }
         if (allFinished) {
             return TaskProgress.SUCCEEDED;
         }
-        if (TaskSettingsResolver.isPastDeadline(task, TaskSettingsResolver.resolveExecutionTimeout(task, pipelineSettings), clock)) {
-            return TaskProgress.failedRetryable(ErrorCode.EXECUTION_TIMEOUT);
-        }
-        return TaskProgress.pending(CheckSignal.RUNNING);
+        return TaskProgress.failedRetryable(ErrorCode.EXECUTION_TIMEOUT);
     }
 }

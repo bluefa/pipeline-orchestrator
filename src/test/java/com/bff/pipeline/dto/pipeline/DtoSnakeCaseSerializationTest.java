@@ -41,7 +41,7 @@ class DtoSnakeCaseSerializationTest {
 
     @Test
     void pipelineDetailAndNestedTaskSerializeSnakeCase() throws Exception {
-        TaskSummary task = new TaskSummary(5L, 0, "TERRAFORM_JOB", "APPLY_NETWORK_V1", TaskOperation.APPLY_NETWORK,
+        TaskSummary task = new TaskSummary(5L, 0, "TERRAFORM_JOB", "AWS_SERVICE_APPLY_V1", TaskOperation.AWS_SERVICE_TF_APPLY,
                 TaskStatus.IN_PROGRESS, 0, null, true, Instant.parse("2026-07-02T00:00:00Z"), null);
         PipelineDetail detail = new PipelineDetail(101L, PipelineType.INSTALL, "ts-1", CloudProvider.AWS,
                 "AWS_NETWORK_INSTALL_V1", PipelineStatus.RUNNING, Instant.parse("2026-07-02T00:00:00Z"),
@@ -86,8 +86,8 @@ class DtoSnakeCaseSerializationTest {
 
     @Test
     void taskDetailEffectiveSettingsSerializeSnakeCase() throws Exception {
-        TaskDetail detail = new TaskDetail(5L, 101L, 0, "TERRAFORM_JOB", "APPLY_NETWORK_V1",
-                TaskOperation.APPLY_NETWORK, TaskStatus.IN_PROGRESS, 0, null, true,
+        TaskDetail detail = new TaskDetail(5L, 101L, 0, "TERRAFORM_JOB", "AWS_SERVICE_APPLY_V1",
+                TaskOperation.AWS_SERVICE_TF_APPLY, TaskStatus.IN_PROGRESS, 0, null, true,
                 Instant.parse("2026-07-02T00:00:00Z"), Instant.parse("2026-07-02T00:00:00Z"), null, null,
                 Duration.ofMinutes(10), Duration.ofMinutes(50), 2, List.of());
 

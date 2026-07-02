@@ -222,13 +222,13 @@ class PipelineQueryServiceTest {
     }
 
     private static Task task(Long pipelineId, int sequence, TaskStatus status, boolean consumesSlot) {
-        TaskOperation operation = consumesSlot ? TaskOperation.APPLY_NETWORK : TaskOperation.NETWORK_READY;
+        TaskOperation operation = consumesSlot ? TaskOperation.AWS_SERVICE_TF_APPLY : TaskOperation.NETWORK_READY;
         return Task.builder()
                 .pipelineId(pipelineId)
                 .sequence(sequence)
                 .taskName(operation.mechanism())
                 .operation(operation)
-                .taskDefinition(consumesSlot ? "APPLY_NETWORK_V1" : "NETWORK_READY_V1")
+                .taskDefinition(consumesSlot ? "AWS_SERVICE_APPLY_V1" : "NETWORK_READY_V1")
                 .consumesTerraformSlot(consumesSlot)
                 .status(status)
                 .failCount(0)

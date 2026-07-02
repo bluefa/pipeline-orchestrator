@@ -55,6 +55,11 @@ public class InfraManagerFeignAdapter implements InfraManagerClient {
     }
 
     @Override
+    public String terraformJobResult(String jobId, TaskOperation operation) {
+        return translating(() -> registry.terraform(operation).result(jobId));
+    }
+
+    @Override
     public ConditionPoll checkCondition(String target, TaskOperation operation) {
         return translating(() -> registry.condition(operation).check(target));
     }

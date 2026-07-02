@@ -1,19 +1,20 @@
 package com.bff.pipeline.client.terraform;
 
+import com.bff.pipeline.dto.TerraformJobStatusResponse;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.TaskOperation;
 import java.util.List;
 import com.bff.pipeline.exception.CallFailedException;
 
 /**
- * 한 TERRAFORM_JOB operation의 InfraManager API 바인딩이다 — 그 operation의 dispatch/status 실제 호출과 operation별
- * 응답 DTO → 도메인 공통 형식 변환을 <b>한 곳에</b> 응집한다. operation마다 하나의 {@code @Component} 구현체를 두고,
- * {@link InfraManagerOperationRegistry}가 부팅 시 모든 TERRAFORM_JOB operation이 정확히 하나의 바인딩을 갖는지 검증한다.
- * 새 terraform operation을 추가하는 개발자는 이 인터페이스를 구현하면 컴파일러가 무엇을(dispatch/status) 짜야 하는지
- * 강제하고, 빠뜨리면 registry 검증이 부팅/CI에서 실패한다.
+ * 한 TERRAFORM_JOB operation의 InfraManager API 바인딩이다 — 그 operation의 dispatch/status/result 실제 호출과
+ * 응답 → 도메인 공통 형식 변환을 한 곳에 응집한다. operation마다 바인딩 빈 하나가 있고(카탈로그
+ * {@code TerraformBindingCatalog}의 행), {@link com.bff.pipeline.client.InfraManagerOperationRegistry}가 부팅 시
+ * 모든 TERRAFORM_JOB operation이 정확히 하나의 바인딩을 갖는지 검증한다. 새 operation을 추가하는 개발자는
+ * 카탈로그에 행을 추가하면 되고, 빠뜨리면 registry 검증이 부팅/CI에서 실패한다.
  *
- * <p>Feign 전송 예외(FeignException)는 여기서 잡지 않는다 — {@code InfraManagerFeignAdapter}의 단일 경계가 닫힌 어휘로
- * 변환한다. 이 바인딩은 operation별 <em>응답 방어</em>(null·누락·불가능 조합)만 {@link CallFailedException}으로 닫는다.
+ * <p>Feign 전송 예외(FeignException)는 여기서 잡지 않는다 — {@code InfraManagerFeignAdapter}의 단일 경계가 닫힌
+ * 어휘로 변환한다. 이 바인딩은 응답 방어(null·누락·불가능 조합)만 {@link CallFailedException}으로 닫는다.
  */
 public interface TerraformOperationBinding {
 
@@ -24,6 +25,9 @@ public interface TerraformOperationBinding {
 
     /** operation 전용 status API를 호출해 job 하나의 완료 상태를 얻는다. */
     TerraformPoll poll(String jobId);
+
+    /** operation 전용 result API를 호출해 job 하나의 result(= terraform log)를 얻는다 — postCheck 관찰(확장 A). */
+    String result(String jobId);
 
     /**
      * dispatch 응답의 job id 목록 방어 — 목록이 null·비었거나 요소에 null·blank가 섞였으면 쓸 수 없는 외부 응답이므로
@@ -37,15 +41,32 @@ public interface TerraformOperationBinding {
         return jobIds;
     }
 
-    /** operation별 status 필드(nullable Boolean)를 도메인 {@link TerraformPoll}로 정규화. null·누락·불가능 조합은 CallFailed. */
-    static TerraformPoll toPoll(Boolean finished, Boolean succeeded, String jobId) {
-        if (finished == null || succeeded == null) {
+    /**
+     * status 응답의 {@code terraformState}(String — 전체 값 목록 미확정, {@link TerraformJobType} TODO 참조)를 도메인
+     * {@link TerraformPoll}로 정규화한다. terminal 세 값만 해석한다: {@code FAILED} → 실패, jobType의 성공 상태
+     * ({@code COMPLETED}/{@code DESTROYED}) → 성공, <b>그 외 전부(미지 포함) → 진행 중</b>. 미지 상태를 호출 실패로
+     * 닫지 않는 이유(owner 지침): 전이 중 상태는 다음 폴이 해소하고, 영영 안 끝나면 executionTimeout이 회수한다 —
+     * 무한 대기가 아니라 기존 예산 안의 지연이다. 응답이 없거나 상태가 비면 해석 불능이므로 CallFailed로 닫는다.
+     */
+    static TerraformPoll toPoll(TerraformJobStatusResponse status, TerraformJobType jobType, String jobId) {
+        if (status == null || status.terraformState() == null || status.terraformState().isBlank()) {
             throw new CallFailedException("InfraManager returned an incomplete status for job " + jobId);
         }
-        try {
-            return new TerraformPoll(finished, succeeded);
-        } catch (IllegalArgumentException impossibleState) {
-            throw new CallFailedException("InfraManager returned an impossible poll state for job " + jobId);
+        String state = status.terraformState();
+        if (TerraformJobType.FAILED_STATE.equals(state)) {
+            return TerraformPoll.failure(status.resultPath());
         }
+        if (jobType.successState().equals(state)) {
+            return TerraformPoll.success(status.resultPath());
+        }
+        return TerraformPoll.running();
+    }
+
+    /** result 응답 방어 — null 본문은 쓸 수 없는 외부 응답이므로 CallFailed로 닫는다(빈 문자열은 유효한 빈 로그). */
+    static String requireResult(String result, String jobId) {
+        if (result == null) {
+            throw new CallFailedException("InfraManager returned no result for job " + jobId);
+        }
+        return result;
     }
 }

@@ -27,9 +27,22 @@ public final class FakeInfraManagerClient implements InfraManagerClient {
         boolean run();
     }
 
+    @FunctionalInterface
+    public interface Result {
+        String run();
+    }
+
+    /** job id별로 다른 폴 결과가 필요한 다중 job 시나리오용 — 설정 시 {@link Poll}보다 우선한다. */
+    @FunctionalInterface
+    public interface PollByJob {
+        TerraformPoll run(String jobId);
+    }
+
     private Dispatch dispatch = () -> "[\"job-1\"]";
     private Poll poll = TerraformPoll::running;
+    private PollByJob pollByJob;
     private Check check = () -> false;
+    private Result result = () -> "terraform: ok";
     private CloudProvider cloudProvider = CloudProvider.AWS;
 
     public void onCloudProvider(CloudProvider cloudProvider) {
@@ -42,10 +55,19 @@ public final class FakeInfraManagerClient implements InfraManagerClient {
 
     public void onPoll(Poll poll) {
         this.poll = poll;
+        this.pollByJob = null;
+    }
+
+    public void onPollByJob(PollByJob pollByJob) {
+        this.pollByJob = pollByJob;
     }
 
     public void onCheck(Check check) {
         this.check = check;
+    }
+
+    public void onResult(Result result) {
+        this.result = result;
     }
 
     @Override
@@ -55,7 +77,12 @@ public final class FakeInfraManagerClient implements InfraManagerClient {
 
     @Override
     public TerraformPoll terraformJobStatus(String jobId, TaskOperation operation) {
-        return poll.run();
+        return pollByJob != null ? pollByJob.run(jobId) : poll.run();
+    }
+
+    @Override
+    public String terraformJobResult(String jobId, TaskOperation operation) {
+        return result.run();
     }
 
     @Override
