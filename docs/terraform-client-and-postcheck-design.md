@@ -294,10 +294,24 @@ CREATE TABLE terraform_result (
 - **타입: MEDIUMTEXT(16MB).** TEXT(64KB)는 terraform log에 부족할 수 있고, 로그는 UTF-8 텍스트라
   BLOB보다 TEXT 계열이 맞다(열람·검색이 자연스럽다). 16MB 초과분은 tail 우선으로 절단하고
   `truncated`를 표시 — 실패 원인은 로그 끝에 몰린다. 전문이 필요하면 `result_path`로 원본을 찾는다.
-- **쓰기 시점: 종결 폴을 낸 turn, 상태 전이 트랜잭션 밖.** result 조회는 외부 호출이므로 다른 호출과
-  같은 규칙(트랜잭션 밖, 닫힌 예외)을 따르고, insert는 그 뒤 별도로 한다. `UNIQUE` 키 + insert-ignore로
-  재시도 turn에도 멱등. 조회·저장 실패는 로그만 남긴다 — 관찰이므로 상태에 관여하지 않고(확장 A 정의),
-  행 유실은 정보 손실일 뿐 정합성 손실이 아니다(ADR-016 §3 invariant 그대로).
+- **쓰기 경로(write path) 정밀 정의.**
+  1. **시점**: TERRAFORM_JOB의 종결 폴 turn — `check()`가 terminal 판정(SUCCEEDED 또는 JOB_FAILED)을
+     내리는 그 자리에서, **상태 전이가 커밋되기 전**, 트랜잭션 밖(외부 호출 규칙 동일)에서 수행한다.
+  2. **단위: job당 1행, 그 turn에 finished로 관측된 job만.** N개 job 중 일부만 finished인 채
+     JOB_FAILED로 조기 종결되면 finished였던 job들만 행을 얻는다(아직 도는 job은 result가 없다).
+     재시도는 새 attempt_number + 새 dispatch(새 job id들)이므로 attempt별로 행이 따로 쌓인다.
+  3. **job별 독립 — 부분 실패 격리.** result 조회는 job마다 독립적으로 수행하고, 한 job의 조회가
+     실패(CallFailed/CallTimeout)해도 **나머지 job의 저장에는 영향이 없다**(루프 계속). 조회에 실패한
+     job도 행 자체는 남긴다 — `result = NULL`, `result_path`(status 폴이 실어 온 포인터)와
+     `succeeded`는 채워서. 포인터가 보존되고 "본문 결손"이 로그가 아니라 DB에서 보인다.
+  4. **트랜잭션: 행마다 자체 단문 트랜잭션**(`repository.save`). 엔진의 상태 전이 트랜잭션에
+     참여하지 않는다 — 관찰 실패가 전이를 굴리거나(롤백) 전이 실패가 관찰을 잃게 하지 않는다.
+  5. **멱등·자기치유**: `UNIQUE(task_id, attempt_number, job_id)` + 존재 선검사 + 중복 insert 무시.
+     기록 도중 크래시/리스 회수가 나면 상태 전이가 아직 없으므로 다음 폴 turn이 같은 terminal 판정을
+     다시 내리고 recorder가 재실행된다 — 이미 저장된 행은 skip, 빠진 행만 채워진다. 본문이 영구
+     결손되는 유일한 경우는 "조회 실패 + 같은 turn의 상태 전이 성공"이며, 그때도 포인터 행은 남는다.
+  6. **상태 무관여**: 조회·저장의 어떤 실패도 반환되는 TaskProgress를 바꾸지 않는다(확장 A 정의).
+     단 CallInterrupted는 규칙대로 전파한다(fail-fast) — 5의 자기치유가 이를 회수한다.
 - **ADR-016 문안:** §3의 관찰 테이블 목록에 세 번째로 한 줄 추가 — *"`terraform_result` — 완료
   시점의 job별 terraform log(tail-truncated)와 `result_path`; 상태 전이·claim·스케줄링은 절대 읽지
   않는다."*
