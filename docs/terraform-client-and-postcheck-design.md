@@ -282,7 +282,7 @@ CREATE TABLE terraform_result (
   task_id         BIGINT       NOT NULL,
   attempt_no      INT          NOT NULL,
   job_id          VARCHAR(64)  NOT NULL,
-  terraform_state VARCHAR(32)  NOT NULL,           -- 종결 시점 상태 (COMPLETED/DESTROYED/FAILED)
+  succeeded       BOOLEAN      NULL,               -- true/false = 폴 종결 결과, NULL = attempt 종결 시점까지 미종결
   result_path     VARCHAR(1024) NULL,              -- status 응답의 resultPath (원본 전문 포인터)
   result          MEDIUMTEXT   NULL,               -- terraform log 본문
   truncated       BOOLEAN      NOT NULL DEFAULT FALSE,
@@ -295,15 +295,18 @@ CREATE TABLE terraform_result (
   BLOB보다 TEXT 계열이 맞다(열람·검색이 자연스럽다). 16MB 초과분은 tail 우선으로 절단하고
   `truncated`를 표시 — 실패 원인은 로그 끝에 몰린다. 전문이 필요하면 `result_path`로 원본을 찾는다.
 - **쓰기 경로(write path) 정밀 정의.**
-  1. **시점**: TERRAFORM_JOB의 종결 폴 turn — `check()`가 terminal 판정(SUCCEEDED 또는 JOB_FAILED)을
-     내리는 그 자리에서, **상태 전이가 커밋되기 전**, 트랜잭션 밖(외부 호출 규칙 동일)에서 수행한다.
-  2. **단위: job당 1행, 그 turn에 finished로 관측된 job만.** N개 job 중 일부만 finished인 채
-     JOB_FAILED로 조기 종결되면 finished였던 job들만 행을 얻는다(아직 도는 job은 result가 없다).
+  1. **시점**: attempt가 **판정으로 종결되는 모든 turn** — `check()`가 SUCCEEDED / JOB_FAILED /
+     EXECUTION_TIMEOUT을 내리는 자리에서, **상태 전이가 커밋되기 전**, 트랜잭션 밖(외부 호출 규칙
+     동일)에서 수행한다. (성공 turn만이 아니다 — 실패·타임아웃으로 접히는 attempt도 기록한다.)
+  2. **단위: 그 attempt의 모든 job id에 행 1개씩 — finished 여부와 무관.** finished였던 job은
+     `succeeded` true/false, 아직 돌던 job은 `succeeded = NULL`(미종결 표시)로 남긴다. JOB_FAILED
+     조기 종결이든 EXECUTION_TIMEOUT이든, job id를 아는 한 **행이 아예 없는 job은 없다.**
      재시도는 새 attempt_number + 새 dispatch(새 job id들)이므로 attempt별로 행이 따로 쌓인다.
-  3. **job별 독립 — 부분 실패 격리.** result 조회는 job마다 독립적으로 수행하고, 한 job의 조회가
-     실패(CallFailed/CallTimeout)해도 **나머지 job의 저장에는 영향이 없다**(루프 계속). 조회에 실패한
-     job도 행 자체는 남긴다 — `result = NULL`, `result_path`(status 폴이 실어 온 포인터)와
-     `succeeded`는 채워서. 포인터가 보존되고 "본문 결손"이 로그가 아니라 DB에서 보인다.
+  3. **job별 독립 — 부분 실패 격리.** result 본문 조회는 job마다 독립적으로 수행하고(미종결 job도
+     시도 — 진행분 로그가 있을 수 있다), 한 job의 조회가 실패(CallFailed/CallTimeout)해도 **나머지
+     job의 저장에는 영향이 없다**(루프 계속). 조회에 실패한 job도 행 자체는 남긴다 — `result = NULL`,
+     `result_path`(status 폴이 실어 온 포인터)와 `succeeded`는 채워서. 포인터가 보존되고 "본문 결손"이
+     로그가 아니라 DB에서 보인다.
   4. **트랜잭션: 행마다 자체 단문 트랜잭션**(`repository.save`). 엔진의 상태 전이 트랜잭션에
      참여하지 않는다 — 관찰 실패가 전이를 굴리거나(롤백) 전이 실패가 관찰을 잃게 하지 않는다.
   5. **멱등·자기치유**: `UNIQUE(task_id, attempt_number, job_id)` + 존재 선검사 + 중복 insert 무시.
@@ -312,6 +315,22 @@ CREATE TABLE terraform_result (
      결손되는 유일한 경우는 "조회 실패 + 같은 turn의 상태 전이 성공"이며, 그때도 포인터 행은 남는다.
   6. **상태 무관여**: 조회·저장의 어떤 실패도 반환되는 TaskProgress를 바꾸지 않는다(확장 A 정의).
      단 CallInterrupted는 규칙대로 전파한다(fail-fast) — 5의 자기치유가 이를 회수한다.
+
+- **"아예 누락" 매트릭스 — 위 규칙으로 남는 완전 무기록 경로는 셋뿐이다(owner 확인 요청에 대한 답).**
+  terminal 태스크 기준으로, job id를 아는 모든 종결 attempt는 job당 최소 1행(본문 없으면 포인터/
+  상태라도)을 보장한다. 남는 예외:
+  1. **job id 원천 부재** — dispatch 응답이 유실된 채(EXECUTION_TIMEOUT의 lost-response 분기) 또는
+     malformed(CHECK_ERROR)로 attempt가 접힌 경우. 기록할 job id 자체가 없어 어떤 설계로도 불가능.
+     job id는 `task_attempt.response`가 원천이므로 이 경우 그 부재가 곧 진단 정보다.
+  2. **poll 도중 CallFailed/CallTimeout으로 접힌 attempt** — InfraManager 자체가 안 닿는 상황이라
+     result 조회도 같이 실패했을 것이 거의 확실하다(같은 서비스). 이 attempt는 행이 없지만
+     `task_check`의 api_error/call_timeout 카운터가 원인을 말해 준다. 이전/이후 attempt의 행은 남는다.
+  3. **INSERT 실패 + 같은 turn 상태 전이 성공** — 관찰 테이블 공통의 잔여 리스크(ADR-016 §3
+     invariant). 전이 트랜잭션에 넣으면 막을 수 있으나 관찰 실패가 상태를 굴리게 되고 MEDIUMTEXT
+     쓰기가 hot 전이 트랜잭션을 늘어뜨리므로 채택하지 않는다(확장 A 원칙 위반).
+  즉 "정상 동작 중 성공/실패한 terraform의 결과가 조용히 안 남는" 경로는 없다 — 남는 셋은 모두
+  InfraManager 불통·응답 유실·DB 장애라는 상위 장애의 그림자이고, 각각 다른 관찰(attempt errorCode,
+  task_check 카운터)이 그 사실 자체를 남긴다.
 - **ADR-016 문안:** §3의 관찰 테이블 목록에 세 번째로 한 줄 추가 — *"`terraform_result` — 완료
   시점의 job별 terraform log(tail-truncated)와 `result_path`; 상태 전이·claim·스케줄링은 절대 읽지
   않는다."*
@@ -344,9 +363,10 @@ CREATE TABLE terraform_result (
   대시보드 요구가 "완료/실패 후 결과 확인"(postCheck 정의 그대로)이면 충분하고, "실행 중 진행 로그
   스트리밍"까지면 확장 A로는 부족하다 — 그건 InfraManager result API를 실시간 프록시하는 별도
   결정(admin→InfraManager 의존 추가)이 필요하다.
-- **행이 없는 job이 존재한다.** JOB_FAILED 조기 종결 turn에 아직 돌던 job은 행이 없고, 조회 실패
-  job은 본문 없는 포인터 행이다. UI는 attempt의 job id 목록과 대조해 "기록 없음"/"본문 없음
-  (result_path 참조)"을 구분 표기해야 한다.
+- **본문 없는 행이 존재한다.** 조회 실패 job은 본문 없는 포인터 행, attempt 종결 시점까지 미종결이던
+  job은 `succeeded = NULL` 행이다(§4.4 — job id를 아는 한 행 자체는 항상 있다). UI는 "본문 없음
+  (result_path 참조)"과 "미종결 종료"를 구분 표기하면 된다. 행이 아예 없는 경우는 §4.4의 누락
+  매트릭스 셋뿐이며 전부 상위 장애의 그림자다.
 
 구현 시 `admin-pipeline-dashboard-requirements.md`의 Task 상세 패널 표에 terraform result 행(✅)과
 P11을 추가한다.
