@@ -5,7 +5,7 @@ package com.bff.pipeline.client.terraform;
  * "기대 성공 상태" authority다. 성공을 뜻하는 terminal 상태가 타입마다 다르다(owner 확정): PLAN/APPLY는
  * {@code COMPLETED}, DESTROY는 {@code DESTROYED}. {@code FAILED}는 타입 공통 실패 terminal이다.
  *
- * <p>TODO: {@code TerraformState}의 전체 값 목록이 확정되면(설계 §6) 이 String 상수들을 닫힌 enum으로 교체한다 —
+ * TODO: {@code TerraformState}의 전체 값 목록이 확정되면(설계 §6) 이 String 상수들을 닫힌 enum으로 교체한다 —
  * 교체 지점은 여기와 {@link TerraformOperationBinding#toPoll} 뿐이다. 그때까지 세 terminal 값만 해석하고
  * 나머지 문자열은 전부 "진행 중"으로 본다.
  */

@@ -22,7 +22,7 @@ import lombok.Setter;
  * 쓰기 전용 관찰 테이블이라 엔진(claim·스케줄링·상태 전이)은 결코 읽지 않으며, 행 유실은 진단 손실일 뿐
  * 정합성 손실이 아니다(ADR-016 §3 invariant).
  *
- * <p>{@code result}는 log 본문이다(MEDIUMTEXT, 16MB 초과분은 tail 우선 절단 + {@code truncated} 표시 — 실패
+ * {@code result}는 log 본문이다(MEDIUMTEXT, 16MB 초과분은 tail 우선 절단 + {@code truncated} 표시 — 실패
  * 원인은 로그 끝에 몰린다). 본문 조회에 실패한 job은 {@code result = null}인 포인터 행으로 남는다 —
  * {@code resultPath}(status 응답의 결과 파일 URI)가 원본 전문의 추적 경로다. {@code (taskId, attemptNumber,
  * jobId)} 유니크 제약이 재실행(크래시/리스 회수 후 re-poll) 멱등성의 근거다.
@@ -30,7 +30,7 @@ import lombok.Setter;
 @Entity
 @Table(
         name = "terraform_result",
-        uniqueConstraints = @UniqueConstraint(name = "uq_terraform_result_attempt_job",
+        uniqueConstraints = @UniqueConstraint(name = TerraformResult.ATTEMPT_JOB_CONSTRAINT,
                 columnNames = {"task_id", "attempt_number", "job_id"}))
 @Getter
 @Setter
@@ -38,6 +38,9 @@ import lombok.Setter;
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 @Builder
 public class TerraformResult {
+
+    /** 재실행 멱등성의 근거인 유니크 제약 이름 — recorder가 중복 insert만 골라 삼킬 때 이 이름으로 판별한다. */
+    public static final String ATTEMPT_JOB_CONSTRAINT = "uq_terraform_result_attempt_job";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

@@ -17,36 +17,38 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import com.bff.pipeline.exception.CallFailedException;
 
 /**
  * Terraform 잡을 디스패치하고 완료까지 폴링하는 {@link TaskType} 구현체다(ADR-016 ed97ec0 §5). {@code execute}는 한 번의
- * dispatch가 만들어 낸 <b>{@code N}개 job id를 담은 원시 response</b>(JSON 배열)를 반환하고, 엔진이 이를
+ * dispatch가 만들어 낸 {@code N}개 job id를 담은 원시 response(JSON 배열)를 반환하고, 엔진이 이를
  * {@code task_attempt.response}에 기록한다. {@code check}는 최신 attempt의 {@code response}를 Jackson으로 역직렬화해
  * job id 목록을 얻은 뒤, 각 job id의 상태를 {@code InfraManagerClient}로 조회해 그 결과를 task 단위로 집계한다 —
  * task별 실행 타임아웃(execution timeout)의 제약을 받는다.
  *
- * <p><b>완료 집계 — 전원 terminal 대기(N개 job, whole-task 재시도).</b> FAILED job을 봤다고 attempt를 바로 접지 않고
- * <b>모든 job이 terminal이 될 때까지 폴링을 계속한다</b>(설계 §4.4 집계 정책). 재시도는 fresh dispatch라서, 형제 job이
+ * 완료 집계 — 전원 terminal 대기(N개 job, whole-task 재시도). FAILED job을 봤다고 attempt를 바로 접지 않고
+ * 모든 job이 terminal이 될 때까지 폴링을 계속한다(설계 §4.4 집계 정책). 재시도는 fresh dispatch라서, 형제 job이
  * 아직 인프라를 변경 중일 때 재dispatch하면 같은 대상에 terraform이 동시 실행되기 때문이다(state lock 충돌·동시 변경).
  * 모든 job이 terminal이고 전부 성공이면 {@code SUCCEEDED}, 하나라도 실패면 재시도 가능한 {@code JOB_FAILED}다.
  * executionTimeout 도달 시 미종결 job이 남아 있으면 — 그때까지 FAILED 관측이 있으면 {@code JOB_FAILED}, 없으면
  * {@code EXECUTION_TIMEOUT}으로 종결한다(원인이 정확한 쪽). 셋 다 재시도 가능이라 실행 경로는 같다.
  *
- * <p><b>postCheck 관찰(확장 A).</b> attempt가 판정으로 종결되는 turn에는 {@link TerraformResultRecorder}가 finished
+ * postCheck 관찰(확장 A). attempt가 판정으로 종결되는 turn에는 {@link TerraformResultRecorder}가 finished
  * job들의 result(= terraform log)를 {@code terraform_result}에 남긴다 — 전원 terminal 대기 덕에 정상 종결에서는
  * 모든 job이 행을 얻는다. 기록 실패는 관찰 결손일 뿐 판정을 바꾸지 않는다.
  *
- * <p><b>response 유실(ADR §3 invariant 3).</b> dispatch는 됐지만 {@code response}가 최신 attempt에 남지 않은 경우(dispatch
+ * response 유실(ADR §3 invariant 3). dispatch는 됐지만 {@code response}가 최신 attempt에 남지 않은 경우(dispatch
  * 뒤 DB 기록 실패나 크래시)에는 곧바로 실패시키지 않는다. 사유를 정확히 로그로 남기고 executionTimeout까지 기다렸다가 재시도
  * 가능한 {@code EXECUTION_TIMEOUT}으로 fallthrough해 멱등 재dispatch한다(failCount 예산을 함께 쓴다). 반면 {@code response}가
- * <b>있는데 역직렬화가 안 되면</b>(malformed) 곧바로 실패 처리한다({@code CHECK_ERROR}).
+ * 있는데 역직렬화가 안 되면(malformed) 곧바로 실패 처리한다({@code CHECK_ERROR}).
  *
- * <p>외부가 돌려준 값을 쓸 수 없는 경우(빈 dispatch 응답, null poll 상태)에는 영속/폴링 대신 호출 실패로 처리해
+ * 외부가 돌려준 값을 쓸 수 없는 경우(빈 dispatch 응답, null poll 상태)에는 영속/폴링 대신 호출 실패로 처리해
  * ({@code CallFailedException}) 엔진이 재시도하게 한다. 타입 이름 {@link #NAME}은 모든 terraform task 행에 저장된다.
  */
 @Slf4j
@@ -121,7 +123,9 @@ public class TerraformTask implements TaskType {
         return TaskProgress.pending(CheckSignal.RUNNING);
     }
 
-    private TaskProgress aggregate(Task task, TaskAttempt attempt, List<String> jobIds) {
+    private TaskProgress aggregate(Task task, TaskAttempt attempt, List<String> rawJobIds) {
+        // 저장된 response의 중복 job id에 관대하게 — 집계는 유일 id 기준이다(dispatch 경계는 중복을 이미 거부한다).
+        Set<String> jobIds = new LinkedHashSet<>(rawJobIds);
         Map<String, TerraformPoll> finished = new LinkedHashMap<>();
         boolean anyFailed = false;
         for (String jobId : jobIds) {

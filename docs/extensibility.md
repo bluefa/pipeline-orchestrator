@@ -84,3 +84,10 @@ or genuine multi-implementation polymorphism. Three qualify:
   polled by job id); the seam — not a second impl — is what earns it, and a new kind is an additive file.
   This is the one intentional exception to the "no single-implementation interface" guard, made because
   the variable concern (how a job is checked) is real and owner-mandated, not speculative.
+- **`TerraformOperationBinding`** (`client/terraform/`) — the per-operation API-binding seam behind the
+  boot-verified `InfraManagerOperationRegistry`. Since the real InfraManager spec landed it carries **one
+  production implementation** (`CatalogTerraformBinding`, instantiated per catalog row) — the seam is
+  earned by the registry contract (one binding bean per TERRAFORM_JOB operation, completeness checked at
+  boot) and by the documented escape hatch: an operation that grows bespoke defense logic moves from a
+  catalog row to its own implementation class without touching the registry or the adapter. Same shape of
+  exception as `TerraformJob` above.

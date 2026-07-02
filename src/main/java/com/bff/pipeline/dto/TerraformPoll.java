@@ -5,7 +5,7 @@ package com.bff.pipeline.dto;
  * compact constructor가 불가능한 상태({@code !finished && succeeded})를 막아 불변식을 지킨다 —
  * 아직 끝나지 않은 폴은 성공일 수 없다.
  *
- * <p>{@code resultPath}는 status 응답이 실어 온 결과 파일 포인터(스토리지 URI)로, postCheck 관찰(확장 A)이
+ * {@code resultPath}는 status 응답이 실어 온 결과 파일 포인터(스토리지 URI)로, postCheck 관찰(확장 A)이
  * {@code terraform_result} 행에 원본 전문 포인터로 남긴다. terminal 폴에만 의미가 있고 없을 수 있다(nullable).
  */
 public record TerraformPoll(boolean finished, boolean succeeded, String resultPath) {

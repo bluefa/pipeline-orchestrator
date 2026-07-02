@@ -15,21 +15,21 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
 /**
- * InfraManager HTTP API의 raw 전송 인터페이스다(Feign 프록시). Terraform 계열은 <b>확정된 실 API 명세</b>
+ * InfraManager HTTP API의 raw 전송 인터페이스다(Feign 프록시). Terraform 계열은 확정된 실 API 명세
  * (docs/terraform-client-and-postcheck-design.md §1)와 1:1이다 — 경로·HTTP 메서드·쿼리 파라미터가 패밀리마다
  * 다르지만 응답 shape은 셋으로 수렴한다: dispatch는 {@link DispatchedJob}(단건) 또는 그 목록, job 조회는
  * {@link TerraformJobStatusResponse}, result는 {@code String}.
  *
- * <p><b>operation별 구분은 default 메서드가 소유한다.</b> {@code jobType}/{@code idcTerraformType}처럼 operation이
+ * operation별 구분은 default 메서드가 소유한다. {@code jobType}/{@code idcTerraformType}처럼 operation이
  * 결정하는 상수는 호출부(카탈로그)로 흘리지 않고 이 인터페이스 안에서 default 메서드로 닫는다 — 카탈로그
  * ({@code TerraformBindingCatalog})의 행은 리터럴 인자 없는 순수 메서드 참조만 갖는다. default 메서드는 Feign
  * 프록시 위에서 in-JVM으로 raw 메서드에 위임할 뿐 HTTP 계약을 추가하지 않는다.
  *
- * <p>어느 API를 부를지 고르는 라우팅과 응답 → 도메인 공통 형식 변환은 여기가 아니라 카탈로그 바인딩이 소유한다.
+ * 어느 API를 부를지 고르는 라우팅과 응답 → 도메인 공통 형식 변환은 여기가 아니라 카탈로그 바인딩이 소유한다.
  * 인증 헤더({@code Authorization: Bearer ...})는 {@code FeignConfig}의 {@code RequestInterceptor}가 모든 호출에
  * 붙인다. base url·타임아웃은 {@code application.yml}의 {@code infra-manager.*} / {@code spring.cloud.openfeign.*}.
  *
- * <p>⚠️ CONDITION_CHECK({@code networkReady})와 {@code cloudProvider}는 실제 API 미확정 — 여전히 가정 경로다.
+ * ⚠️ CONDITION_CHECK({@code networkReady})와 {@code cloudProvider}는 실제 API 미확정 — 여전히 가정 경로다.
  */
 @FeignClient(name = "infra-manager", url = "${infra-manager.base-url}")
 public interface InfraManagerFeignClient {

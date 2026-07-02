@@ -261,51 +261,51 @@ class InfraManagerFeignAdapterTest {
         private TerraformJobStatusResponse status(String call) { lastCall = call; return status; }
         private String result(String call) { lastCall = call; return result; }
 
-        @Override public List<DispatchedJob> awsServicePlan(String t) { return list("awsServicePlan"); }
-        @Override public List<DispatchedJob> awsServiceApply(String t) { return list("awsServiceApply"); }
-        @Override public List<DispatchedJob> awsServiceDestroy(String t) { return list("awsServiceDestroy"); }
-        @Override public TerraformJobStatusResponse awsServicePlanJobStatus(String j) { return status("awsServicePlanJobStatus"); }
-        @Override public TerraformJobStatusResponse awsServiceApplyJobStatus(String j) { return status("awsServiceApplyJobStatus"); }
-        @Override public TerraformJobStatusResponse awsServiceDestroyJobStatus(String j) { return status("awsServiceDestroyJobStatus"); }
-        @Override public String awsServicePlanJobResult(String j) { return result("awsServicePlanJobResult"); }
-        @Override public String awsServiceApplyJobResult(String j) { return result("awsServiceApplyJobResult"); }
-        @Override public String awsServiceDestroyJobResult(String j) { return result("awsServiceDestroyJobResult"); }
+        @Override public List<DispatchedJob> awsServicePlan(String targetSourceId) { return list("awsServicePlan"); }
+        @Override public List<DispatchedJob> awsServiceApply(String targetSourceId) { return list("awsServiceApply"); }
+        @Override public List<DispatchedJob> awsServiceDestroy(String targetSourceId) { return list("awsServiceDestroy"); }
+        @Override public TerraformJobStatusResponse awsServicePlanJobStatus(String terraformJobId) { return status("awsServicePlanJobStatus"); }
+        @Override public TerraformJobStatusResponse awsServiceApplyJobStatus(String terraformJobId) { return status("awsServiceApplyJobStatus"); }
+        @Override public TerraformJobStatusResponse awsServiceDestroyJobStatus(String terraformJobId) { return status("awsServiceDestroyJobStatus"); }
+        @Override public String awsServicePlanJobResult(String terraformJobId) { return result("awsServicePlanJobResult"); }
+        @Override public String awsServiceApplyJobResult(String terraformJobId) { return result("awsServiceApplyJobResult"); }
+        @Override public String awsServiceDestroyJobResult(String terraformJobId) { return result("awsServiceDestroyJobResult"); }
 
-        @Override public DispatchedJob awsBdcCommonPlan(String t) { return single("awsBdcCommonPlan"); }
-        @Override public DispatchedJob awsBdcCommonApply(String t) { return single("awsBdcCommonApply"); }
-        @Override public DispatchedJob awsBdcCommonDestroy(String t) { return single("awsBdcCommonDestroy"); }
-        @Override public TerraformJobStatusResponse awsBdcCommonJobStatus(String j, TerraformJobType type) { return status("awsBdcCommonJobStatus:" + type); }
-        @Override public String awsBdcCommonJobResult(String j, TerraformJobType type) { return result("awsBdcCommonJobResult:" + type); }
+        @Override public DispatchedJob awsBdcCommonPlan(String targetSourceId) { return single("awsBdcCommonPlan"); }
+        @Override public DispatchedJob awsBdcCommonApply(String targetSourceId) { return single("awsBdcCommonApply"); }
+        @Override public DispatchedJob awsBdcCommonDestroy(String targetSourceId) { return single("awsBdcCommonDestroy"); }
+        @Override public TerraformJobStatusResponse awsBdcCommonJobStatus(String terraformJobId, TerraformJobType type) { return status("awsBdcCommonJobStatus:" + type); }
+        @Override public String awsBdcCommonJobResult(String terraformJobId, TerraformJobType type) { return result("awsBdcCommonJobResult:" + type); }
 
-        @Override public DispatchedJob awsBdcServiceLevelPlan(String t) { return single("awsBdcServiceLevelPlan"); }
-        @Override public DispatchedJob awsBdcServiceLevelApply(String t) { return single("awsBdcServiceLevelApply"); }
-        @Override public DispatchedJob awsBdcServiceLevelDestroy(String t) { return single("awsBdcServiceLevelDestroy"); }
-        @Override public TerraformJobStatusResponse awsBdcServiceLevelPlanJobStatus(String j) { return status("awsBdcServiceLevelPlanJobStatus"); }
-        @Override public String awsBdcServiceLevelPlanJobResult(String j) { return result("awsBdcServiceLevelPlanJobResult"); }
-        @Override public TerraformJobStatusResponse awsBdcServiceLevelActionJobStatus(String j, TerraformJobType type) { return status("awsBdcServiceLevelActionJobStatus:" + type); }
-        @Override public String awsBdcServiceLevelActionJobResult(String j, TerraformJobType type) { return result("awsBdcServiceLevelActionJobResult:" + type); }
+        @Override public DispatchedJob awsBdcServiceLevelPlan(String targetSourceId) { return single("awsBdcServiceLevelPlan"); }
+        @Override public DispatchedJob awsBdcServiceLevelApply(String targetSourceId) { return single("awsBdcServiceLevelApply"); }
+        @Override public DispatchedJob awsBdcServiceLevelDestroy(String targetSourceId) { return single("awsBdcServiceLevelDestroy"); }
+        @Override public TerraformJobStatusResponse awsBdcServiceLevelPlanJobStatus(String terraformJobId) { return status("awsBdcServiceLevelPlanJobStatus"); }
+        @Override public String awsBdcServiceLevelPlanJobResult(String terraformJobId) { return result("awsBdcServiceLevelPlanJobResult"); }
+        @Override public TerraformJobStatusResponse awsBdcServiceLevelActionJobStatus(String terraformJobId, TerraformJobType type) { return status("awsBdcServiceLevelActionJobStatus:" + type); }
+        @Override public String awsBdcServiceLevelActionJobResult(String terraformJobId, TerraformJobType type) { return result("awsBdcServiceLevelActionJobResult:" + type); }
 
-        @Override public List<DispatchedJob> gcpServiceDispatch(String t, TerraformJobType type) { return list("gcpServiceDispatch:" + type); }
-        @Override public TerraformJobStatusResponse gcpServiceJobStatus(String j, TerraformJobType type) { return status("gcpServiceJobStatus:" + type); }
-        @Override public String gcpServiceJobResult(String j, TerraformJobType type) { return result("gcpServiceJobResult:" + type); }
+        @Override public List<DispatchedJob> gcpServiceDispatch(String targetSourceId, TerraformJobType type) { return list("gcpServiceDispatch:" + type); }
+        @Override public TerraformJobStatusResponse gcpServiceJobStatus(String terraformJobId, TerraformJobType type) { return status("gcpServiceJobStatus:" + type); }
+        @Override public String gcpServiceJobResult(String terraformJobId, TerraformJobType type) { return result("gcpServiceJobResult:" + type); }
 
-        @Override public List<DispatchedJob> gcpBdcDispatch(String t, TerraformJobType type) { return list("gcpBdcDispatch:" + type); }
-        @Override public TerraformJobStatusResponse gcpBdcJobStatus(String j, TerraformJobType type) { return status("gcpBdcJobStatus:" + type); }
-        @Override public String gcpBdcJobResult(String j, TerraformJobType type) { return result("gcpBdcJobResult:" + type); }
+        @Override public List<DispatchedJob> gcpBdcDispatch(String targetSourceId, TerraformJobType type) { return list("gcpBdcDispatch:" + type); }
+        @Override public TerraformJobStatusResponse gcpBdcJobStatus(String terraformJobId, TerraformJobType type) { return status("gcpBdcJobStatus:" + type); }
+        @Override public String gcpBdcJobResult(String terraformJobId, TerraformJobType type) { return result("gcpBdcJobResult:" + type); }
 
-        @Override public List<DispatchedJob> azureBdcPlan(String t) { return list("azureBdcPlan"); }
-        @Override public List<DispatchedJob> azureBdcApply(String t) { return list("azureBdcApply"); }
-        @Override public List<DispatchedJob> azureBdcDestroy(String t) { return list("azureBdcDestroy"); }
-        @Override public TerraformJobStatusResponse azureBdcPlanJobStatus(String j) { return status("azureBdcPlanJobStatus"); }
-        @Override public TerraformJobStatusResponse azureBdcApplyJobStatus(String j) { return status("azureBdcApplyJobStatus"); }
-        @Override public TerraformJobStatusResponse azureBdcDestroyJobStatus(String j) { return status("azureBdcDestroyJobStatus"); }
-        @Override public String azureBdcPlanJobResult(String j) { return result("azureBdcPlanJobResult"); }
-        @Override public String azureBdcApplyJobResult(String j) { return result("azureBdcApplyJobResult"); }
-        @Override public String azureBdcDestroyJobResult(String j) { return result("azureBdcDestroyJobResult"); }
+        @Override public List<DispatchedJob> azureBdcPlan(String targetSourceId) { return list("azureBdcPlan"); }
+        @Override public List<DispatchedJob> azureBdcApply(String targetSourceId) { return list("azureBdcApply"); }
+        @Override public List<DispatchedJob> azureBdcDestroy(String targetSourceId) { return list("azureBdcDestroy"); }
+        @Override public TerraformJobStatusResponse azureBdcPlanJobStatus(String terraformJobId) { return status("azureBdcPlanJobStatus"); }
+        @Override public TerraformJobStatusResponse azureBdcApplyJobStatus(String terraformJobId) { return status("azureBdcApplyJobStatus"); }
+        @Override public TerraformJobStatusResponse azureBdcDestroyJobStatus(String terraformJobId) { return status("azureBdcDestroyJobStatus"); }
+        @Override public String azureBdcPlanJobResult(String terraformJobId) { return result("azureBdcPlanJobResult"); }
+        @Override public String azureBdcApplyJobResult(String terraformJobId) { return result("azureBdcApplyJobResult"); }
+        @Override public String azureBdcDestroyJobResult(String terraformJobId) { return result("azureBdcDestroyJobResult"); }
 
-        @Override public DispatchedJob idcDispatch(String t, TerraformJobType type, IdcTerraformType idcType) { return single("idcDispatch:" + type + ":" + idcType); }
-        @Override public TerraformJobStatusResponse idcJobStatus(String j, TerraformJobType type) { return status("idcJobStatus:" + type); }
-        @Override public String idcJobResult(String j, TerraformJobType type) { return result("idcJobResult:" + type); }
+        @Override public DispatchedJob idcDispatch(String targetSourceId, TerraformJobType type, IdcTerraformType idcType) { return single("idcDispatch:" + type + ":" + idcType); }
+        @Override public TerraformJobStatusResponse idcJobStatus(String terraformJobId, TerraformJobType type) { return status("idcJobStatus:" + type); }
+        @Override public String idcJobResult(String terraformJobId, TerraformJobType type) { return result("idcJobResult:" + type); }
 
         @Override public NetworkReadyResponse networkReady(String target) { return ready; }
         @Override public CloudProviderResponse cloudProvider(String target) { return provider; }

@@ -9,8 +9,10 @@ import com.bff.pipeline.exception.CallFailedException;
 import com.bff.pipeline.exception.CallTimeoutException;
 import com.bff.pipeline.repository.TerraformResultRepository;
 import java.time.Clock;
+import java.util.Locale;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
+import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 
@@ -18,7 +20,7 @@ import org.springframework.stereotype.Component;
  * postCheck 관찰(확장 A) recorder다 — attempt가 판정으로 종결되는 turn에 finished job들의 result(= terraform log)를
  * 조회해 {@code terraform_result}에 남긴다(docs/terraform-client-and-postcheck-design.md §4.4의 쓰기 경로 정의).
  *
- * <p><b>상태 무관여가 계약이다.</b> 여기서 일어나는 어떤 조회·저장 실패도 태스크 판정을 바꾸지 않는다 — 닫힌 어휘
+ * 상태 무관여가 계약이다. 여기서 일어나는 어떤 조회·저장 실패도 태스크 판정을 바꾸지 않는다 — 닫힌 어휘
  * 호출 실패({@link CallFailedException}/{@link CallTimeoutException})와 중복 insert는 삼키고 로그만 남긴다.
  * {@code CallInterruptedException}과 진짜 버그는 전파한다(fail-fast) — 기록은 상태 전이 커밋 전에 일어나므로
  * 중단된 turn은 다음 폴 turn이 같은 판정을 다시 내려 재실행하고, 유니크 키 + 존재 선검사가 이미 저장된 행을
@@ -69,10 +71,28 @@ public class TerraformResultRecorder {
                 .build();
         try {
             repository.save(row);
-        } catch (DataIntegrityViolationException duplicate) {
+        } catch (DataIntegrityViolationException violation) {
+            // 유니크 제약(동시 중복 insert)만 멱등으로 삼킨다 — 다른 무결성 위반은 버그이므로 fail-fast로 전파.
+            if (!isAttemptJobDuplicate(violation)) {
+                throw violation;
+            }
             log.debug("task {} attempt {} job {}: terraform result already recorded concurrently",
                     task.getId(), attemptNumber, jobId);
         }
+    }
+
+    private static boolean isAttemptJobDuplicate(DataIntegrityViolationException exception) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof ConstraintViolationException constraintViolation
+                    && namesAttemptJobConstraint(constraintViolation.getConstraintName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean namesAttemptJobConstraint(String value) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(TerraformResult.ATTEMPT_JOB_CONSTRAINT);
     }
 
     /** 본문 조회는 best-effort — 호출 실패는 포인터 행으로 강등한다(null 반환). CallInterrupted는 전파. */
