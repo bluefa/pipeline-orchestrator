@@ -321,6 +321,36 @@ CREATE TABLE terraform_result (
 **S3 — 본문 저장 없이 `result_path`만: 기각.** 저장은 가장 싸지만 owner가 본문 저장 필요를 확인했고,
 열람이 InfraManager/스토리지의 보존 주기와 접근 권한에 종속되는 것도 리스크다.
 
+### 4.5 관리자 노출 — 저장만으로는 대시보드에 안 보인다
+
+`docs/admin-pipeline-dashboard-requirements.md`의 Task 상세 패널(P5, `TaskDetail`)은 attempt의 원시
+`response`(= job id 목록)와 `task_check` 폴 요약까지만 싣는다 — **terraform_result를 읽는 경로가 없다.**
+"관리자에게 terraform 결과를 보여준다"가 성립하려면 저장(§4.4) 위에 읽기 경로 둘이 필요하다:
+
+1. **P5 확장 — 메타데이터만 인라인.** `TaskDetail`의 attempt 항목에 job별 result 메타를 추가한다:
+   `job_id, succeeded, truncated, result_path, has_body(boolean)`. **본문은 싣지 않는다** — 최대
+   16MB짜리 로그를 상세 패널 JSON에 인라인하면 패널 전체가 그 로그 I/O를 지불한다. InfraManager가
+   status와 result를 분리한 것과 같은 이유로 우리도 분리한다.
+2. **P11 신설 — 본문 전용 엔드포인트.**
+   `GET /install/v1/pipelines/{pipelineId}/tasks/{taskId}/attempts/{attemptNumber}/jobs/{jobId}/result`
+   → 저장된 log 본문(text). UI는 노드 클릭 → 메타 확인 → "로그 보기"에서만 이걸 부른다.
+
+관찰 테이블을 admin 쿼리 경로가 읽는 것은 기존 선례 그대로다 — P5가 이미 `task_attempt`/`task_check`를
+읽는다. "엔진은 절대 읽지 않는다"는 invariant는 엔진(claim·스케줄링·전이) 얘기지 admin 조회 얘기가
+아니다.
+
+**커버리지 한계 2가지(요구사항과 대조 필요):**
+- **실행 중 로그는 없다.** 확장 A는 종결 turn에만 기록하므로 RUNNING 중인 job의 로그는 DB에 없다.
+  대시보드 요구가 "완료/실패 후 결과 확인"(postCheck 정의 그대로)이면 충분하고, "실행 중 진행 로그
+  스트리밍"까지면 확장 A로는 부족하다 — 그건 InfraManager result API를 실시간 프록시하는 별도
+  결정(admin→InfraManager 의존 추가)이 필요하다.
+- **행이 없는 job이 존재한다.** JOB_FAILED 조기 종결 turn에 아직 돌던 job은 행이 없고, 조회 실패
+  job은 본문 없는 포인터 행이다. UI는 attempt의 job id 목록과 대조해 "기록 없음"/"본문 없음
+  (result_path 참조)"을 구분 표기해야 한다.
+
+구현 시 `admin-pipeline-dashboard-requirements.md`의 Task 상세 패널 표에 terraform result 행(✅)과
+P11을 추가한다.
+
 ---
 
 ## 5. 확정 사항 (owner 답변, 2026-07-02)
