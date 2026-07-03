@@ -102,6 +102,14 @@ for f in "${files[@]}"; do
     done < <(grep -nE '"ORCHESTRATION_' "$f" 2>/dev/null | grep -v harness-allow)
   fi
 
+  # enum-column-widening-safe: a persisted enum column mapped as a bare @Enumerated(EnumType.STRING)
+  # renders a native MySQL enum(...) that ddl-auto=update won't ALTER — so inserting a newly-added value
+  # then fails on an existing DB. Map it VARCHAR: a @Convert AttributeConverter (see PipelineStatusConverter)
+  # or @JdbcTypeCode(SqlTypes.VARCHAR). The tree is 100% converters (LIN-28), so this only flags a regression.
+  while IFS=: read -r ln _; do
+    add "enum-column-widening-safe" "$f" "$ln" "@Enumerated(EnumType.STRING) native-enum column → map VARCHAR (a @Convert AttributeConverter like PipelineStatusConverter, or @JdbcTypeCode(SqlTypes.VARCHAR)) so a newly-added enum value can't break insert on an existing DB"
+  done < <(grep -nE '@Enumerated\([[:space:]]*EnumType\.STRING[[:space:]]*\)' "$f" 2>/dev/null | grep -v harness-allow)
+
   # Semantic-area reminder: status transitions and new interfaces need the recurring-review AGENT.
   if grep -qE 'setStatus[[:space:]]*\(|^[[:space:]]*(public|private|protected)?[[:space:]]*interface[[:space:]]' "$f" 2>/dev/null; then
     semantic=1

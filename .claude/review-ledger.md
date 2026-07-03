@@ -35,6 +35,7 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 | **no-inline-fqn** — a class is imported and used by its short name, never written fully-qualified inline in code (declaration / `new` / call / cast / type arg); JPQL enum literals in `@Query` strings and javadoc `{@link}`/`{@code}` are exempt | (1) owner (stated hard: "반드시 피해야되는 패턴") · (2) PR#15 review — codex found `PipelineScheduler` `java.time.Clock` + inline FQNs in 3 tests | rule | a `java.`/`javax.`/`com.bff.` FQN inline in code |
 | **no-html-javadoc** — javadoc is plain text; no HTML markup tags (`<b>`/`<p>`/`<em>`/`<i>`/`<strong>`). Diff-scoped: don't ADD tags (`<pre>` layout blocks allowed) | (1) owner (memory: dislikes `<b>`/`<p>`/`<em>`) · (2) PR#15 review — codex flagged added `<b>`/`<p>` | agent (diff-aware; rule too noisy — codebase is saturated) | an HTML tag added to javadoc |
 | **dto-builder** — a wide DTO (adjacent same-type or boolean components) is built with `@Builder`, never a positional `new` where a swapped argument still compiles | (1) ADR-021 retro #3 · (2) R6 post-PR#18 review — `PipelineQueryService` built `PipelineDetail`(19 args)/`TaskDetail`(18 args) positionally | agent | a positional `new` of a wide DTO |
+| **enum-column-widening-safe** — a persisted, extensible enum column is mapped VARCHAR (a `@Convert` `AttributeConverter` like `PipelineStatusConverter`, or `@JdbcTypeCode(SqlTypes.VARCHAR)`), never a bare `@Enumerated(EnumType.STRING)` that Hibernate renders as a native MySQL `enum(...)` — `ddl-auto=update` never ALTERs an existing enum column, so adding a value breaks insert on a live DB (`create-drop` tests never catch it) | (1) `Task.operation`/`TaskOperationConverter` write-safety · (2) LIN-28 (#24) converted every persisted enum; the LIN-30 codex review re-caught it on a stale base | rule (`@Enumerated(EnumType.STRING)`; tree is 100% converters → regression-only) + agent (converter read-strictness: `valueOf` for a state enum, `find→null` for a display-only value) | a native-enum-mapped persisted column |
 
 ## Watch-list (1 occurrence — recorded, promote on the next hit)
 
@@ -56,6 +57,18 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 | VS Code Lombok `@NonNull` false warnings → `.vscode/settings.json` `"java.compile.nullAnalysis.mode":"disabled"` (editor-only, code-unrelated) | ADR-021 retro #16 | none (editor config) |
 
 ## Changelog
+
+- **enum-column-widening-safe promoted (rule + agent).** The LIN-30 (PENDING status) codex doc-review flagged
+  `Pipeline.status` as a native MySQL `enum(...)` that `ddl-auto=update` won't widen — a real P0, but caught on a
+  **stale base**. `origin/main` had already fixed it in **LIN-28 (#24)**, mapping every persisted enum through an
+  `AttributeConverter` (`PipelineStatusConverter`/`PipelineTypeConverter`/`CloudProviderConverter`/`ErrorCodeConverter`/
+  `TaskStatusConverter`, varchar, strict `valueOf` read). 2nd occurrence of the pattern (1st: `Task.operation` /
+  `TaskOperationConverter`) → promoted. **Rule:** `recurring-check.sh` greps `@Enumerated(EnumType.STRING)`; the tree is
+  100% converters post-LIN-28, so it stays silent until a regression reintroduces a native-enum column. **Agent:** the
+  recurring-review agent judges converter read-strictness a grep can't — `valueOf` (fail-fast) for a state enum the
+  engine branches on (`status`), `find→null` (degrade) for a display-only value (`operation`). Lesson recorded: **fetch
+  and diff `origin/main` before assuming the base** — the LIN-30 branch was first cut from a stale local ref and had to
+  be re-based (the redundant `@JdbcTypeCode` fix was then dropped).
 
 - **R6 — post-PR#18 whole-repo review (docs/post-pr18-code-review.md).** The engine/domain had converged
   after prior rounds; nearly every finding sat in the freshly-merged REST layer (PR #18). Harness moves:
