@@ -4,9 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
+import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.config.PipelineSettings;
 import com.bff.pipeline.client.FakeInfraManagerClient;
+import com.bff.pipeline.controller.TargetSourcePipelineController;
+import com.bff.pipeline.dto.pipeline.CreatePipelineRequest;
 import com.bff.pipeline.dto.pipeline.CustomTaskRequest;
+import com.bff.pipeline.dto.pipeline.PipelineDetail;
+import com.bff.pipeline.dto.pipeline.TaskSummary;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.CloudProvider;
@@ -22,6 +27,7 @@ import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
 import com.bff.pipeline.service.lifecycle.PipelineInserter;
 import com.bff.pipeline.service.lifecycle.RecipeCatalog;
+import com.bff.pipeline.service.query.PipelineQueryService;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -42,11 +48,13 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineCreator.class, PipelineInserter.class, RecipeCatalog.class, CustomRecipeCreationTest.Wiring.class})
+@Import({PipelineCreator.class, PipelineInserter.class, RecipeCatalog.class, PipelineQueryService.class,
+        TargetSourcePipelineController.class, CustomRecipeCreationTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class CustomRecipeCreationTest {
 
     @Autowired private PipelineCreator creator;
+    @Autowired private TargetSourcePipelineController controller;
     @Autowired private TaskRepository taskRepository;
     @Autowired private PipelineRepository pipelineRepository;
     @Autowired private FakeInfraManagerClient infraManager;
@@ -73,6 +81,28 @@ class CustomRecipeCreationTest {
         assertThat(chain).extracting(Task::getTaskDefinition, Task::getDescription).containsExactly(
                 tuple(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply first"),
                 tuple(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "then plan"));
+    }
+
+    @Test
+    void customRecipeRunsThroughTheCreateEndpoint() {
+        CreatePipelineRequest request = new CreatePipelineRequest(PipelineType.INSTALL, List.of(
+                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply first"),
+                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "then plan")));
+
+        PipelineDetail detail = controller.create("cust-endpoint", request);
+
+        assertThat(detail.recipeDefinition()).isEqualTo(PipelinePlan.CUSTOM_RECIPE);
+        assertThat(detail.tasks()).extracting(TaskSummary::taskDefinition, TaskSummary::description).containsExactly(
+                tuple(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply first"),
+                tuple(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "then plan"));
+    }
+
+    @Test
+    void createEndpointWithoutTasksStillRunsTheCatalogRecipe() {
+        PipelineDetail detail = controller.create("cust-endpoint-catalog",
+                new CreatePipelineRequest(PipelineType.DELETE, null));
+
+        assertThat(detail.recipeDefinition()).isEqualTo("AWS_DELETE_V1");
     }
 
     @Test
@@ -151,6 +181,17 @@ class CustomRecipeCreationTest {
             return PipelineSettings.builder()
                     .executionTimeout(Duration.ofMinutes(50))
                     .pollingInterval(Duration.ofMinutes(10)).maxFailCount(2).startDelay(Duration.ZERO).build();
+        }
+
+        @Bean
+        ExecutionSettings executionSettings() {
+            return ExecutionSettings.builder()
+                    .workerPerPod(2).leaseDuration(Duration.ofSeconds(30)).apiCallTimeout(Duration.ofSeconds(15))
+                    .runningPipelineCap(100).terraformSlotCap(100).terraformSlotRetry(Duration.ofSeconds(1))
+                    .pollInterval(Duration.ofSeconds(1)).maxIdleSleep(Duration.ofSeconds(1))
+                    .backoffBase(Duration.ofMillis(100)).backoffMax(Duration.ofSeconds(1)).jitterRatio(0.2)
+                    .schedulerInitialDelay(Duration.ofSeconds(5))
+                    .build();
         }
     }
 }
