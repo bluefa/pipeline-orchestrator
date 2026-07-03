@@ -228,7 +228,7 @@ class PipelineQueryServiceTest {
                 .type(PipelineType.INSTALL)
                 .target(target)
                 .cloudProvider(CloudProvider.AWS)
-                .recipeDefinition("AWS_NETWORK_INSTALL_V1")
+                .recipeDefinition("AWS_INSTALL_V1")
                 .status(status)
                 .createdAt(createdAt)
                 .lastActivityAt(createdAt)

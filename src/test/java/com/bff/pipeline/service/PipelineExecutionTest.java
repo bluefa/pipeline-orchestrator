@@ -103,15 +103,23 @@ class PipelineExecutionTest {
 
     @Test
     void terraformHappyPathReachesDoneAndRecordsTheResponse() {
+        // AWS delete recipe = destroy 3단계(BDC service level → BDC common → 서비스), 단계마다 dispatch + poll.
         Pipeline pipeline = creator.create("e-happy", PipelineType.DELETE);
         infraManagerClient.onPoll(TerraformPoll::success);
 
-        pipelineWorker.pollOnce();   // dispatch → IN_PROGRESS
+        pipelineWorker.pollOnce();   // dispatch (BDC service level destroy) → IN_PROGRESS
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
         assertThat(attempt(pipeline, 0).getResponse()).isEqualTo("[\"job-1\"]");
 
-        pipelineWorker.pollOnce();   // poll → DONE
+        pipelineWorker.pollOnce();   // poll → DONE + promote 다음 destroy
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);
+        assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.READY);
+
+        pipelineWorker.pollOnce();   // dispatch (BDC common destroy)
+        pipelineWorker.pollOnce();   // poll → DONE
+        pipelineWorker.pollOnce();   // dispatch (서비스 destroy)
+        pipelineWorker.pollOnce();   // poll → DONE → pipeline DONE
+        assertThat(task(pipeline, 2).getStatus()).isEqualTo(TaskStatus.DONE);
         assertThat(status(pipeline)).isEqualTo(PipelineStatus.DONE);
     }
 
@@ -184,25 +192,33 @@ class PipelineExecutionTest {
 
     @Test
     void installPromotesTheSuccessorInTheSameReportAndFinishes() {
+        // AWS install recipe = 서비스 plan·apply → 네트워크 준비 확인 → BDC common plan·apply → BDC service level plan·apply.
         Pipeline pipeline = creator.create("e-install", PipelineType.INSTALL);
         infraManagerClient.onPoll(TerraformPoll::success);
         infraManagerClient.onCheck(() -> true);
-        assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.BLOCKED);
-        assertThat(task(pipeline, 2).getStatus()).isEqualTo(TaskStatus.BLOCKED);
+        for (int sequence = 1; sequence <= 6; sequence++) {
+            assertThat(task(pipeline, sequence).getStatus()).isEqualTo(TaskStatus.BLOCKED);
+        }
 
-        pipelineWorker.pollOnce();   // dispatch plan terraform
+        pipelineWorker.pollOnce();   // dispatch 서비스 plan terraform
         pipelineWorker.pollOnce();   // poll plan success → DONE + promote apply BLOCKED→READY (same write-back 트랜잭션)
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);
         assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.READY);
 
-        pipelineWorker.pollOnce();   // dispatch apply terraform
+        pipelineWorker.pollOnce();   // dispatch 서비스 apply terraform
         pipelineWorker.pollOnce();   // poll apply success → DONE + promote condition BLOCKED→READY
         assertThat(task(pipeline, 1).getStatus()).isEqualTo(TaskStatus.DONE);
         assertThat(task(pipeline, 2).getStatus()).isEqualTo(TaskStatus.READY);
 
         pipelineWorker.pollOnce();   // dispatch condition (NONE) → IN_PROGRESS
-        pipelineWorker.pollOnce();   // poll condition met → DONE → pipeline DONE
+        pipelineWorker.pollOnce();   // poll condition met → DONE + promote BDC common plan
         assertThat(task(pipeline, 2).getStatus()).isEqualTo(TaskStatus.DONE);
+        assertThat(task(pipeline, 3).getStatus()).isEqualTo(TaskStatus.READY);
+
+        for (int i = 0; i < 8; i++) {
+            pipelineWorker.pollOnce();   // BDC common plan·apply → BDC service level plan·apply (각 dispatch + poll)
+        }
+        assertThat(task(pipeline, 6).getStatus()).isEqualTo(TaskStatus.DONE);
         assertThat(status(pipeline)).isEqualTo(PipelineStatus.DONE);
     }
 
@@ -315,7 +331,7 @@ class PipelineExecutionTest {
         pipelineWorker.pollOnce();
 
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.DONE);
-        assertThat(status(pipeline)).isEqualTo(PipelineStatus.DONE);
+        assertThat(status(pipeline)).isEqualTo(PipelineStatus.RUNNING);   // 나머지 destroy 2단계가 남아 있다
     }
 
     @Test

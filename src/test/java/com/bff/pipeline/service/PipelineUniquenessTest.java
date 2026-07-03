@@ -63,7 +63,7 @@ class PipelineUniquenessTest {
         Pipeline pipeline = creator.create("prov-a", PipelineType.INSTALL);
 
         assertThat(pipeline.getCloudProvider()).isEqualTo(CloudProvider.AWS);
-        assertThat(pipeline.getRecipeDefinition()).isEqualTo("AWS_NETWORK_INSTALL_V1");
+        assertThat(pipeline.getRecipeDefinition()).isEqualTo("AWS_INSTALL_V1");
     }
 
     @Test

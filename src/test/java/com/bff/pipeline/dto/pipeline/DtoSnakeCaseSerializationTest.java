@@ -29,7 +29,7 @@ class DtoSnakeCaseSerializationTest {
     @Test
     void pipelineSummarySerializesSnakeCase() throws Exception {
         PipelineSummary summary = new PipelineSummary(101L, PipelineType.INSTALL, "ts-1", CloudProvider.AWS,
-                "AWS_NETWORK_INSTALL_V1", PipelineStatus.RUNNING, 1, 2,
+                "AWS_INSTALL_V1", PipelineStatus.RUNNING, 1, 2,
                 Instant.parse("2026-07-02T00:00:00Z"), Instant.parse("2026-07-02T00:05:00Z"));
 
         String json = mapper.writeValueAsString(summary);
@@ -45,7 +45,7 @@ class DtoSnakeCaseSerializationTest {
         TaskSummary task = new TaskSummary(5L, 0, "TERRAFORM_JOB", "AWS_SERVICE_APPLY_V1", TaskOperation.AWS_SERVICE_TF_APPLY,
                 TaskStatus.IN_PROGRESS, 0, null, true, Instant.parse("2026-07-02T00:00:00Z"), null);
         PipelineDetail detail = new PipelineDetail(101L, PipelineType.INSTALL, "ts-1", CloudProvider.AWS,
-                "AWS_NETWORK_INSTALL_V1", PipelineStatus.RUNNING, Instant.parse("2026-07-02T00:00:00Z"),
+                "AWS_INSTALL_V1", PipelineStatus.RUNNING, Instant.parse("2026-07-02T00:00:00Z"),
                 Instant.parse("2026-07-02T00:05:00Z"), Instant.parse("2026-07-02T00:06:00Z"), true, false,
                 0L, 0, 1, 0, 3, 1, 2, List.of(task));
 
@@ -78,9 +78,9 @@ class DtoSnakeCaseSerializationTest {
 
     @Test
     void recipePreviewAndStepsSerializeSnakeCase() throws Exception {
-        String json = mapper.writeValueAsString(RecipePreview.from(RecipeDefinition.AWS_NETWORK_INSTALL_V1));
+        String json = mapper.writeValueAsString(RecipePreview.from(RecipeDefinition.AWS_INSTALL_V1));
 
-        assertThat(json).contains("\"recipe_definition\":\"AWS_NETWORK_INSTALL_V1\"", "\"display_name\":",
+        assertThat(json).contains("\"recipe_definition\":\"AWS_INSTALL_V1\"", "\"display_name\":",
                 "\"task_definition\":", "\"consumes_terraform_slot\":",
                 "\"definition\":", "\"dispatch_api\":", "\"success_policy\":", "\"result_storage\":");
         assertThat(json).doesNotContain("recipeDefinition", "displayName", "consumesTerraformSlot",
