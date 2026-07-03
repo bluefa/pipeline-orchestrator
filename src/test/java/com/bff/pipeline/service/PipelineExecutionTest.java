@@ -38,6 +38,8 @@ import com.bff.pipeline.service.task.terraform.TerraformResultRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -150,7 +152,7 @@ class PipelineExecutionTest {
         // 집계 정책(전원 terminal 대기): FAILED job을 봤어도 형제 job이 인프라에서 손을 뗄 때까지 판정을 미룬다.
         Pipeline pipeline = creator.create("e-wait", PipelineType.DELETE);
         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
-        java.util.Map<String, TerraformPoll> polls = new java.util.HashMap<>();
+        Map<String, TerraformPoll> polls = new HashMap<>();
         polls.put("job-1", TerraformPoll.failure());
         polls.put("job-2", TerraformPoll.running());
         infraManagerClient.onPollByJob(polls::get);
@@ -176,7 +178,7 @@ class PipelineExecutionTest {
     void aDeadlineWithAFailedJobConcludesJobFailedAndRecordsOnlyFinishedJobs() {
         Pipeline pipeline = creator.create("e-deadline", PipelineType.DELETE);
         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
-        java.util.Map<String, TerraformPoll> polls = new java.util.HashMap<>();
+        Map<String, TerraformPoll> polls = new HashMap<>();
         polls.put("job-1", TerraformPoll.failure());
         polls.put("job-2", TerraformPoll.running());   // 데드라인까지 안 끝난다
         infraManagerClient.onPollByJob(polls::get);
