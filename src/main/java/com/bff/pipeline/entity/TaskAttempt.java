@@ -3,9 +3,8 @@ package com.bff.pipeline.entity;
 import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.TaskStatus;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -57,11 +56,14 @@ public class TaskAttempt {
     @Column(columnDefinition = "text")
     private String response;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    /** 이 attempt의 결과(varchar 저장, {@link TaskStatusConverter}). status는 엔진 완료 판정에 직접 쓰이므로 read는 fail-fast를 유지한다. */
+    @Convert(converter = TaskStatusConverter.class)
+    @Column(nullable = false, length = 16)
     private TaskStatus status;
 
-    @Enumerated(EnumType.STRING)
+    /** 실패 사유(varchar 저장, {@link ErrorCodeConverter}). 표시용 값이라 미해석 옛 값은 null로 열화한다. */
+    @Convert(converter = ErrorCodeConverter.class)
+    @Column(length = 32)
     private ErrorCode errorCode;
 
     @Column(nullable = false)

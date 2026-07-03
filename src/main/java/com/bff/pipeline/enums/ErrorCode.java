@@ -1,5 +1,7 @@
 package com.bff.pipeline.enums;
 
+import java.util.Optional;
+
 /**
  * 태스크 실패 원인을 담는 정식 열거형으로, DB에 영속된다(ADR-016 §6). 각 값은 하나의 구체적 원인이지
  * 여러 원인을 뭉뚱그린 버킷이 아니다. 비즈니스 실패를 표현하는 "메시지"에 해당하며, 태스크가 실패하면
@@ -25,5 +27,21 @@ public enum ErrorCode {
     /** InfraManager 호출 한 번이 호출별 타임아웃을 넘긴 경우. */
     CALL_TIMEOUT,
     /** 저장된 태스크 이름에 맞는 {@code TaskType}이 등록돼 있지 않은 경우. */
-    UNKNOWN_TASK
+    UNKNOWN_TASK;
+
+    /**
+     * 저장된 error_code 이름(String)을 상수로 해석한다. 미해석(카탈로그에서 제거/rename된 옛 값)은 예외 대신
+     * empty를 돌려주어 read가 터지지 않게 한다 — TaskOperation.find/TaskDefinition.find와 같은 열화 규약이며,
+     * ErrorCodeConverter가 이 해석으로 행을 읽는다.
+     */
+    public static Optional<ErrorCode> find(String name) {
+        if (name == null || name.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(ErrorCode.valueOf(name));
+        } catch (IllegalArgumentException notAnErrorCode) {
+            return Optional.empty();
+        }
+    }
 }
