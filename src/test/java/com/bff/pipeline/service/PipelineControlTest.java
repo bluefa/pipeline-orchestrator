@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 import com.bff.pipeline.client.FakeInfraManagerClient;
+import com.bff.pipeline.config.PipelineSettings;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.exception.MissingPipelineIdException;
 import com.bff.pipeline.exception.PipelineNotFoundException;
@@ -20,6 +21,7 @@ import com.bff.pipeline.service.lifecycle.RecipeCatalog;
 import com.bff.pipeline.service.task.ObservationRecorder;
 import com.bff.pipeline.service.task.TaskCanceller;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import org.junit.jupiter.api.AfterEach;
@@ -136,6 +138,13 @@ class PipelineControlTest {
         @Bean
         FakeInfraManagerClient infraManager() {
             return new FakeInfraManagerClient();
+        }
+
+        @Bean
+        PipelineSettings pipelineSettings() {
+            return PipelineSettings.builder()
+                    .executionTimeout(Duration.ofMinutes(50))
+                    .pollingInterval(Duration.ofMinutes(10)).maxFailCount(2).startDelay(Duration.ZERO).build();
         }
     }
 }

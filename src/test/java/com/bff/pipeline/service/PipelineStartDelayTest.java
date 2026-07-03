@@ -16,6 +16,7 @@ import com.bff.pipeline.service.execution.PipelineClaimer;
 import com.bff.pipeline.service.execution.PipelineWorker;
 import com.bff.pipeline.service.execution.StepReporter;
 import com.bff.pipeline.service.execution.StepRunner;
+import com.bff.pipeline.service.lifecycle.PipelineControl;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
 import com.bff.pipeline.service.lifecycle.PipelineInserter;
 import com.bff.pipeline.service.lifecycle.RecipeCatalog;
@@ -28,6 +29,7 @@ import com.bff.pipeline.service.task.terraform.TerraformResultRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,23 +42,26 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * ADR-021 Decision 7 soft caps. {@code runningPipelineCap=1}로 claim 게이트를, {@code terraformSlotCap=0}으로 TF slot
- * 게이트를 강제한다. 두 캡 모두 soft이며 생성은 게이트하지 않는다.
+ * LIN-17: 파이프라인 생성 후 {@code pipeline.start-delay} 만큼 대기한 뒤에야 첫 Task가 dispatch되는지 검증한다.
+ * 지연은 sleep이 아니라 {@code nextDueAt = now + startDelay} 시딩으로 구현되므로, claim 술어
+ * ({@code next_due_at <= now})가 지연 경과 전에는 이 실행을 잡지 않는다. 대기 중 취소도 확인한다.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
         TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, ConditionCheckTask.class,
         ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class, PipelineInserter.class,
-        RecipeCatalog.class, PipelineSoftCapTest.Wiring.class})
+        PipelineControl.class, RecipeCatalog.class, PipelineStartDelayTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-class PipelineSoftCapTest {
+class PipelineStartDelayTest {
 
     private static final Instant START = Instant.parse("2026-06-23T00:00:00Z");
+    private static final Duration DELAY = Duration.ofSeconds(15);
 
     @Autowired private PipelineClaimer pipelineClaimer;
     @Autowired private PipelineWorker pipelineWorker;
     @Autowired private PipelineCreator creator;
+    @Autowired private PipelineControl control;
     @Autowired private TaskRepository taskRepository;
     @Autowired private PipelineRepository pipelineRepository;
     @Autowired private MutableClock clock;
@@ -69,48 +74,48 @@ class PipelineSoftCapTest {
     }
 
     @Test
-    void theAdmissionCapBlocksASecondConcurrentClaim() {
-        creator.create("cap-a", PipelineType.DELETE);
-        creator.create("cap-b", PipelineType.DELETE);
+    void firstTaskDoesNotDispatchBeforeTheDelayElapses() {
+        Pipeline pipeline = creator.create("delay-a", PipelineType.DELETE);
 
-        assertThat(pipelineClaimer.claimOneDue()).isPresent();   // 1 active claim == cap
-        assertThat(pipelineClaimer.claimOneDue()).isEmpty();      // blocked by the soft cap
+        assertThat(pipeline.getNextDueAt()).isEqualTo(START.plus(DELAY));
+        assertThat(pipelineClaimer.claimOneDue()).isEmpty();       // not due yet
+        assertThat(pipelineWorker.pollOnce()).isEmpty();            // nothing to run
+        assertThat(firstTask(pipeline).getStatus()).isEqualTo(TaskStatus.READY);   // still not dispatched
     }
 
     @Test
-    void creationIsNotGatedByTheCap() {
-        creator.create("cap-c", PipelineType.DELETE);
-        pipelineClaimer.claimOneDue();   // cap reached
+    void firstTaskDispatchesOnceTheDelayElapses() {
+        Pipeline pipeline = creator.create("delay-b", PipelineType.DELETE);
 
-        Pipeline overCap = creator.create("cap-d", PipelineType.DELETE);
+        clock.set(START.plus(DELAY));
+        pipelineWorker.pollOnce();   // now due → dispatch first destroy
 
-        assertThat(pipelineRepository.findById(overCap.getId()).orElseThrow().getStatus())
-                .isEqualTo(PipelineStatus.RUNNING);
+        assertThat(firstTask(pipeline).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
     }
 
     @Test
-    void theTerraformSlotGateReschedulesAndReleasesTheClaimWhenNoSlotIsFree() {
-        occupyTheOnlyTerraformSlot();
-        Pipeline pipeline = creator.create("cap-slot", PipelineType.DELETE);   // the only due pipeline
+    void cancelDuringTheWaitRunsNoTaskAtAll() {
+        Pipeline pipeline = creator.create("delay-c", PipelineType.DELETE);
 
-        pipelineWorker.pollOnce();   // terraform READY dispatch, but the single slot is taken → reschedule
+        control.cancel(pipeline.getId());   // still waiting, unclaimed → Case A cancels immediately
 
-        Pipeline after = pipelineRepository.findById(pipeline.getId()).orElseThrow();
-        assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).getFirst().getStatus())
-                .isEqualTo(TaskStatus.READY);                       // not dispatched
-        assertThat(after.getClaimedBy()).isNull();                  // claim released
-        assertThat(after.getNextDueAt()).isEqualTo(START.plusSeconds(1));   // pushed by terraformSlotRetry
+        assertThat(pipelineRepository.findById(pipeline.getId()).orElseThrow().getStatus())
+                .isEqualTo(PipelineStatus.CANCELLED);
+        assertThat(tasks(pipeline)).allSatisfy(task ->
+                assertThat(task.getStatus()).isEqualTo(TaskStatus.CANCELLED));
+
+        clock.set(START.plus(DELAY));
+        assertThat(pipelineWorker.pollOnce()).isEmpty();   // terminal → nothing dispatches after the delay either
+        assertThat(tasks(pipeline)).noneSatisfy(task ->
+                assertThat(task.getStatus()).isIn(TaskStatus.IN_PROGRESS, TaskStatus.DONE));
     }
 
-    /** terraformSlotCap=1을 채우는 IN_PROGRESS terraform task를 두되, 그 pipeline은 미래 due로 두어 claim 대상에서 제외한다. */
-    private void occupyTheOnlyTerraformSlot() {
-        Pipeline filler = creator.create("cap-filler", PipelineType.DELETE);
-        Task task = taskRepository.findByPipelineIdOrderBySequenceAsc(filler.getId()).getFirst();
-        task.setStatus(TaskStatus.IN_PROGRESS);
-        taskRepository.save(task);
-        Pipeline row = pipelineRepository.findById(filler.getId()).orElseThrow();
-        row.setNextDueAt(START.plus(Duration.ofDays(1)));   // not due → won't be claimed
-        pipelineRepository.save(row);
+    private Task firstTask(Pipeline pipeline) {
+        return tasks(pipeline).getFirst();
+    }
+
+    private List<Task> tasks(Pipeline pipeline) {
+        return taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId());
     }
 
     @TestConfiguration
@@ -129,14 +134,14 @@ class PipelineSoftCapTest {
         PipelineSettings pipelineSettings() {
             return PipelineSettings.builder()
                     .executionTimeout(Duration.ofMinutes(50))
-                    .pollingInterval(Duration.ofMinutes(10)).maxFailCount(2).startDelay(Duration.ZERO).build();
+                    .pollingInterval(Duration.ofMinutes(10)).maxFailCount(2).startDelay(DELAY).build();
         }
 
         @Bean
         ExecutionSettings executionSettings() {
             return ExecutionSettings.builder()
                     .workerPerPod(2).leaseDuration(Duration.ofSeconds(30)).apiCallTimeout(Duration.ofSeconds(15))
-                    .runningPipelineCap(1).terraformSlotCap(1).terraformSlotRetry(Duration.ofSeconds(1))
+                    .runningPipelineCap(100).terraformSlotCap(100).terraformSlotRetry(Duration.ofSeconds(1))
                     .pollInterval(Duration.ofSeconds(1)).maxIdleSleep(Duration.ofSeconds(1))
                     .backoffBase(Duration.ofMillis(100)).backoffMax(Duration.ofSeconds(1)).jitterRatio(0.2)
                     .schedulerInitialDelay(Duration.ofSeconds(5))

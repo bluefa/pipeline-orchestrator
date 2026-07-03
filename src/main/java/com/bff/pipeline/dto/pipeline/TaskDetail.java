@@ -16,6 +16,7 @@ import lombok.Builder;
  * CONDITION_CHECK는 TTL 대신 maxFailCount(재시도 예산)로 경계된다(ADR-016 §6, #15). CONDITION_CHECK는
  * 폴 하나가 곧 attempt 하나라 attempts 목록이 폴 수만큼 늘어난다(각 attempt의 check는 call_count=1).
  * definition은 task_definition 이름을 카탈로그에서 해석한 실행 계약 뷰이며, 미해석(삭제/rename된 옛 이름)이면 null이다.
+ * description은 custom recipe 실행에서 운영자가 이 task에 붙인 설명이고(LIN-18), 카탈로그 recipe task면 null이다.
  * 와이어 필드는 snake_case로 직렬화한다. 인접 동형 인자가 많아 위치 기반 생성 대신 {@code @Builder}로 만든다.
  */
 @Builder
@@ -38,5 +39,6 @@ public record TaskDetail(
         @JsonProperty("effective_polling_interval") Duration effectivePollingInterval,
         @JsonProperty("effective_execution_timeout") Duration effectiveExecutionTimeout,
         @JsonProperty("effective_max_fail_count") int effectiveMaxFailCount,
-        @JsonProperty("attempts") List<TaskAttemptView> attempts) {
+        @JsonProperty("attempts") List<TaskAttemptView> attempts,
+        @JsonProperty("description") String description) {
 }

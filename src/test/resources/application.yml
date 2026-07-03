@@ -19,3 +19,4 @@ pipeline:
   execution-timeout: PT50M
   polling-interval: PT10M
   max-fail-count: 2
+  start-delay: PT0S   # tests exercise immediate dispatch; LIN-17 delay is covered by PipelineStartDelayTest overrides

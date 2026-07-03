@@ -10,6 +10,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * 오버라이드하지 않으면 여기서 정한 값이 쓰인다. (실행 케이던스 — 틱 간격, 호출별 타임아웃, 워커 풀 크기 —
  * 는 ADR-021 러너의 몫이라 여기서 설정하지 않는다.) {@code @Builder}로 명명 생성도 지원한다.
  *
+ * {@code startDelay}는 파이프라인 생성 후 첫 Task dispatch까지의 대기다. PipelineInserter가 생성 시
+ * {@code nextDueAt = now + startDelay}로 시딩해, claim 술어({@code next_due_at <= now})가 지연 경과 전에는
+ * 이 실행을 잡지 않게 한다(sleep 없이 스케줄링으로 지연). 0이면 즉시 시작한다.
+ *
  * <p>compact constructor가 값을 검증한다. {@code pipeline.*} 키가 빠졌거나 값이 양수가 아니면 문제가 된
  * 키 이름과 함께 곧바로 시작에 실패한다(fail fast). {@code maxFailCount}가 1 미만이어도 마찬가지로 시작 시
  * 예외가 난다. 이렇게 막아 두면 데드라인 계산({@code TaskSettingsResolver})에서 나중에 NPE나 조용한 오동작으로
@@ -20,13 +24,24 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record PipelineSettings(
         Duration executionTimeout,
         Duration pollingInterval,
-        int maxFailCount) {
+        int maxFailCount,
+        Duration startDelay) {
 
     public PipelineSettings {
         requirePositive(executionTimeout, "pipeline.execution-timeout");
         requirePositive(pollingInterval, "pipeline.polling-interval");
         if (maxFailCount < 1) {
             throw new IllegalArgumentException("pipeline.max-fail-count must be >= 1, was " + maxFailCount);
+        }
+        requireNonNegative(startDelay, "pipeline.start-delay");   // 0이면 지연 없이 즉시 시작(테스트 오버라이드)
+    }
+
+    private static void requireNonNegative(Duration value, String property) {
+        if (value == null) {
+            throw new IllegalArgumentException(property + " must be set");
+        }
+        if (value.isNegative()) {
+            throw new IllegalArgumentException(property + " must not be negative, was " + value);
         }
     }
 

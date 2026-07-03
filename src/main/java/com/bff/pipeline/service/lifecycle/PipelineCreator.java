@@ -1,16 +1,24 @@
 package com.bff.pipeline.service.lifecycle;
 
 import com.bff.pipeline.client.InfraManagerClient;
+import com.bff.pipeline.dto.pipeline.CustomTaskRequest;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.RecipeDefinition;
+import com.bff.pipeline.enums.TaskDefinition;
+import com.bff.pipeline.exception.MissingPipelineTypeException;
 import com.bff.pipeline.exception.MissingTargetException;
 import com.bff.pipeline.exception.PipelineAlreadyActiveException;
 import com.bff.pipeline.exception.PipelinePersistenceException;
 import com.bff.pipeline.exception.ProviderLookupException;
+import com.bff.pipeline.exception.TaskDescriptionTooLongException;
+import com.bff.pipeline.exception.TaskProviderMismatchException;
+import com.bff.pipeline.exception.UnknownTaskException;
 import com.bff.pipeline.exception.UnsupportedRecipeException;
 import com.bff.pipeline.model.PipelinePlan;
+import com.bff.pipeline.model.PipelinePlan.PlannedStep;
+import java.util.List;
 import java.util.Locale;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -44,16 +52,62 @@ public class PipelineCreator {
         this.infraManagerClient = infraManagerClient;
     }
 
+    /** 카탈로그 recipe 실행. custom task 없이 (provider, type)으로 고정 recipe를 고른다(하위호환 기본 경로). */
     public Pipeline create(String target, PipelineType type) {
-        RecipeDefinition recipe = resolveRecipe(target, type);   // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
+        return create(target, type, null);
+    }
+
+    /**
+     * 파이프라인 실행(P10). {@code tasks}가 비어 있으면 카탈로그 recipe를, 있으면 그 순서·이름대로 custom recipe를
+     * 검증해 실행한다(LIN-18, 비영속). plan 구성은 트랜잭션 밖에서 입력 검증 + provider 조회를 마치고, 삽입만
+     * inserter의 트랜잭션에 맡긴다 — 유니크 위반은 여기서 도메인 응답으로 번역한다.
+     */
+    public Pipeline create(String target, PipelineType type, List<CustomTaskRequest> tasks) {
+        if (type == null) {   // 서비스 자체를 진입점으로 봐도 계약 위반이 500(raw NPE)으로 새지 않게 400으로 못박는다
+            throw new MissingPipelineTypeException();
+        }
+        PipelinePlan plan = (tasks == null || tasks.isEmpty())
+                ? PipelinePlan.fromCatalog(target, resolveRecipe(target, type))   // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
+                : resolveCustomPlan(target, type, tasks);
         try {
-            return pipelineInserter.insert(new PipelinePlan(target, recipe));
+            return pipelineInserter.insert(plan);
         } catch (DataIntegrityViolationException violation) {
             if (isActiveTargetViolation(violation)) {
                 throw new PipelineAlreadyActiveException(target);
             }
             throw new PipelinePersistenceException(target, violation);
         }
+    }
+
+    /**
+     * custom task 리스트를 검증해 plan으로 만든다. target·provider는 catalog 경로와 동일하게 확인하고, 각 task는
+     * 이름 존재·provider 일치·설명 길이(≤100)를 검사한다 — 하나라도 어기면 400. 어떤 것도 저장하지 않는다.
+     */
+    private PipelinePlan resolveCustomPlan(String target, PipelineType type, List<CustomTaskRequest> tasks) {
+        if (target == null || target.isBlank()) {
+            throw new MissingTargetException();
+        }
+        CloudProvider provider = resolveProvider(target);   // 트랜잭션 밖 외부 조회(§3)
+        List<PlannedStep> steps = tasks.stream()
+                .map(task -> validateStep(task, provider))
+                .toList();
+        return PipelinePlan.custom(target, type, provider, steps);
+    }
+
+    /** custom task 하나를 검증해 PlannedStep으로 해석한다 — 미존재/provider 불일치/설명 초과는 각각 전용 400 예외. */
+    private static PlannedStep validateStep(CustomTaskRequest task, CloudProvider provider) {
+        String name = task == null ? null : task.name();
+        TaskDefinition definition = TaskDefinition.find(name)
+                .orElseThrow(() -> new UnknownTaskException(name));
+        if (definition.provider() != provider) {
+            throw new TaskProviderMismatchException(name, definition.provider(), provider);
+        }
+        String description = task.description();
+        if (description != null && description.length() > CustomTaskRequest.MAX_DESCRIPTION_LENGTH) {
+            throw new TaskDescriptionTooLongException(name, description.length(),
+                    CustomTaskRequest.MAX_DESCRIPTION_LENGTH);
+        }
+        return new PlannedStep(definition, description);
     }
 
     /**

@@ -62,6 +62,6 @@ public class TargetSourcePipelineController {
         if (request == null || request.type() == null) {
             throw new MissingPipelineTypeException();
         }
-        return queryService.toDetail(pipelineCreator.create(targetSourceId, request.type()));
+        return queryService.toDetail(pipelineCreator.create(targetSourceId, request.type(), request.tasks()));
     }
 }

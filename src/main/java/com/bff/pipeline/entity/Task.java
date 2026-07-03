@@ -97,6 +97,13 @@ public class Task {
     @Column(name = "consumes_terraform_slot")
     private Boolean consumesTerraformSlot;
 
+    /**
+     * custom recipe 실행에서 운영자가 이 step에 붙인 설명(LIN-18). 최대 100자로 요청 시점에 검증한다. 카탈로그
+     * recipe로 만든 task는 null이며, TaskDefinition 자체의 설명은 task_definition 이름으로 조회 시점에 파생한다.
+     */
+    @Column(length = 100)
+    private String description;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private TaskStatus status;

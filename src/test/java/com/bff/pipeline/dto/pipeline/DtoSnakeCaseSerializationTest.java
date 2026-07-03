@@ -43,7 +43,7 @@ class DtoSnakeCaseSerializationTest {
     @Test
     void pipelineDetailAndNestedTaskSerializeSnakeCase() throws Exception {
         TaskSummary task = new TaskSummary(5L, 0, "TERRAFORM_JOB", "AWS_SERVICE_APPLY_V1", TaskOperation.AWS_SERVICE_TF_APPLY,
-                TaskStatus.IN_PROGRESS, 0, null, true, Instant.parse("2026-07-02T00:00:00Z"), null);
+                TaskStatus.IN_PROGRESS, 0, null, true, Instant.parse("2026-07-02T00:00:00Z"), null, "manual apply");
         PipelineDetail detail = new PipelineDetail(101L, PipelineType.INSTALL, "ts-1", CloudProvider.AWS,
                 "AWS_INSTALL_V1", PipelineStatus.RUNNING, Instant.parse("2026-07-02T00:00:00Z"),
                 Instant.parse("2026-07-02T00:05:00Z"), Instant.parse("2026-07-02T00:06:00Z"), true, false,
@@ -53,7 +53,8 @@ class DtoSnakeCaseSerializationTest {
 
         assertThat(json).contains("\"next_due_at\":", "\"cancel_requested\":false", "\"due_lag_millis\":0",
                 "\"current_task_sequence\":0", "\"final_task_sequence\":1", "\"current_max_fail_count\":3");
-        assertThat(json).contains("\"task_id\":5", "\"consumes_terraform_slot\":true", "\"fail_count\":0");
+        assertThat(json).contains("\"task_id\":5", "\"consumes_terraform_slot\":true", "\"fail_count\":0",
+                "\"description\":\"manual apply\"");
         assertThat(json).doesNotContain("nextDueAt", "cancelRequested", "taskId", "consumesTerraformSlot");
     }
 
@@ -93,16 +94,28 @@ class DtoSnakeCaseSerializationTest {
                 TaskDefinitionView.from(TaskDefinition.AWS_SERVICE_APPLY_V1),
                 TaskOperation.AWS_SERVICE_TF_APPLY, TaskStatus.IN_PROGRESS, 0, null, true,
                 Instant.parse("2026-07-02T00:00:00Z"), Instant.parse("2026-07-02T00:00:00Z"), null, null,
-                Duration.ofMinutes(10), Duration.ofMinutes(50), 2, List.of());
+                Duration.ofMinutes(10), Duration.ofMinutes(50), 2, List.of(), "custom note");
 
         String json = mapper.writeValueAsString(detail);
 
         assertThat(json).contains("\"effective_polling_interval\":", "\"effective_execution_timeout\":",
                 "\"effective_max_fail_count\":2", "\"next_check_at\":",
                 "\"definition\":", "\"dispatch_api\":", "\"status_api\":", "\"result_api\":",
-                "\"success_policy\":", "\"result_storage\":");
+                "\"success_policy\":", "\"result_storage\":", "\"description\":\"custom note\"");
         assertThat(json).doesNotContain("effectiveMaxFailCount", "nextCheckAt", "dispatchApi", "statusApi",
                 "resultApi", "successPolicy", "resultStorage");
+    }
+
+    @Test
+    void taskCatalogResponseSerializesSnakeCase() throws Exception {
+        TaskCatalogEntry entry = TaskCatalogEntry.from(TaskDefinition.AWS_SERVICE_APPLY_V1);
+
+        String json = mapper.writeValueAsString(new TaskCatalogResponse(List.of(entry)));
+
+        assertThat(json).contains("\"task_definitions\":", "\"name\":\"AWS_SERVICE_APPLY_V1\"", "\"display_name\":",
+                "\"description\":", "\"provider\":\"AWS\"", "\"kind\":\"TERRAFORM_JOB\"",
+                "\"consumes_terraform_slot\":true");
+        assertThat(json).doesNotContain("taskDefinitions", "displayName", "consumesTerraformSlot");
     }
 
     @Test

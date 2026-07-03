@@ -6,12 +6,15 @@ import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.enums.TaskStatus;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.Instant;
+import lombok.Builder;
 
 /**
  * task 흐름 노드 한 개의 읽기 전용 뷰다(P4의 tasks 목록). kind는 task type 이름(taskName)이며
  * "TERRAFORM_JOB"/"CONDITION_CHECK" 같은 실행 메커니즘 식별자다. errorCode는 FAILED일 때만 채워진다.
- * 와이어 필드는 snake_case로 직렬화한다.
+ * description은 custom recipe 실행에서 운영자가 붙인 설명이고 카탈로그 task면 null이다(LIN-18).
+ * 와이어 필드는 snake_case로 직렬화한다. 인접 동형 인자가 많아 위치 기반 생성 대신 {@code @Builder}로 만든다.
  */
+@Builder
 public record TaskSummary(
         @JsonProperty("task_id") long taskId,
         @JsonProperty("sequence") int sequence,
@@ -23,11 +26,23 @@ public record TaskSummary(
         @JsonProperty("error_code") ErrorCode errorCode,
         @JsonProperty("consumes_terraform_slot") Boolean consumesTerraformSlot,
         @JsonProperty("started_at") Instant startedAt,
-        @JsonProperty("finished_at") Instant finishedAt) {
+        @JsonProperty("finished_at") Instant finishedAt,
+        @JsonProperty("description") String description) {
 
     public static TaskSummary from(Task task) {
-        return new TaskSummary(task.getId(), task.getSequence(), task.getTaskName(), task.getTaskDefinition(),
-                task.getOperation(), task.getStatus(), task.getFailCount(), task.getErrorCode(),
-                task.getConsumesTerraformSlot(), task.getStartedAt(), task.getFinishedAt());
+        return TaskSummary.builder()
+                .taskId(task.getId())
+                .sequence(task.getSequence())
+                .kind(task.getTaskName())
+                .taskDefinition(task.getTaskDefinition())
+                .operation(task.getOperation())
+                .status(task.getStatus())
+                .failCount(task.getFailCount())
+                .errorCode(task.getErrorCode())
+                .consumesTerraformSlot(task.getConsumesTerraformSlot())
+                .startedAt(task.getStartedAt())
+                .finishedAt(task.getFinishedAt())
+                .description(task.getDescription())
+                .build();
     }
 }
