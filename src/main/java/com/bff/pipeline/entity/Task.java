@@ -5,6 +5,7 @@ import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.enums.TaskStatus;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -69,8 +70,15 @@ public class Task {
     @Column(name = "task_name", nullable = false)
     private String taskName;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    /**
+     * 도메인 액션의 write-once 캐시(varchar 저장, {@link TaskOperationConverter}). {@code @Enumerated}가 아닌
+     * 변환기를 쓰는 이유: 카탈로그에서 제거된 옛 값이 read를 터뜨리지 않고 null로 열화하며(StepRunner의
+     * row 캐시 대조가 UNKNOWN_TASK로 끊는다), 값 추가가 네이티브 enum 컬럼 정의에 막히지 않는다.
+     * {@code updatable = false}가 write-once를 강제한다 — 열화된 행(null 해석)에 상태 update가 일어나도
+     * 이 컬럼은 update SQL과 not-null 속성 검사에서 빠져, 저장된 옛 값이 보존되고 flush도 터지지 않는다.
+     */
+    @Convert(converter = TaskOperationConverter.class)
+    @Column(nullable = false, updatable = false, length = 64)
     private TaskOperation operation;
 
     /**

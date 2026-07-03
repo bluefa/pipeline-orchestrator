@@ -49,6 +49,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import com.bff.pipeline.exception.CallFailedException;
@@ -81,6 +82,7 @@ class PipelineExecutionTest {
     @Autowired private TerraformResultRepository terraformResultRepository;
     @Autowired private MutableClock clock;
     @Autowired private FakeInfraManagerClient infraManagerClient;
+    @Autowired private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void reset() {
@@ -340,6 +342,20 @@ class PipelineExecutionTest {
         Task task = task(pipeline, 0);
         task.setTaskName("NO_SUCH_TYPE");
         taskRepository.save(task);
+
+        pipelineWorker.pollOnce();
+
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.FAILED);
+        assertThat(task(pipeline, 0).getErrorCode()).isEqualTo(ErrorCode.UNKNOWN_TASK);
+        assertThat(status(pipeline)).isEqualTo(PipelineStatus.FAILED);
+    }
+
+    @Test
+    void aLegacyOperationValueFailsAsUnknownTaskInsteadOfCrashingTheRead() {
+        // 카탈로그에서 제거된 옛 operation 값 — converter가 null로 열화하고, StepRunner의 row 캐시 대조가
+        // 정의 불일치로 보고 외부 호출 없이 UNKNOWN_TASK로 끊는다(@Enumerated였다면 조회 자체가 터진다).
+        Pipeline pipeline = creator.create("e-legacy-op", PipelineType.DELETE);
+        jdbcTemplate.update("update task set operation = 'DESTROY_NETWORK' where id = ?", task(pipeline, 0).getId());
 
         pipelineWorker.pollOnce();
 

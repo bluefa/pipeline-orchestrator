@@ -6,6 +6,7 @@ import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.entity.TerraformResult;
 import com.bff.pipeline.exception.CallFailedException;
+import com.bff.pipeline.exception.CallInterruptedException;
 import com.bff.pipeline.exception.CallTimeoutException;
 import com.bff.pipeline.repository.TerraformResultRepository;
 import java.time.Clock;
@@ -20,12 +21,14 @@ import org.springframework.stereotype.Component;
  * postCheck 관찰(확장 A) recorder다 — attempt가 판정으로 종결되는 turn에 finished job들의 result(= terraform log)를
  * 조회해 {@code terraform_result}에 남긴다(docs/terraform-client-and-postcheck-design.md §4.4의 쓰기 경로 정의).
  *
- * 상태 무관여가 계약이다. 여기서 일어나는 어떤 조회·저장 실패도 태스크 판정을 바꾸지 않는다 — 닫힌 어휘
- * 호출 실패({@link CallFailedException}/{@link CallTimeoutException})와 중복 insert는 삼키고 로그만 남긴다.
- * {@code CallInterruptedException}과 진짜 버그는 전파한다(fail-fast) — 기록은 상태 전이 커밋 전에 일어나므로
- * 중단된 turn은 다음 폴 turn이 같은 판정을 다시 내려 재실행하고, 유니크 키 + 존재 선검사가 이미 저장된 행을
- * 건너뛴다(자기치유). job별로 독립 수행해 한 job의 실패가 나머지 job의 저장을 막지 않으며, 조회 실패 job도
- * 본문 없는 포인터 행({@code result = null} + {@code resultPath})으로 남긴다.
+ * 상태 무관여가 계약이다. 여기서 일어나는 어떤 조회·저장 실패도 태스크 판정을 바꾸지 않는다 — job별 경계
+ * catch가 이 계약을 강제한다: {@code CallInterruptedException}만 전파하고(인터럽트 의미 보존 — 기록은 상태
+ * 전이 커밋 전이라 다음 폴 turn이 같은 판정을 재실행하고, 유니크 키 + 존재 선검사가 이미 저장된 행을
+ * 건너뛴다), 그 밖의 모든 실패는 관찰 결손으로 강등해 로그만 남긴다. 외부 응답값(result 본문, resultPath)이
+ * 저장을 깨뜨려 write-back 자체를 막으면 pipeline이 lease 회수 → 재크래시 루프에 갇히므로, 관찰 전용
+ * 컴포넌트에서는 fail-fast보다 이 계약이 우선한다(중복 insert는 debug, 그 외 저장 실패는 error 로그로 노출).
+ * job별로 독립 수행해 한 job의 실패가 나머지 job의 저장을 막지 않으며, 조회 실패 job도 본문 없는 포인터 행
+ * ({@code result = null} + {@code resultPath})으로 남긴다.
  */
 @Slf4j
 @Component
@@ -48,7 +51,17 @@ public class TerraformResultRecorder {
     /** 종결 turn에 finished로 관측된 job들의 result를 job별 독립으로 기록한다. 실패는 관찰 결손일 뿐이다. */
     public void recordFinishedJobs(Task task, TaskAttempt attempt, Map<String, TerraformPoll> finishedPolls) {
         for (Map.Entry<String, TerraformPoll> finished : finishedPolls.entrySet()) {
-            record(task, attempt, finished.getKey(), finished.getValue());
+            try {
+                record(task, attempt, finished.getKey(), finished.getValue());
+            } catch (CallInterruptedException interrupted) {
+                throw interrupted;   // 인터럽트 의미 보존 — 다음 폴 turn의 재실행이 자기치유한다(클래스 javadoc)
+            } catch (RuntimeException failure) {
+                // harness-allow: targeted-catch — 관찰 전용 계약의 경계다(인터럽트는 위에서 재전파, 원인은 error 로그).
+                // 어떤 기록 실패도 태스크 판정을 바꾸지 않는다. 판정을 막으면 write-back이 불발돼
+                // lease 회수 → 재크래시 루프에 갇히므로, 여기서 관찰 결손으로 강등하고 소리 내어 남긴다.
+                log.error("task {} attempt {} job {}: terraform result recording failed — observation lost",
+                        task.getId(), attempt.getAttemptNumber(), finished.getKey(), failure);
+            }
         }
     }
 
@@ -64,7 +77,7 @@ public class TerraformResultRecorder {
                 .attemptNumber(attemptNumber)
                 .jobId(jobId)
                 .succeeded(poll.succeeded())
-                .resultPath(poll.resultPath())
+                .resultPath(clampResultPath(poll.resultPath()))
                 .result(truncated ? body.substring(body.length() - MAX_RESULT_CHARS) : body)
                 .truncated(truncated)
                 .createdAt(clock.instant())
@@ -72,7 +85,8 @@ public class TerraformResultRecorder {
         try {
             repository.save(row);
         } catch (DataIntegrityViolationException violation) {
-            // 유니크 제약(동시 중복 insert)만 멱등으로 삼킨다 — 다른 무결성 위반은 버그이므로 fail-fast로 전파.
+            // 유니크 제약(동시 중복 insert)은 기대된 멱등 경합이라 조용히 삼킨다. 그 밖의 무결성 위반은
+            // recordFinishedJobs의 경계 catch가 관찰 결손으로 강등하며 error 로그로 노출한다.
             if (!isAttemptJobDuplicate(violation)) {
                 throw violation;
             }
@@ -93,6 +107,14 @@ public class TerraformResultRecorder {
 
     private static boolean namesAttemptJobConstraint(String value) {
         return value != null && value.toLowerCase(Locale.ROOT).contains(TerraformResult.ATTEMPT_JOB_CONSTRAINT);
+    }
+
+    /** resultPath는 외부 응답값이다 — 컬럼 길이를 넘으면 잘라 저장이 무결성 위반으로 깨지지 않게 방어한다. */
+    private static String clampResultPath(String resultPath) {
+        if (resultPath == null || resultPath.length() <= TerraformResult.RESULT_PATH_LENGTH) {
+            return resultPath;
+        }
+        return resultPath.substring(0, TerraformResult.RESULT_PATH_LENGTH);
     }
 
     /** 본문 조회는 best-effort — 호출 실패는 포인터 행으로 강등한다(null 반환). CallInterrupted는 전파. */

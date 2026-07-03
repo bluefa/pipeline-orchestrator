@@ -1,5 +1,7 @@
 package com.bff.pipeline.enums;
 
+import java.util.Optional;
+
 /**
  * 태스크가 수행하는 도메인 액션이다(ADR-016 §2). 각 operation은 자기를 실행할 mechanism(=TaskType 이름)을 소유한다 —
  * operation이 mechanism을 유일하게 결정하기 때문이다(mechanism이 다른데 operation이 같은 경우는 없다). 그래서 라우팅의
@@ -81,5 +83,21 @@ public enum TaskOperation {
      */
     public boolean consumesTerraformSlot() {
         return Mechanism.TERRAFORM_JOB.equals(mechanism);
+    }
+
+    /**
+     * 저장된 operation 이름(String)을 상수로 해석한다. 미해석(카탈로그에서 제거/rename된 옛 값)은 예외 대신
+     * empty를 돌려주어 read가 터지지 않게 한다 — TaskDefinition.find와 같은 열화 규약이며,
+     * TaskOperationConverter가 이 해석으로 행을 읽는다.
+     */
+    public static Optional<TaskOperation> find(String name) {
+        if (name == null || name.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(TaskOperation.valueOf(name));
+        } catch (IllegalArgumentException notAnOperation) {
+            return Optional.empty();
+        }
     }
 }

@@ -40,6 +40,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -60,6 +61,7 @@ class PipelineQueryServiceTest {
     @Autowired TaskRepository tasks;
     @Autowired TaskAttemptRepository attempts;
     @Autowired TaskCheckRepository checks;
+    @Autowired JdbcTemplate jdbcTemplate;
 
     @AfterEach
     void clean() {
@@ -180,6 +182,20 @@ class PipelineQueryServiceTest {
         assertThat(detail.attempts()).hasSize(1);
         assertThat(detail.attempts().getFirst().response()).contains("j-1");
         assertThat(detail.attempts().getFirst().check().callCount()).isEqualTo(3);
+    }
+
+    @Test
+    void taskDetailWithALegacyOperationValueDegradesInsteadOfThrowing() {
+        // 카탈로그에서 제거된 옛 operation 값이 남은 terminal history 행 — @Enumerated였다면 read 자체가 터진다.
+        Pipeline pipeline = save(pipeline(PipelineStatus.DONE, "t-1", NOW));
+        Task legacy = save(task(pipeline.getId(), 0, TaskStatus.DONE, true));
+        jdbcTemplate.update("update task set operation = 'APPLY_NETWORK' where id = ?", legacy.getId());
+
+        TaskDetail detail = service.taskDetail(pipeline.getId(), legacy.getId());
+
+        assertThat(detail.operation()).isNull();                    // 미해석 → null 열화(이름은 task_definition에 남는다)
+        assertThat(detail.effectiveExecutionTimeout()).isNull();    // operation 파생 표시값도 조용히 비운다
+        assertThat(detail.taskDefinition()).isEqualTo("AWS_SERVICE_APPLY_V1");
     }
 
     @Test

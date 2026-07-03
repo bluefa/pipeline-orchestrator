@@ -204,9 +204,13 @@ public class PipelineQueryService {
                 .build();
     }
 
-    /** execution timeout은 TERRAFORM_JOB 전용이다(#15). CONDITION_CHECK는 maxFailCount로 경계되므로 null. */
+    /**
+     * execution timeout은 TERRAFORM_JOB 전용이다(#15). CONDITION_CHECK는 maxFailCount로 경계되므로 null.
+     * 미해석 operation(카탈로그에서 제거된 옛 값 → converter가 null로 열화)도 null로 둔다 — 표시용 파생이라
+     * 조회를 터뜨리지 않는 쪽이 계약이다.
+     */
     private Duration effectiveExecutionTimeout(Task task) {
-        return task.getOperation().consumesTerraformSlot()
+        return task.getOperation() != null && task.getOperation().consumesTerraformSlot()
                 ? TaskSettingsResolver.resolveExecutionTimeout(task, pipelineSettings)
                 : null;
     }

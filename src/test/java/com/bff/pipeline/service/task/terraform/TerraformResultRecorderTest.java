@@ -17,21 +17,34 @@ import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * postCheck recorder의 저장 시맨틱(설계 §4.4 쓰기 경로)을 검증한다: job별 독립(부분 실패 격리), 조회 실패의
- * 포인터 행 강등, 멱등(재실행 시 기존 행 skip), tail-only 절단. 상태 무관여(판정에 영향 없음)는
- * {@code PipelineExecutionTest}의 e2e가 함께 고정한다.
+ * 포인터 행 강등, 멱등(재실행 시 기존 행 skip), tail-only 절단, 저장 실패의 관찰 결손 강등. 상태 무관여
+ * (판정에 영향 없음)는 {@code PipelineExecutionTest}의 e2e가 함께 고정한다.
+ *
+ * 프로덕션에서 recorder는 트랜잭션 밖(run 단계)에서 돌아 save마다 자체 커밋되고 무결성 위반이 save 시점에
+ * 터진다 — {@code NOT_SUPPORTED}로 테스트 래핑 트랜잭션을 억제해 같은 시점 의미를 유지한다(지연 flush가
+ * 위반을 recorder의 catch 밖으로 밀어내지 않게).
  */
 @DataJpaTest
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
 class TerraformResultRecorderTest {
 
     private static final Instant NOW = Instant.parse("2026-07-03T00:00:00Z");
 
     @Autowired private TerraformResultRepository repository;
+
+    @AfterEach
+    void clean() {
+        repository.deleteAll();
+    }
 
     private final FakeInfraManagerClient infraManagerClient = new FakeInfraManagerClient();
 
@@ -101,6 +114,34 @@ class TerraformResultRecorderTest {
             assertThat(row.getResult()).hasSize(TerraformResultRecorder.MAX_RESULT_CHARS);
             assertThat(row.getResult()).endsWith(tail);   // tail 우선 — 실패 원인은 로그 끝에 몰린다
         });
+    }
+
+    @Test
+    void aResultPathBeyondTheColumnLengthIsClampedNotFatal() {
+        String overlongPath = "gs://results/" + "p".repeat(TerraformResult.RESULT_PATH_LENGTH);
+
+        recorder().recordFinishedJobs(task(42L), attempt(1), finished(
+                Map.entry("job-1", TerraformPoll.success(overlongPath))));
+
+        assertThat(repository.findAll()).singleElement().satisfies(row ->
+                assertThat(row.getResultPath())
+                        .hasSize(TerraformResult.RESULT_PATH_LENGTH)
+                        .isEqualTo(overlongPath.substring(0, TerraformResult.RESULT_PATH_LENGTH)));
+    }
+
+    @Test
+    void aRowLevelSaveFailureLosesOnlyThatObservation() {
+        // job_id 컬럼(64자)을 넘는 외부 job id → 그 행의 저장만 무결성 위반으로 실패한다. 경계 catch가 관찰
+        // 결손으로 강등하므로 예외가 판정 경로로 새지 않고, 형제 job의 행은 그대로 남는다(상태 무관여 계약).
+        String overlongJobId = "j".repeat(65);
+
+        recorder().recordFinishedJobs(task(42L), attempt(1), finished(
+                Map.entry(overlongJobId, TerraformPoll.success(null)),
+                Map.entry("job-2", TerraformPoll.success(null))));
+
+        assertThat(repository.findAll())
+                .extracting(TerraformResult::getJobId)
+                .containsExactly("job-2");
     }
 
     private TerraformResultRecorder recorder() {

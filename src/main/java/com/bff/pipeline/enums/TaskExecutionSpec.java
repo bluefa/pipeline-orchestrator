@@ -29,9 +29,10 @@ public record TaskExecutionSpec(
             String resultApi) {
         String successPolicy = "디스패치가 만든 모든 job을 polling_interval 간격으로 상태 API로 폴링한다. "
                 + "모든 job의 terraformState가 " + jobType.successState() + "이면 성공이다. 하나라도 "
-                + TerraformJobType.FAILED_STATE + "이면 나머지 job이 종결될 때까지 기다린 뒤 JOB_FAILED로 판정하고, "
-                + "attempt 시작 후 execution_timeout 안에 전부 종결되지 않으면 EXECUTION_TIMEOUT으로 판정한다. "
-                + "두 판정과 호출 오류는 fail_count로 누적되며, max_fail_count에 도달할 때까지 멱등 재디스패치로 "
+                + TerraformJobType.FAILED_STATE + "이면 나머지 job이 종결될 때까지 기다린 뒤 JOB_FAILED로 판정한다. "
+                + "attempt 시작 후 execution_timeout에 도달하면 더 기다리지 않고 그때까지 "
+                + TerraformJobType.FAILED_STATE + " 관측이 있으면 JOB_FAILED, 없으면 EXECUTION_TIMEOUT으로 판정한다. "
+                + "두 실패 판정과 호출 오류는 fail_count로 누적되며, max_fail_count에 도달할 때까지 멱등 재디스패치로 "
                 + "재시도한다.";
         String resultStorage = "판정이 내려지는 turn에 종결된 job마다 result API로 terraform log를 조회해 "
                 + "terraform_result 테이블에 job당 1행으로 저장한다. 저장 상한을 넘는 본문은 앞부분을 절단하고 "

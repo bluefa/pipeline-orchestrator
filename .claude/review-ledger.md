@@ -141,3 +141,11 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
   agent (each seen twice); recorded the catch-all-logging preference; updated interface-justification to
   bless genuine N-impl polymorphism (`TaskType`). The cancel/advance lock-order P1 is dispositioned in
   `docs/acceptance-criteria.md` (Deferred) as an ADR-021 concern.
+- R8 (review-fix: operation converter + recorder boundary catch): the exception-catch-targeting rule gains a
+  recorded, deliberate exception — `TerraformResultRecorder.recordFinishedJobs` wraps each job in
+  `catch (RuntimeException)` (after rethrowing `CallInterruptedException`). Justification: the component is
+  observation-only by contract ("어떤 기록 실패도 태스크 판정을 바꾸지 않는다"); a propagating save failure
+  (e.g. external resultPath/jobId exceeding column length) blocks write-back and traps the pipeline in a
+  lease-expiry crash loop. The failure does NOT become a business ErrorCode — it degrades to an error log
+  (duplicates stay debug via the inner targeted catch). Do not flag this instance; DO flag any new broad
+  catch that converts a bug into a business outcome.

@@ -42,6 +42,9 @@ public class TerraformResult {
     /** 재실행 멱등성의 근거인 유니크 제약 이름 — recorder가 중복 insert만 골라 삼킬 때 이 이름으로 판별한다. */
     public static final String ATTEMPT_JOB_CONSTRAINT = "uq_terraform_result_attempt_job";
 
+    /** resultPath 컬럼 길이 — 외부 응답값이므로 recorder가 이 길이로 잘라 저장 실패를 막는다. */
+    public static final int RESULT_PATH_LENGTH = 1024;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -58,7 +61,7 @@ public class TerraformResult {
     @Column(nullable = false)
     private boolean succeeded;
 
-    @Column(name = "result_path", length = 1024)
+    @Column(name = "result_path", length = RESULT_PATH_LENGTH)
     private String resultPath;
 
     @Column(columnDefinition = "MEDIUMTEXT")
