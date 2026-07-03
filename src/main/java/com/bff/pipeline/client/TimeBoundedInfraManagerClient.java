@@ -58,6 +58,11 @@ public class TimeBoundedInfraManagerClient implements InfraManagerClient {
     }
 
     @Override
+    public String terraformJobResult(String jobId, TaskOperation operation) {
+        return withTimeout(() -> delegate.terraformJobResult(jobId, operation));
+    }
+
+    @Override
     public ConditionPoll checkCondition(String target, TaskOperation operation) {
         return withTimeout(() -> delegate.checkCondition(target, operation));
     }

@@ -18,7 +18,7 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 | Pattern | Occurrences | Detection | Signal |
 |---|---|---|---|
 | **guarded-CAS** — a terminal/gated status transition must use a guarded update (an `@Modifying` CAS filtering on the expected prior state, 0-row handled, or `@Version`), never a blind `findById→setStatus→save` | (1) spring-java21 §3/§7 · (2) R1 `PipelineControl.cancel` blind write (codex + opus P1) | agent | a blind terminal write |
-| **targeted-catch** — a boundary `catch` must verify it is the intended cause and rethrow the rest | (1) spring-java21 §5.7 · (2) R1 `PipelineCreator` broad `DataIntegrityViolationException` (codex + opus) | agent (+ rule flags `Exception`/`Throwable`) | a catch recovering from a whole class without discriminating |
+| **targeted-catch** — a boundary `catch` must verify it is the intended cause and rethrow the rest | (1) spring-java21 §5.7 · (2) R1 `PipelineCreator` broad `DataIntegrityViolationException` (codex + opus) · (3) terraform-client `TerraformResultRecorder` broad `DataIntegrityViolationException` (recurring-review agent; fixed with the `PipelineCreator` idiom + `TerraformResult.ATTEMPT_JOB_CONSTRAINT`) | agent (+ rule flags `Exception`/`Throwable`) | a catch recovering from a whole class without discriminating |
 | **no-hidden-test-tx** — non-repository tests must not run in a wrapping test transaction | (1) spring-java21 §4 · (2) R1 `@DataJpaTest` state-machine tests (opus P1) | rule | `@Transactional` on a `*Test` without `NOT_SUPPORTED` |
 | **exhaustive-switch** — closed-enum switches enumerate all cases, no `default` swallow | (1) spring-java21 §1/§6 · (2) R1/R2 `advance()` default arm | rule | `default ->` / `default:` |
 | **trust-boundary-null** — a value crossing a trust boundary (a name/row from the repository, a return from an external API/client) is null-guarded: resolve to a clean failure (`UNKNOWN_TASK`) or translate (`CHECK_ERROR`), never propagate an NPE; registries reject null/blank keys at boot | (1) owner · (2) R5 `TaskTypeRegistry` null/dup + `TerraformTask` null jobId/poll (codex + opus) | agent | a boundary read used without a null check |
@@ -141,3 +141,11 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
   agent (each seen twice); recorded the catch-all-logging preference; updated interface-justification to
   bless genuine N-impl polymorphism (`TaskType`). The cancel/advance lock-order P1 is dispositioned in
   `docs/acceptance-criteria.md` (Deferred) as an ADR-021 concern.
+- R8 (review-fix: operation converter + recorder boundary catch): the exception-catch-targeting rule gains a
+  recorded, deliberate exception — `TerraformResultRecorder.recordFinishedJobs` wraps each job in
+  `catch (RuntimeException)` (after rethrowing `CallInterruptedException`). Justification: the component is
+  observation-only by contract ("어떤 기록 실패도 태스크 판정을 바꾸지 않는다"); a propagating save failure
+  (e.g. external resultPath/jobId exceeding column length) blocks write-back and traps the pipeline in a
+  lease-expiry crash loop. The failure does NOT become a business ErrorCode — it degrades to an error log
+  (duplicates stay debug via the inner targeted catch). Do not flag this instance; DO flag any new broad
+  catch that converts a bug into a business outcome.

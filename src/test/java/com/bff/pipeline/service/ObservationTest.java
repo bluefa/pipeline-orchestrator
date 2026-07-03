@@ -26,6 +26,7 @@ import com.bff.pipeline.service.task.ObservationRecorder;
 import com.bff.pipeline.service.task.TaskCanceller;
 import com.bff.pipeline.service.task.TaskStateMachine;
 import com.bff.pipeline.service.task.TaskTypeRegistry;
+import com.bff.pipeline.service.task.terraform.TerraformResultRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
 import java.time.Duration;
 import java.time.Instant;
@@ -49,7 +50,7 @@ import org.springframework.transaction.annotation.Transactional;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
-        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, ConditionCheckTask.class,
+        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, ConditionCheckTask.class,
         ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class, PipelineInserter.class,
         RecipeCatalog.class, PipelineExecutionTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -134,7 +135,7 @@ class ObservationTest {
     @Test
     void aConditionNotMetRecordsOneCheckRowPerPollAcrossAttempts() {
         Pipeline pipeline = createInstallAtConditionInProgress();   // onCheck stays not-met (reset default)
-        Long conditionTaskId = taskId(pipeline, 1);
+        Long conditionTaskId = taskId(pipeline, 2);
 
         runUntilTerminal(pipeline);
 
@@ -151,14 +152,14 @@ class ObservationTest {
                 assertThat(check.getLastExternalStatus()).isEqualTo("NOT_MET");
             });
         });
-        // one row per condition poll (2); the terraform DONE attempt records none.
+        // one row per condition poll (2); the terraform DONE attempts (plan·apply) record none.
         assertThat(taskCheckRepository.findAll()).hasSize(2);
     }
 
     @Test
     void aConditionMetRecordsResponseAndOneMetCheckThenDone() {
         Pipeline pipeline = createInstallAtConditionInProgress();   // condition IN_PROGRESS, attempt 1
-        Long conditionTaskId = taskId(pipeline, 1);
+        Long conditionTaskId = taskId(pipeline, 2);
         infraManagerClient.onCheck(() -> true);                     // the next poll observes MET
 
         pipelineWorker.pollOnce();                                  // poll condition met → DONE
@@ -178,10 +179,12 @@ class ObservationTest {
     private Pipeline createInstallAtConditionInProgress() {
         Pipeline pipeline = creator.create("obs-cond", PipelineType.INSTALL);
         infraManagerClient.onPoll(TerraformPoll::success);
-        pipelineWorker.pollOnce();   // dispatch terraform
-        pipelineWorker.pollOnce();   // poll terraform → DONE + promote condition READY
+        pipelineWorker.pollOnce();   // dispatch plan terraform
+        pipelineWorker.pollOnce();   // poll plan → DONE + promote apply READY
+        pipelineWorker.pollOnce();   // dispatch apply terraform
+        pipelineWorker.pollOnce();   // poll apply → DONE + promote condition READY
         pipelineWorker.pollOnce();   // dispatch condition → IN_PROGRESS
-        assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).get(1).getStatus())
+        assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).get(2).getStatus())
                 .isEqualTo(TaskStatus.IN_PROGRESS);
         return pipeline;
     }

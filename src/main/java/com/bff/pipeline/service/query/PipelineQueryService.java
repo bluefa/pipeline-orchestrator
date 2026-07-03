@@ -7,6 +7,7 @@ import com.bff.pipeline.dto.pipeline.PipelineDetail;
 import com.bff.pipeline.dto.pipeline.PipelineStatistics;
 import com.bff.pipeline.dto.pipeline.PipelineSummary;
 import com.bff.pipeline.dto.pipeline.TaskAttemptView;
+import com.bff.pipeline.dto.pipeline.TaskDefinitionView;
 import com.bff.pipeline.dto.pipeline.TaskDetail;
 import com.bff.pipeline.dto.pipeline.TaskSummary;
 import com.bff.pipeline.entity.Pipeline;
@@ -14,6 +15,7 @@ import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.StatisticsPeriod;
+import com.bff.pipeline.enums.TaskDefinition;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.exception.PipelineNotFoundException;
 import com.bff.pipeline.exception.TaskNotFoundException;
@@ -184,6 +186,8 @@ public class PipelineQueryService {
                 .sequence(task.getSequence())
                 .kind(task.getTaskName())
                 .taskDefinition(task.getTaskDefinition())
+                .definition(TaskDefinition.find(task.getTaskDefinition())
+                        .map(TaskDefinitionView::from).orElse(null))
                 .operation(task.getOperation())
                 .status(task.getStatus())
                 .failCount(task.getFailCount())
@@ -200,9 +204,13 @@ public class PipelineQueryService {
                 .build();
     }
 
-    /** execution timeout은 TERRAFORM_JOB 전용이다(#15). CONDITION_CHECK는 maxFailCount로 경계되므로 null. */
+    /**
+     * execution timeout은 TERRAFORM_JOB 전용이다(#15). CONDITION_CHECK는 maxFailCount로 경계되므로 null.
+     * 미해석 operation(카탈로그에서 제거된 옛 값 → converter가 null로 열화)도 null로 둔다 — 표시용 파생이라
+     * 조회를 터뜨리지 않는 쪽이 계약이다.
+     */
     private Duration effectiveExecutionTimeout(Task task) {
-        return task.getOperation().consumesTerraformSlot()
+        return task.getOperation() != null && task.getOperation().consumesTerraformSlot()
                 ? TaskSettingsResolver.resolveExecutionTimeout(task, pipelineSettings)
                 : null;
     }

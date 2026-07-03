@@ -15,6 +15,7 @@ import lombok.Builder;
  * task 행의 nullable 오버라이드 원본이 아니라 실제로 적용되는 값이다. executionTimeout은 TERRAFORM_JOB 전용이며,
  * CONDITION_CHECK는 TTL 대신 maxFailCount(재시도 예산)로 경계된다(ADR-016 §6, #15). CONDITION_CHECK는
  * 폴 하나가 곧 attempt 하나라 attempts 목록이 폴 수만큼 늘어난다(각 attempt의 check는 call_count=1).
+ * definition은 task_definition 이름을 카탈로그에서 해석한 실행 계약 뷰이며, 미해석(삭제/rename된 옛 이름)이면 null이다.
  * 와이어 필드는 snake_case로 직렬화한다. 인접 동형 인자가 많아 위치 기반 생성 대신 {@code @Builder}로 만든다.
  */
 @Builder
@@ -24,6 +25,7 @@ public record TaskDetail(
         @JsonProperty("sequence") int sequence,
         @JsonProperty("kind") String kind,
         @JsonProperty("task_definition") String taskDefinition,
+        @JsonProperty("definition") TaskDefinitionView definition,
         @JsonProperty("operation") TaskOperation operation,
         @JsonProperty("status") TaskStatus status,
         @JsonProperty("fail_count") int failCount,

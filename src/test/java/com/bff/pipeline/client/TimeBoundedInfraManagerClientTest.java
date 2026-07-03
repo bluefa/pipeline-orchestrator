@@ -44,7 +44,7 @@ class TimeBoundedInfraManagerClientTest {
 
     @Test
     void aHappyCallReturnsTheDelegateValue() {
-        assertThat(decorator(delegate(() -> "[\"job-1\"]")).runTerraform("t", TaskOperation.APPLY_NETWORK))
+        assertThat(decorator(delegate(() -> "[\"job-1\"]")).runTerraform("t", TaskOperation.AWS_SERVICE_TF_APPLY))
                 .isEqualTo("[\"job-1\"]");
     }
 
@@ -54,14 +54,14 @@ class TimeBoundedInfraManagerClientTest {
             sleep(2000);
             return "late";
         });
-        assertThatThrownBy(() -> decorator(slow).runTerraform("t", TaskOperation.APPLY_NETWORK))
+        assertThatThrownBy(() -> decorator(slow).runTerraform("t", TaskOperation.AWS_SERVICE_TF_APPLY))
                 .isInstanceOf(CallTimeoutException.class);
     }
 
     @Test
     void aCallFailedFromTheDelegatePassesThrough() {
         InfraManagerClient failing = delegate(() -> { throw new CallFailedException("503"); });
-        assertThatThrownBy(() -> decorator(failing).runTerraform("t", TaskOperation.APPLY_NETWORK))
+        assertThatThrownBy(() -> decorator(failing).runTerraform("t", TaskOperation.AWS_SERVICE_TF_APPLY))
                 .isInstanceOf(CallFailedException.class)
                 .hasMessageContaining("503");
     }
@@ -69,7 +69,7 @@ class TimeBoundedInfraManagerClientTest {
     @Test
     void aFatalErrorFromTheDelegatePropagatesAsError() {
         InfraManagerClient fatal = delegate(() -> { throw new OutOfMemoryError("boom"); });
-        assertThatThrownBy(() -> decorator(fatal).runTerraform("t", TaskOperation.APPLY_NETWORK))
+        assertThatThrownBy(() -> decorator(fatal).runTerraform("t", TaskOperation.AWS_SERVICE_TF_APPLY))
                 .isInstanceOf(OutOfMemoryError.class);
     }
 
@@ -77,7 +77,7 @@ class TimeBoundedInfraManagerClientTest {
     void anInterruptedCallBecomesCallInterruptedAndRestoresTheFlag() {
         InfraManagerClient delegate = delegate(() -> "value");
         Thread.currentThread().interrupt();   // get() will observe the interrupt promptly
-        assertThatThrownBy(() -> decorator(delegate).runTerraform("t", TaskOperation.APPLY_NETWORK))
+        assertThatThrownBy(() -> decorator(delegate).runTerraform("t", TaskOperation.AWS_SERVICE_TF_APPLY))
                 .isInstanceOf(CallInterruptedException.class);
         assertThat(Thread.interrupted()).isTrue();   // restored (and cleared for the next test)
     }
@@ -86,6 +86,7 @@ class TimeBoundedInfraManagerClientTest {
         return new InfraManagerClient() {
             @Override public String runTerraform(String target, TaskOperation operation) { return dispatch.get(); }
             @Override public TerraformPoll terraformJobStatus(String jobId, TaskOperation operation) { return TerraformPoll.running(); }
+            @Override public String terraformJobResult(String jobId, TaskOperation operation) { return "terraform: ok"; }
             @Override public ConditionPoll checkCondition(String target, TaskOperation operation) { return new ConditionPoll(false, "{}"); }
             @Override public CloudProvider cloudProvider(String target) { return CloudProvider.AWS; }
         };
