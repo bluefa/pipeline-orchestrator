@@ -17,12 +17,12 @@ import java.util.Optional;
 public enum RecipeDefinition {
 
     AWS_NETWORK_INSTALL_V1(CloudProvider.AWS, PipelineType.INSTALL,
-            "AWS 네트워크 설치", "AWS 네트워크 변경을 계획·적용하고 준비 완료를 기다린다.",
+            "AWS 네트워크 설치", "AWS 네트워크를 Terraform plan·apply로 구성하고 준비 완료를 기다린다.",
             List.of(TaskDefinition.AWS_SERVICE_PLAN_V1, TaskDefinition.AWS_SERVICE_APPLY_V1,
                     TaskDefinition.NETWORK_READY_V1)),
 
     AWS_NETWORK_DELETE_V1(CloudProvider.AWS, PipelineType.DELETE,
-            "AWS 네트워크 삭제", "AWS 네트워크를 철거한다.",
+            "AWS 네트워크 삭제", "AWS 네트워크를 Terraform destroy로 제거한다.",
             List.of(TaskDefinition.AWS_SERVICE_DESTROY_V1));
 
     private final CloudProvider provider;
