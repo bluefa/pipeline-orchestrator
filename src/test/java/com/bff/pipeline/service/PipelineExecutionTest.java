@@ -499,7 +499,7 @@ class PipelineExecutionTest {
     // ── helpers ──────────────────────────────────────────────────────────────────────────────────
 
     private void runUntilTerminal(Pipeline pipeline) {
-        for (int i = 0; i < 20 && status(pipeline) == PipelineStatus.RUNNING; i++) {
+        for (int i = 0; i < 20 && !status(pipeline).isTerminal(); i++) {
             pipelineWorker.pollOnce();
             clock.advance(Duration.ofHours(1));
         }

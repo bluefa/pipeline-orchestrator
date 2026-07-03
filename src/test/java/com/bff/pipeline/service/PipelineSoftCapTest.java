@@ -89,6 +89,17 @@ class PipelineSoftCapTest {
     }
 
     @Test
+    void zeroStartDelayTakesTheFastPathToRunningWithoutEverBeingPending() {
+        Pipeline pipeline = creator.create("cap-fast", PipelineType.DELETE);
+
+        // startDelay=0 → fast path: 생성 즉시 RUNNING, nextDueAt=now, PENDING을 거치지 않는다(LIN-30)
+        assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.RUNNING);
+        assertThat(pipeline.getNextDueAt()).isEqualTo(START);
+        assertThat(pipelineRepository.countByStatus(PipelineStatus.PENDING)).isZero();
+        assertThat(pipelineClaimer.claimOneDue()).isPresent();   // 즉시 claim 가능
+    }
+
+    @Test
     void theTerraformSlotGateReschedulesAndReleasesTheClaimWhenNoSlotIsFree() {
         occupyTheOnlyTerraformSlot();
         Pipeline pipeline = creator.create("cap-slot", PipelineType.DELETE);   // the only due pipeline
