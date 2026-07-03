@@ -15,8 +15,9 @@ class RecipeDefinitionTest {
 
     @Test
     void everyProviderHasAnInstallAndADeleteRecipe() {
+        // CUSTOM은 카탈로그 recipe가 없는 실행 유형이라 제외한다(LIN-18) — 요청이 체인을 직접 구성한다.
         for (CloudProvider provider : CloudProvider.values()) {
-            for (PipelineType type : PipelineType.values()) {
+            for (PipelineType type : List.of(PipelineType.INSTALL, PipelineType.DELETE)) {
                 assertThat(recipeFor(provider, type)).as("(%s, %s)", provider, type).isNotNull();
             }
         }

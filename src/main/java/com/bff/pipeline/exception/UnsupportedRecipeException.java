@@ -14,4 +14,10 @@ public class UnsupportedRecipeException extends OrchestrationException {
         super(HttpStatus.BAD_REQUEST, OrchestrationErrorCode.UNSUPPORTED_RECIPE,
                 "no recipe for provider " + provider + " and type " + type);
     }
+
+    /** provider와 무관하게 카탈로그 recipe가 없는 type(예: CUSTOM). custom 실행은 {@code /custom} 엔드포인트를 쓴다. */
+    public UnsupportedRecipeException(PipelineType type) {
+        super(HttpStatus.BAD_REQUEST, OrchestrationErrorCode.UNSUPPORTED_RECIPE,
+                "type " + type + " has no catalog recipe; use the custom endpoint for custom execution");
+    }
 }
