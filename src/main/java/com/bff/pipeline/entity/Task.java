@@ -7,8 +7,6 @@ import com.bff.pipeline.enums.TaskStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -104,14 +102,24 @@ public class Task {
     @Column(length = 100)
     private String description;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    /**
+     * task 상태 머신의 현재 상태(varchar 저장, {@link TaskStatusConverter}). {@code @Enumerated}가 아닌 변환기를
+     * 쓰는 이유는 write 안전뿐이다 — status는 엔진 분기에 직접 쓰이므로 read는 fail-fast를 유지한다(미해석
+     * 값은 열화하지 않고 그대로 예외).
+     */
+    @Convert(converter = TaskStatusConverter.class)
+    @Column(nullable = false, length = 16)
     private TaskStatus status;
 
     @Column(nullable = false)
     private int failCount;
 
-    @Enumerated(EnumType.STRING)
+    /**
+     * 실패 사유(varchar 저장, {@link ErrorCodeConverter}). {@code status == FAILED}일 때만 채운다. 표시용 값이라
+     * 미해석 옛 값은 null로 열화한다(admin 조회를 터뜨리지 않는다).
+     */
+    @Convert(converter = ErrorCodeConverter.class)
+    @Column(length = 32)
     private ErrorCode errorCode;
 
     private Instant startedAt;

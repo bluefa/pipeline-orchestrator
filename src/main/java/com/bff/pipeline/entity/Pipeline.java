@@ -4,9 +4,8 @@ import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -55,24 +54,34 @@ public class Pipeline {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    /**
+     * 파이프라인 유형의 write-once 캐시(varchar 저장, {@link PipelineTypeConverter}). create 시점에 recipe를
+     * 고르는 데만 쓰이고 이후로는 표시용이라, 미해석 옛 값은 null로 열화한다({@code updatable = false}가
+     * write-once를 강제해 열화된 행에도 저장된 옛 값이 보존된다).
+     */
+    @Convert(converter = PipelineTypeConverter.class)
+    @Column(nullable = false, updatable = false, length = 16)
     private PipelineType type;
 
     @Column(nullable = false)
     private String target;
 
-    /** create 시점에 targetSourceId로 조회해 저장하는 cloud provider(설계 §3). recipe 선택·표시용, 격리 축 아님. nullable(데모/drain). */
-    @Enumerated(EnumType.STRING)
-    @Column(name = "cloud_provider")
+    /**
+     * create 시점에 targetSourceId로 조회해 저장하는 cloud provider의 write-once 캐시(varchar 저장,
+     * {@link CloudProviderConverter}). recipe 선택·표시용, 격리 축 아님. nullable(데모/drain). 미해석 옛 값은
+     * null로 열화한다.
+     */
+    @Convert(converter = CloudProviderConverter.class)
+    @Column(name = "cloud_provider", updatable = false, length = 16)
     private CloudProvider cloudProvider;
 
     /** 이 실행을 만든 RecipeDefinition 상수 이름. Admin API가 metadata를 조인하는 링크. nullable(데모/drain). */
     @Column(name = "recipe_definition")
     private String recipeDefinition;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    /** pipeline 생명주기 상태(varchar 저장, {@link PipelineStatusConverter}). 엔진 claim/전이 분기에 직접 쓰이므로 read는 fail-fast를 유지한다. */
+    @Convert(converter = PipelineStatusConverter.class)
+    @Column(nullable = false, length = 16)
     private PipelineStatus status;
 
     @Column(nullable = false)
