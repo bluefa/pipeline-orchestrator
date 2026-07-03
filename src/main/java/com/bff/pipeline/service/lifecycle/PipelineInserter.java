@@ -25,9 +25,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 각 task 행에는 진실원인 task_definition 이름과, 거기서 파생한 실행 투영(taskName/operation)·slot flag 캐시를 채운다
  * (설계 §4). custom 요청은 step별 운영자 설명(description)도 함께 저장한다.
  *
- * 생성 시 {@code nextDueAt = now + startDelay}로 시딩한다(LIN-17). startDelay가 0이면 종전대로 생성 즉시 claim된다
- * (ADR-021 Decision 4). 양수면 그 시각 전까지 claim 술어 {@code next_due_at <= now}에 걸리지 않아 첫 Task가
- * dispatch되지 않고, 그 사이 취소는 claim 없는 Case A로 즉시 처리된다.
+ * 생성 시 초기 상태와 nextDueAt은 startDelay로 갈린다(LIN-17/LIN-30). startDelay가 양수면 {@code status=PENDING,
+ * nextDueAt=now+startDelay}로 시딩한다 — 그 시각 전까지 claim 술어 {@code next_due_at <= now}에 안 걸려 첫 Task가
+ * dispatch되지 않고, 그 사이 취소는 claim 없는 Case A로 즉시 처리된다. startDelay가 0이면 fast path로
+ * {@code status=RUNNING, nextDueAt=now}라 생성 즉시 claim되고 PENDING을 거치지 않는다(전이 1회 절약, ADR-021
+ * Decision 4). {@code PENDING → RUNNING} 전이는 첫 claim 트랜잭션이 수행한다({@code PipelineClaimer}).
  */
 @Component
 public class PipelineInserter {
@@ -49,16 +51,17 @@ public class PipelineInserter {
     public Pipeline insert(PipelinePlan plan) {
         Instant now = clock.instant();
         String target = plan.target();
+        boolean delayed = pipelineSettings.startDelay().isPositive();   // LIN-30: 지연 창이 있으면 PENDING, 없으면 fast path RUNNING
         Pipeline pipeline = pipelineRepository.saveAndFlush(Pipeline.builder()
                 .type(plan.type())
                 .target(target)
                 .cloudProvider(plan.provider())
                 .recipeDefinition(plan.recipeDefinition())
-                .status(PipelineStatus.RUNNING)
+                .status(delayed ? PipelineStatus.PENDING : PipelineStatus.RUNNING)
                 .activeTarget(target)
                 .createdAt(now)
                 .lastActivityAt(now)
-                .nextDueAt(now.plus(pipelineSettings.startDelay()))   // LIN-17: 시작 지연을 스케줄링으로 반영(sleep 금지)
+                .nextDueAt(delayed ? now.plus(pipelineSettings.startDelay()) : now)   // LIN-17: 시작 지연을 스케줄링으로 반영(sleep 금지)
                 .cancelRequested(false)
                 .build());
         taskRepository.saveAll(buildChain(pipeline.getId(), plan.steps(), now));

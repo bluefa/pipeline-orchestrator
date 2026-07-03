@@ -48,14 +48,18 @@ resumes. Every decision below depends on this.
 
 ```
 Task:      BLOCKED ──▶ READY ──▶ IN_PROGRESS ──▶ DONE | FAILED | CANCELLED
-Pipeline:  RUNNING ─────────────────────────▶ DONE | FAILED | CANCELLED
+Pipeline:  PENDING ──▶ RUNNING ─────────────▶ DONE | FAILED | CANCELLED
 ```
+
+`PENDING` is the start-delay wait state (LIN-30): a pipeline created with `start-delay > 0` begins
+`PENDING` and flips to `RUNNING` at its first claim; a zero-delay pipeline starts `RUNNING` directly.
+Both `PENDING` and `RUNNING` are non-terminal.
 
 The **current task** is the lowest-`seq` `READY`/`IN_PROGRESS` task; tasks ahead of it are
 explicitly `BLOCKED` until their predecessor reaches `DONE` (a task is created BLOCKED and
 flips to READY; the first task starts READY). Pipeline status is a stored projection, written
-in the same transaction as the task transition that changes it, so a scan can filter on it
-cheaply.
+in the same transaction as the state change that sets it — the claim that flips `PENDING`→`RUNNING`,
+or the task transition that terminalizes the pipeline — so a scan can filter on it cheaply.
 
 Five core enums (`TaskStatus`, `PipelineStatus`, `TaskKind`, `PipelineType`, `ErrorCode`), plus
 a conditional `TaskOperation` when the operation set is closed (an open set is registry-validated).
@@ -214,7 +218,7 @@ Relationships: `pipeline 1:N task 1:N task_attempt 1:0..1 task_check`.
 | enum | values |
 |---|---|
 | `TaskStatus` | BLOCKED, READY, IN_PROGRESS, DONE, FAILED, CANCELLED |
-| `PipelineStatus` | RUNNING, DONE, FAILED, CANCELLED |
+| `PipelineStatus` | PENDING, RUNNING, DONE, FAILED, CANCELLED |
 | `TaskKind` | TERRAFORM_JOB, CONDITION_CHECK |
 | `PipelineType` | INSTALL, DELETE |
 | `ErrorCode` | JOB_FAILED, EXECUTION_TIMEOUT, CONDITION_NOT_MET, CHECK_ERROR, CALL_TIMEOUT |
@@ -233,4 +237,4 @@ open/configured set uses a registry instead.
 - **InfraManager** — runs Terraform jobs (async; one dispatch returns a set of `N` job ids; a worker pod runs each apply).
 - **BackendManager** — the integration/approval and target-source service.
 - **Terraform job** — one infrastructure apply; runs for minutes.
-- **Current task** — the lowest-`seq` `READY`/`IN_PROGRESS` task of a RUNNING pipeline.
+- **Current task** — the lowest-`seq` `READY`/`IN_PROGRESS` task of a non-terminal (`PENDING`/`RUNNING`) pipeline.

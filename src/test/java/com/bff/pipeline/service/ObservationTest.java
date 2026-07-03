@@ -193,7 +193,7 @@ class ObservationTest {
         for (int i = 0; i < 20; i++) {
             pipelineWorker.pollOnce();
             clock.advance(Duration.ofHours(1));
-            if (pipelineRepository.findById(pipeline.getId()).orElseThrow().getStatus() != PipelineStatus.RUNNING) {
+            if (pipelineRepository.findById(pipeline.getId()).orElseThrow().getStatus().isTerminal()) {
                 return;
             }
         }

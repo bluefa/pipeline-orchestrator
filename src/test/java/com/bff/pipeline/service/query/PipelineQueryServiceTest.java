@@ -75,12 +75,14 @@ class PipelineQueryServiceTest {
     void liveStatisticsCountsRunningPipelinesInProgressSlotsAndConfiguredCaps() {
         Pipeline running = save(pipeline(PipelineStatus.RUNNING, "t-1", NOW));
         save(pipeline(PipelineStatus.RUNNING, "t-2", NOW));
+        save(pipeline(PipelineStatus.PENDING, "t-4", NOW));             // 시작 지연 대기
         save(pipeline(PipelineStatus.DONE, "t-3", NOW));
         save(task(running.getId(), 0, TaskStatus.IN_PROGRESS, true));   // 슬롯 점유 중
 
         LivePipelineStatistics stats = service.liveStatistics();
 
-        assertThat(stats.runningPipelineCount()).isEqualTo(2);
+        assertThat(stats.runningPipelineCount()).isEqualTo(2);          // PENDING은 running에 안 셈
+        assertThat(stats.pendingPipelineCount()).isEqualTo(1);          // PENDING 별도 노출(LIN-30)
         assertThat(stats.inProgressTerraformTaskCount()).isEqualTo(1);
         assertThat(stats.terraformSlotCap()).isEqualTo(20);
         assertThat(stats.runningPipelineCap()).isEqualTo(100);
@@ -89,16 +91,18 @@ class PipelineQueryServiceTest {
     @Test
     void statisticsCountsByStatusWithinThePeriodWindow() {
         save(pipeline(PipelineStatus.RUNNING, "t-1", NOW.minus(Duration.ofHours(2))));   // 하루 안
+        save(pipeline(PipelineStatus.PENDING, "t-4", NOW.minus(Duration.ofHours(1))));   // 하루 안, 시작 지연 대기
         save(pipeline(PipelineStatus.DONE, "t-2", NOW.minus(Duration.ofHours(5))));      // 하루 안
         save(pipeline(PipelineStatus.FAILED, "t-3", NOW.minus(Duration.ofDays(3))));     // 하루 밖 → 제외
 
         PipelineStatistics stats = service.statistics(StatisticsPeriod.ONE_DAY);
 
         assertThat(stats.since()).isEqualTo(NOW.minus(Duration.ofDays(1)));
+        assertThat(stats.pendingCount()).isEqualTo(1);       // PENDING 버킷(LIN-30)
         assertThat(stats.runningCount()).isEqualTo(1);
         assertThat(stats.doneCount()).isEqualTo(1);
         assertThat(stats.failedCount()).isZero();
-        assertThat(stats.totalCount()).isEqualTo(2);
+        assertThat(stats.totalCount()).isEqualTo(3);         // PENDING 포함
     }
 
     @Test
@@ -248,7 +252,7 @@ class PipelineQueryServiceTest {
                 .status(status)
                 .createdAt(createdAt)
                 .lastActivityAt(createdAt)
-                .activeTarget(status == PipelineStatus.RUNNING ? target : null)
+                .activeTarget(status.isTerminal() ? null : target)   // 비종단(RUNNING·PENDING)만 슬롯 점유
                 .nextDueAt(createdAt)
                 .cancelRequested(false)
                 .build();

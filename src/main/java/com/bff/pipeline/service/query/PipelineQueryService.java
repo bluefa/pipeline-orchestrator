@@ -86,12 +86,14 @@ public class PipelineQueryService {
     }
 
     public LivePipelineStatistics liveStatistics() {
-        return new LivePipelineStatistics(
-                pipelines.countByStatus(PipelineStatus.RUNNING),
-                tasks.countByConsumesTerraformSlotIsTrueAndStatus(TaskStatus.IN_PROGRESS),
-                executionSettings.terraformSlotCap(),
-                executionSettings.runningPipelineCap(),
-                pipelines.countByClaimedUntilAfter(clock.instant()));
+        return LivePipelineStatistics.builder()
+                .runningPipelineCount(pipelines.countByStatus(PipelineStatus.RUNNING))
+                .pendingPipelineCount(pipelines.countByStatus(PipelineStatus.PENDING))
+                .inProgressTerraformTaskCount(tasks.countByConsumesTerraformSlotIsTrueAndStatus(TaskStatus.IN_PROGRESS))
+                .terraformSlotCap(executionSettings.terraformSlotCap())
+                .runningPipelineCap(executionSettings.runningPipelineCap())
+                .activeClaimCount(pipelines.countByClaimedUntilAfter(clock.instant()))
+                .build();
     }
 
     public PipelineStatistics statistics(StatisticsPeriod period) {
@@ -100,12 +102,21 @@ public class PipelineQueryService {
         for (PipelineStatusCount row : pipelines.countByStatusSince(since)) {
             byStatus.put(row.getStatus(), row.getCount());
         }
+        long pending = byStatus.getOrDefault(PipelineStatus.PENDING, 0L);
         long running = byStatus.getOrDefault(PipelineStatus.RUNNING, 0L);
         long failed = byStatus.getOrDefault(PipelineStatus.FAILED, 0L);
         long done = byStatus.getOrDefault(PipelineStatus.DONE, 0L);
         long cancelled = byStatus.getOrDefault(PipelineStatus.CANCELLED, 0L);
-        return new PipelineStatistics(period, since, running, failed, done, cancelled,
-                running + failed + done + cancelled);
+        return PipelineStatistics.builder()
+                .period(period)
+                .since(since)
+                .pendingCount(pending)
+                .runningCount(running)
+                .failedCount(failed)
+                .doneCount(done)
+                .cancelledCount(cancelled)
+                .totalCount(pending + running + failed + done + cancelled)
+                .build();
     }
 
     public Page<PipelineSummary> list(PipelineStatus status, CloudProvider provider,

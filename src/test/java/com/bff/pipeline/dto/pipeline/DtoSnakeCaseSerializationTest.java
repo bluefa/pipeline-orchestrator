@@ -60,20 +60,25 @@ class DtoSnakeCaseSerializationTest {
 
     @Test
     void liveStatisticsSerializesSnakeCase() throws Exception {
-        String json = mapper.writeValueAsString(new LivePipelineStatistics(2, 1, 20, 100, 3));
+        String json = mapper.writeValueAsString(LivePipelineStatistics.builder()
+                .runningPipelineCount(2).pendingPipelineCount(5).inProgressTerraformTaskCount(1)
+                .terraformSlotCap(20).runningPipelineCap(100).activeClaimCount(3).build());
 
-        assertThat(json).contains("\"running_pipeline_count\":2", "\"in_progress_terraform_task_count\":1",
+        assertThat(json).contains("\"running_pipeline_count\":2", "\"pending_pipeline_count\":5",
+                "\"in_progress_terraform_task_count\":1",
                 "\"terraform_slot_cap\":20", "\"running_pipeline_cap\":100", "\"active_claim_count\":3");
         assertThat(json).doesNotContain("runningPipelineCount", "terraformSlotCap");
     }
 
     @Test
     void periodStatisticsSerializesTokenAndSnakeCase() throws Exception {
-        String json = mapper.writeValueAsString(new PipelineStatistics(StatisticsPeriod.ONE_DAY,
-                Instant.parse("2026-07-01T00:00:00Z"), 1, 2, 3, 4, 10));
+        String json = mapper.writeValueAsString(PipelineStatistics.builder()
+                .period(StatisticsPeriod.ONE_DAY).since(Instant.parse("2026-07-01T00:00:00Z"))
+                .pendingCount(5).runningCount(1).failedCount(2).doneCount(3).cancelledCount(4).totalCount(15)
+                .build());
 
-        assertThat(json).contains("\"period\":\"1d\"", "\"running_count\":1", "\"failed_count\":2",
-                "\"done_count\":3", "\"cancelled_count\":4", "\"total_count\":10");
+        assertThat(json).contains("\"period\":\"1d\"", "\"pending_count\":5", "\"running_count\":1",
+                "\"failed_count\":2", "\"done_count\":3", "\"cancelled_count\":4", "\"total_count\":15");
         assertThat(json).doesNotContain("ONE_DAY", "runningCount", "totalCount");
     }
 
