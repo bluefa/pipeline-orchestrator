@@ -3,7 +3,10 @@
 ## Status
 
 Proposed — 2026-06-27 (revised 2026-07-01: `CONDITION_CHECK` bounded by a retry count, not `ttl`;
-revised 2026-07-03: introduce the `PENDING` start-delay wait state, `PENDING → RUNNING` at claim — LIN-30).
+revised 2026-07-03: introduce the `PENDING` start-delay wait state, `PENDING → RUNNING` at claim — LIN-30;
+revised 2026-07-03 (alignment pass): schema/enum catalog matched to the implementation —
+`active_target` uniqueness column, actual `pipeline`/`task`/`task_check` columns, the third
+observation table `terraform_result`, `PipelineType.CUSTOM`, `ErrorCode.UNKNOWN_TASK`).
 
 The **domain half** of the install/delete pipeline design: the durable state, data model,
 uniqueness rule, failure semantics, and lifecycle. The **execution model** — how the state
@@ -76,25 +79,32 @@ and its rationale are ADR-021 Decision 2). `PENDING` is **non-terminal**: it is 
 per-target uniqueness rule (Decision 4) and is cancelled immediately (no live claim exists yet)
 rather than terminalized by a worker.
 
-The **current task** is the lowest-`seq` `READY`/`IN_PROGRESS` task; tasks ahead of it are
+The **current task** is the lowest-`sequence` `READY`/`IN_PROGRESS` task; tasks ahead of it are
 explicitly `BLOCKED` until their predecessor reaches `DONE` (a task is created BLOCKED and
 flips to READY; the first task starts READY). A `PENDING` pipeline already owns its full task
 chain (created with the pipeline); those tasks begin executing once it transitions to `RUNNING`.
 Pipeline status is a stored projection: each **task-driven** change is written in the same
 transaction as the task transition that causes it, and the one **non-task-driven** change —
 `PENDING → RUNNING` — is written by the claiming worker in its claim transaction (ADR-021
-Decision 2), atomically with the lease stamp and without any task transition. Either way a scan
-can filter on `status` cheaply.
+Decision 2), atomically with the lease stamp and without any task transition. A terminal
+transition also clears the `active_target` uniqueness slot in that same transaction
+(Decision 4, **Schema**). Either way a scan can filter on `status` cheaply.
 
-Five core enums (`TaskStatus`, `PipelineStatus`, `TaskKind`, `PipelineType`, `ErrorCode`), plus
-a conditional `TaskOperation` when the operation set is closed (an open set is registry-validated).
-A task's `kind` selects the executor; its `operation` selects the domain action within it. A
-pipeline's recipe (its ordered task list) is a code default per `(type, provider)`.
+Four core enums (`TaskStatus`, `PipelineStatus`, `PipelineType`, `ErrorCode`), plus the closed
+`TaskOperation` set. The task *kind* (TERRAFORM_JOB, CONDITION_CHECK) is deliberately **not** an
+enum: it is the **mechanism** — an open set of `TaskType` executor names, registry-validated at
+boot and persisted as `task_name`. A task's `task_definition` (a `TaskDefinition` catalog
+constant name, stored as a version-frozen string) is the row's source of truth; `task_name` and
+`operation` are write-once projections derived from it — the mechanism selects the executor, the
+operation the domain action within it. A pipeline's recipe (its ordered task list) is a code
+default per `(type, provider)`; a `CUSTOM` pipeline instead takes its task list from the
+operator's request, validated against the `TaskDefinition` catalog (no persisted recipe).
 
 ### 3. Observation is separate from state
 
-Two **observation tables** — `task_attempt` (per-retry-attempt outcome) and `task_check`
-(per-attempt poll summary) — carry what an operator needs to first-diagnose a failure: the raw external
+Three **observation tables** — `task_attempt` (per-retry-attempt outcome), `task_check`
+(per-attempt poll summary), and `terraform_result` (per-job Terraform log, recorded when a
+`TERRAFORM_JOB` attempt reaches its verdict) — carry what an operator needs to first-diagnose a failure: the raw external
 `response` per attempt (a TF dispatch, or a condition's check payload), the final outcome, whether the condition's terminal poll was not-met (`CONDITION_NOT_MET`) or a check error (`CHECK_ERROR`/`CALL_TIMEOUT`), with the per-cause split in `task_check`, poll counts, the last external response. They also hold the **result the completion
 `check(attempt, task)` reads** to decide a task is done — the reconciler reads only the *latest*
 attempt row, and only for that; claim, scheduling, and pipeline transitions never read them.
@@ -106,7 +116,8 @@ a poll lost to a crash is reclaimed on lease expiry (ADR-021 Decision 5) and re-
 ### 4. One active pipeline per target
 
 A uniqueness rule allows only one non-terminal pipeline per target (`PENDING` counts as
-non-terminal, so a start-delayed pipeline holds the slot the instant it is created). A duplicate
+non-terminal, so a start-delayed pipeline holds the slot the instant it is created — the
+`active_target` slot column is stamped at insert; see **Schema**). A duplicate
 create — of any type — is **rejected with `409 Conflict`** (code `ORCHESTRATION_PIPELINE_ALREADY_ACTIVE`, "already
 an active run for this target") rather than returning the existing run; the trigger endpoint must
 honor this **contract**. The trigger is a human call — an operator pressing "try" in the web admin,
@@ -131,10 +142,10 @@ recorded the attempt result" is healed by re-dispatch — and lets the state mac
 create *harmless duplicate* jobs. A single `TERRAFORM_JOB` dispatch produces a set of **`N` job
 ids**; the attempt's raw `response` (which carries those job ids) is recorded in `task_attempt`,
 and task completion is a **code-level check** over that result — `check(attempt, task) → done?`,
-each `TaskKind` deserializing its own `response` — not a domain job column. For a `TERRAFORM_JOB`, if the result is lost,
+each `TaskType` deserializing its own `response` — not a domain job column. For a `TERRAFORM_JOB`, if the result is lost,
 the task does not stall: the per-task
 `executionTimeout` fires and the task re-dispatches as a fresh run (idempotent), so correctness
-never depends on retaining the job ids. We never "reclaim" prior jobs; `(task_id, attempt_no)` is
+never depends on retaining the job ids. We never "reclaim" prior jobs; `(task_id, attempt_number)` is
 a logical attempt identity, not an InfraManager key.
 
 ### 6. Bounded waiting and retry
@@ -185,7 +196,7 @@ cancel is applied against a live worker is an execution concern (ADR-021).
 **Costs we accept**
 
 - No full per-call audit ledger or event outbox. Audit = logs/metrics + the `pipeline`/`task`
-  rows + the two observation tables. Worker-outage and queue-wait alerts are deferred.
+  rows + the three observation tables. Worker-outage and queue-wait alerts are deferred.
 - Per-target uniqueness rejects a concurrent INSTALL and DELETE for the same target by
   construction — intended, not a limitation.
 
@@ -193,29 +204,44 @@ cancel is applied against a live worker is an execution concern (ADR-021).
 
 **Domain state tables**
 
-- `pipeline(id, type, target, status, created_at, last_activity_at)` — execution adds
-  `next_due_at, claimed_by, claimed_until, cancel_requested` (see ADR-021). A **partial unique
-  index on `target` over non-terminal `status`** (non-terminal = `PENDING`, `RUNNING`) enforces
-  Decision 4's per-target uniqueness; a
-  concurrent duplicate create loses the insert race and surfaces as `409 Conflict`
-  (`ORCHESTRATION_PIPELINE_ALREADY_ACTIVE`).
-- `task(id, pipeline_id, seq, kind, operation, status, fail_count, error_code,
-  started_at, ready_at, finished_at, next_check_at, polling_interval, execution_timeout,
-  max_fail_count)` — no job-id column: one dispatch's `N` job ids live inside the `task_attempt`
-  `response`, and completion is a code-level `check(attempt, task)` over the latest attempt result.
+- `pipeline(id, type, target, cloud_provider, recipe_definition, active_target, status,
+  created_at, last_activity_at)` — execution adds `next_due_at, claimed_by, claimed_until,
+  cancel_requested` (see ADR-021). `cloud_provider` and `recipe_definition` are write-once
+  metadata caches stamped at create (the provider looked up for recipe selection; the
+  `RecipeDefinition` constant name the Admin API joins on). **Per-target uniqueness (Decision 4)
+  is enforced by `active_target`**: MySQL 8 — the target engine — has no partial (filtered)
+  unique index, so instead of a `WHERE status non-terminal` index the application keeps
+  `active_target = target` while the pipeline is non-terminal and sets it `NULL` in the same
+  transaction as the terminal transition (tx2 convergence, or the idle-cancel — ADR-021
+  Decisions 4/6); a plain `UNIQUE` constraint on that column carries the invariant (MySQL
+  permits multiple `NULL`s, so terminal rows never collide). A concurrent duplicate create
+  loses the insert race and surfaces as `409 Conflict`
+  (`ORCHESTRATION_PIPELINE_ALREADY_ACTIVE`, matched by constraint name).
+- `task(id, pipeline_id, sequence, task_name, task_definition, operation,
+  consumes_terraform_slot, description, status, fail_count, error_code, started_at, ready_at,
+  finished_at, next_check_at, polling_interval, execution_timeout, max_fail_count, version)` —
+  `(pipeline_id, sequence)` is unique. `task_definition` is the row's source of truth (a
+  version-frozen `TaskDefinition` constant name); `task_name` (the executor mechanism) and
+  `operation` are write-once caches derived from it, as is the `consumes_terraform_slot`
+  slot-gate flag (ADR-021 Decision 7). `description` is the operator's per-step note on a
+  `CUSTOM` run. `version` is an optimistic lock kept as defense-in-depth under the pipeline-row
+  `FOR UPDATE` serialization (ADR-021 Decision 4). No job-id column: one dispatch's `N` job ids
+  live inside the `task_attempt` `response`, and completion is a code-level
+  `check(attempt, task)` over the latest attempt result.
 
-**Observation tables** (per attempt; only the *latest* row is read — by the completion `check` — nothing else)
+**Observation tables** (per attempt; only the *latest* `task_attempt` row is read — by the
+completion `check` — nothing else; `task_check` and `terraform_result` are write-only)
 
-- `task_attempt(id, task_id, attempt_no, response, status, error_code, started_at, finished_at)`
-  — one row per retry attempt; `attempt_no` is assigned at creation as the pre-attempt
-  `fail_count + 1`, so once a failed attempt commits `task.fail_count` equals its `attempt_no`.
+- `task_attempt(id, task_id, attempt_number, response, status, error_code, started_at, finished_at)`
+  — one row per retry attempt; `attempt_number` is assigned at creation as the pre-attempt
+  `fail_count + 1`, so once a failed attempt commits `task.fail_count` equals its `attempt_number`.
   `response` (text) holds the raw external
   response — for a `TERRAFORM_JOB` the **set** of `N` job ids (one dispatch → `N` jobs), for a
-  `CONDITION_CHECK` the check payload; each `TaskKind` deserializes its own `response`. The latest attempt
+  `CONDITION_CHECK` the check payload; each `TaskType` deserializes its own `response`. The latest attempt
   row is the input to the completion `check`.
 - `task_check(id, task_attempt_id, call_count, not_met_count, api_error_count,
-  call_timeout_count, last_external_status, last_response_code, last_response_summary,
-  last_checked_at)` — at most one row per attempt (1:0..1). A `TERRAFORM_JOB` attempt polls job
+  call_timeout_count, last_external_status, last_checked_at)` — at most one row per attempt
+  (1:0..1). A `TERRAFORM_JOB` attempt polls job
   status many times, so its row is UPDATEd in place (typically `call_count > 1`) and rows grow with attempts,
   not polls, the not-met/error counts accumulating within that one row. A `CONDITION_CHECK` poll
   **is** one attempt (`call_count = 1`), so a row is inserted per poll (bounded by `maxFailCount`)
@@ -226,7 +252,19 @@ cancel is applied against a live worker is an execution concern (ADR-021).
   (summing the per-poll rows), distinct from the completion `check`, which reads only the latest
   row (invariant #1).
 
-Relationships: `pipeline 1:N task 1:N task_attempt 1:0..1 task_check`.
+- `terraform_result(id, task_id, attempt_number, job_id, succeeded, result_path, result,
+  truncated, created_at)` — the post-completion (postCheck) observation: when a `TERRAFORM_JOB`
+  attempt reaches its verdict, one row is written per job observed finished in that turn,
+  carrying the Terraform log (`result`; tail-first truncated past 16 MB with `truncated` set —
+  failure causes cluster at the end of a log). A job whose log fetch fails leaves a pointer row
+  (`result = NULL`) with `result_path` as the trail to the full text. The
+  `(task_id, attempt_number, job_id)` unique key makes re-runs (crash / lease-expiry reclaim)
+  idempotent. Write-only like `task_check`: the engine never reads it
+  (design: [terraform-client-and-postcheck-design.md](../terraform-client-and-postcheck-design.md) §4.4).
+
+Relationships: `pipeline 1:N task 1:N task_attempt 1:0..1 task_check`;
+`task_attempt 1:0..N terraform_result` (one row per finished job of that attempt, keyed
+`(task_id, attempt_number, job_id)`).
 
 **Observation invariants**
 
@@ -234,11 +272,13 @@ Relationships: `pipeline 1:N task 1:N task_attempt 1:0..1 task_check`.
    task completion (`check(attempt, task)`); claim, scheduling, and pipeline transitions depend
    only on `pipeline`/`task`.
 2. `task_check` is one row per attempt: a `TERRAFORM_JOB` attempt UPDATEs it in place (no per-poll
-   inserts); a `CONDITION_CHECK` inserts one per poll, bounded by `maxFailCount`. No RLE, no pruner.
+   inserts); a `CONDITION_CHECK` inserts one per poll, bounded by `maxFailCount`. `terraform_result`
+   is one row per `(attempt, job)`, deduplicated by its unique key. No RLE, no pruner.
 3. Losing an observation row never corrupts state: for a `TERRAFORM_JOB` a missing latest result
    makes `check` fall through to the per-task `executionTimeout`, which re-dispatches a fresh run
    (idempotent); a `CONDITION_CHECK` has no async result to lose — a lost poll is reclaimed on lease
-   expiry (Decision 5, ADR-021) and re-polled. The cost of loss is by kind — a TF re-dispatch (delay + harmless duplicate jobs) or a condition's delayed re-poll — never incorrectness.
+   expiry (Decision 5, ADR-021) and re-polled. A lost `terraform_result` row is a lost diagnostic
+   (the log), never lost state. The cost of loss is by kind — a TF re-dispatch (delay + harmless duplicate jobs) or a condition's delayed re-poll — never incorrectness.
 
 **Enums** (canonical values)
 
@@ -246,12 +286,15 @@ Relationships: `pipeline 1:N task 1:N task_attempt 1:0..1 task_check`.
 |---|---|
 | `TaskStatus` | BLOCKED, READY, IN_PROGRESS, DONE, FAILED, CANCELLED |
 | `PipelineStatus` | PENDING, RUNNING, DONE, FAILED, CANCELLED (`PENDING` and `RUNNING` are the two non-terminal values) |
-| `TaskKind` | TERRAFORM_JOB, CONDITION_CHECK |
-| `PipelineType` | INSTALL, DELETE |
-| `ErrorCode` | JOB_FAILED, EXECUTION_TIMEOUT, CONDITION_NOT_MET, CHECK_ERROR, CALL_TIMEOUT |
+| `PipelineType` | INSTALL, DELETE, CUSTOM |
+| `ErrorCode` | JOB_FAILED, EXECUTION_TIMEOUT, CONDITION_NOT_MET, CHECK_ERROR, CALL_TIMEOUT, UNKNOWN_TASK |
+| `TaskOperation` | closed set — each value owns the mechanism that executes it (the Terraform "execution unit × PLAN/APPLY/DESTROY" grid, plus condition checks) |
 
-`TaskOperation` is a conditional sixth enum, present only when the operation set is closed; an
-open/configured set uses a registry instead.
+The task *kind* (TERRAFORM_JOB, CONDITION_CHECK) is deliberately not an enum: it is the open
+mechanism / `TaskType`-name set, registry-validated at boot and persisted as `task_name` (§2).
+`UNKNOWN_TASK` is the degradation code for a stored task whose definition no longer resolves.
+Catalog enums (`TaskDefinition`, `RecipeDefinition`) persist by constant **name** (string), so a
+removed or renamed value degrades cleanly instead of breaking reads.
 
 ## Links
 
@@ -264,7 +307,7 @@ open/configured set uses a registry instead.
 - **InfraManager** — runs Terraform jobs (async; one dispatch returns a set of `N` job ids; a worker pod runs each apply).
 - **BackendManager** — the integration/approval and target-source service.
 - **Terraform job** — one infrastructure apply; runs for minutes.
-- **Current task** — the lowest-`seq` `READY`/`IN_PROGRESS` task of a pipeline that is executing,
+- **Current task** — the lowest-`sequence` `READY`/`IN_PROGRESS` task of a pipeline that is executing,
   i.e. one that has reached `RUNNING`. A `PENDING` pipeline already holds its full task chain but
   runs none of it until it transitions to `RUNNING` at claim.
 - **PENDING pipeline** — a start-delayed pipeline not yet first-claimed: before `next_due_at` it
