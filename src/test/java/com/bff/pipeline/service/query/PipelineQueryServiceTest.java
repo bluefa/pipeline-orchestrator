@@ -173,9 +173,26 @@ class PipelineQueryServiceTest {
 
         assertThat(detail.effectiveMaxFailCount()).isEqualTo(2);
         assertThat(detail.effectiveExecutionTimeout()).isEqualTo(Duration.ofMinutes(50));
+        assertThat(detail.definition()).isNotNull();   // 카탈로그 해석 성공 → 실행 계약 뷰 동봉
+        assertThat(detail.definition().name()).isEqualTo("AWS_SERVICE_APPLY_V1");
+        assertThat(detail.definition().dispatchApi()).startsWith("POST ");
+        assertThat(detail.definition().successPolicy()).isNotBlank();
         assertThat(detail.attempts()).hasSize(1);
         assertThat(detail.attempts().getFirst().response()).contains("j-1");
         assertThat(detail.attempts().getFirst().check().callCount()).isEqualTo(3);
+    }
+
+    @Test
+    void taskDetailWithAStaleDefinitionNameOmitsTheDefinitionView() {
+        Pipeline pipeline = save(pipeline(PipelineStatus.RUNNING, "t-1", NOW));
+        Task stale = task(pipeline.getId(), 0, TaskStatus.IN_PROGRESS, true);
+        stale.setTaskDefinition("AWS_SERVICE_APPLY_V0");   // 카탈로그에 없는 옛 이름 → 뷰 없이 이름만 노출
+        stale = save(stale);
+
+        TaskDetail detail = service.taskDetail(pipeline.getId(), stale.getId());
+
+        assertThat(detail.taskDefinition()).isEqualTo("AWS_SERVICE_APPLY_V0");
+        assertThat(detail.definition()).isNull();
     }
 
     @Test

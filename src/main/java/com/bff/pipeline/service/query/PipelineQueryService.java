@@ -7,6 +7,7 @@ import com.bff.pipeline.dto.pipeline.PipelineDetail;
 import com.bff.pipeline.dto.pipeline.PipelineStatistics;
 import com.bff.pipeline.dto.pipeline.PipelineSummary;
 import com.bff.pipeline.dto.pipeline.TaskAttemptView;
+import com.bff.pipeline.dto.pipeline.TaskDefinitionView;
 import com.bff.pipeline.dto.pipeline.TaskDetail;
 import com.bff.pipeline.dto.pipeline.TaskSummary;
 import com.bff.pipeline.entity.Pipeline;
@@ -14,6 +15,7 @@ import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.StatisticsPeriod;
+import com.bff.pipeline.enums.TaskDefinition;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.exception.PipelineNotFoundException;
 import com.bff.pipeline.exception.TaskNotFoundException;
@@ -184,6 +186,8 @@ public class PipelineQueryService {
                 .sequence(task.getSequence())
                 .kind(task.getTaskName())
                 .taskDefinition(task.getTaskDefinition())
+                .definition(TaskDefinition.find(task.getTaskDefinition())
+                        .map(TaskDefinitionView::from).orElse(null))
                 .operation(task.getOperation())
                 .status(task.getStatus())
                 .failCount(task.getFailCount())
