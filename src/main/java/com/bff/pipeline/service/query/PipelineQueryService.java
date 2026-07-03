@@ -201,6 +201,7 @@ public class PipelineQueryService {
                 .effectiveExecutionTimeout(effectiveExecutionTimeout(task))
                 .effectiveMaxFailCount(TaskSettingsResolver.resolveMaxFailCount(task, pipelineSettings))
                 .attempts(attemptViews(taskId))
+                .description(task.getDescription())
                 .build();
     }
 

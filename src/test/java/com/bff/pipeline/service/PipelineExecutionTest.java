@@ -542,6 +542,7 @@ class PipelineExecutionTest {
                     .executionTimeout(Duration.ofMinutes(50))
                     .pollingInterval(Duration.ofMinutes(10))
                     .maxFailCount(2)
+                    .startDelay(Duration.ZERO)
                     .build();
         }
 

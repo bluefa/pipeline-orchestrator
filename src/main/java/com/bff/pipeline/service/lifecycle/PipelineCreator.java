@@ -1,16 +1,25 @@
 package com.bff.pipeline.service.lifecycle;
 
 import com.bff.pipeline.client.InfraManagerClient;
+import com.bff.pipeline.dto.pipeline.CustomTaskRequest;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.RecipeDefinition;
+import com.bff.pipeline.enums.TaskDefinition;
+import com.bff.pipeline.exception.EmptyCustomRecipeException;
+import com.bff.pipeline.exception.MissingPipelineTypeException;
 import com.bff.pipeline.exception.MissingTargetException;
 import com.bff.pipeline.exception.PipelineAlreadyActiveException;
 import com.bff.pipeline.exception.PipelinePersistenceException;
 import com.bff.pipeline.exception.ProviderLookupException;
+import com.bff.pipeline.exception.TaskDescriptionTooLongException;
+import com.bff.pipeline.exception.TaskProviderMismatchException;
+import com.bff.pipeline.exception.UnknownTaskException;
 import com.bff.pipeline.exception.UnsupportedRecipeException;
 import com.bff.pipeline.model.PipelinePlan;
+import com.bff.pipeline.model.PipelinePlan.PlannedStep;
+import java.util.List;
 import java.util.Locale;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -44,15 +53,63 @@ public class PipelineCreator {
         this.infraManagerClient = infraManagerClient;
     }
 
+    /** 카탈로그 recipe 실행(P10). (provider, type)으로 고정 recipe를 골라 실행한다. */
     public Pipeline create(String target, PipelineType type) {
-        RecipeDefinition recipe = resolveRecipe(target, type);   // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
+        if (type == null) {
+            throw new MissingPipelineTypeException();
+        }
+        return insert(PipelinePlan.fromCatalog(target, resolveRecipe(target, type)), target);   // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
+    }
+
+    /**
+     * custom recipe 실행(LIN-18, 비영속). 요청이 준 task 순서·이름대로 실행하며 type은 {@link PipelineType#CUSTOM}으로
+     * 고정된다(INSTALL/DELETE를 받지 않는다 — custom은 그 자체가 분류다). tasks가 비어 있으면 400이고, 각 task는
+     * 이름 존재·provider 일치·설명 길이(≤100)를 검사해 하나라도 어기면 400이다. plan 구성은 트랜잭션 밖에서 입력 검증 +
+     * provider 조회를 마치고 삽입만 inserter의 트랜잭션에 맡긴다 — 유니크 위반은 {@link #insert}가 도메인 응답으로 번역한다.
+     */
+    public Pipeline createCustom(String target, List<CustomTaskRequest> tasks) {
+        if (target == null || target.isBlank()) {
+            throw new MissingTargetException();
+        }
+        if (tasks == null || tasks.isEmpty()) {
+            throw new EmptyCustomRecipeException();
+        }
+        // provider와 무관한 검증(이름 존재·설명 길이)은 외부 조회 전에 끝낸다(§3) — provider 조회가 죽어도 malformed 요청은 400을 유지한다.
+        List<PlannedStep> steps = tasks.stream().map(PipelineCreator::resolveNameAndDescription).toList();
+        CloudProvider provider = resolveProvider(target);   // 트랜잭션 밖 외부 조회(§3)
+        steps.forEach(step -> requireProviderMatch(step.definition(), provider));
+        return insert(PipelinePlan.custom(target, provider, steps), target);
+    }
+
+    /** plan 삽입 + active-target 유니크 위반의 도메인 번역. catalog/custom 경로가 공유한다. */
+    private Pipeline insert(PipelinePlan plan, String target) {
         try {
-            return pipelineInserter.insert(new PipelinePlan(target, recipe));
+            return pipelineInserter.insert(plan);
         } catch (DataIntegrityViolationException violation) {
             if (isActiveTargetViolation(violation)) {
                 throw new PipelineAlreadyActiveException(target);
             }
             throw new PipelinePersistenceException(target, violation);
+        }
+    }
+
+    /** provider와 무관한 pass 1: task 이름을 해석하고 설명 길이를 검사한다 — 미존재는 UNKNOWN_TASK, 초과는 DESCRIPTION_TOO_LONG(400). */
+    private static PlannedStep resolveNameAndDescription(CustomTaskRequest task) {
+        String name = task == null ? null : task.name();
+        TaskDefinition definition = TaskDefinition.find(name)
+                .orElseThrow(() -> new UnknownTaskException(name));
+        String description = task == null ? null : task.description();
+        if (description != null && description.length() > CustomTaskRequest.MAX_DESCRIPTION_LENGTH) {
+            throw new TaskDescriptionTooLongException(name, description.length(),
+                    CustomTaskRequest.MAX_DESCRIPTION_LENGTH);
+        }
+        return new PlannedStep(definition, description);
+    }
+
+    /** pass 2: task의 provider가 target provider와 일치하는지 검사한다(외부 조회로 얻은 provider가 있어야 가능) — 불일치는 400. */
+    private static void requireProviderMatch(TaskDefinition definition, CloudProvider provider) {
+        if (definition.provider() != provider) {
+            throw new TaskProviderMismatchException(definition.name(), definition.provider(), provider);
         }
     }
 
@@ -65,10 +122,13 @@ public class PipelineCreator {
         return resolveRecipe(target, type);
     }
 
-    /** target 검증 → provider 조회(외부, 트랜잭션 밖) → (provider, type) recipe 선택. create와 preview가 공유한다. */
+    /** target·type 검증 → provider 조회(외부, 트랜잭션 밖) → (provider, type) recipe 선택. create와 preview가 공유한다. */
     private RecipeDefinition resolveRecipe(String target, PipelineType type) {
         if (target == null || target.isBlank()) {           // 외부 조회 전에 입력을 검증한다
             throw new MissingTargetException();
+        }
+        if (type == PipelineType.CUSTOM) {                  // CUSTOM은 카탈로그 유형이 아니다 — provider 조회 전에 400으로 거절(§3)
+            throw new UnsupportedRecipeException(type);
         }
         CloudProvider provider = resolveProvider(target);   // 트랜잭션 밖 외부 조회(§3)
         return recipeCatalog.forProviderAndType(provider, type)

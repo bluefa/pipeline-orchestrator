@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.client.FakeInfraManagerClient;
+import com.bff.pipeline.config.PipelineSettings;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
@@ -17,6 +18,7 @@ import com.bff.pipeline.service.lifecycle.PipelineCreator;
 import com.bff.pipeline.service.lifecycle.PipelineInserter;
 import com.bff.pipeline.service.lifecycle.RecipeCatalog;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import org.junit.jupiter.api.AfterEach;
@@ -137,6 +139,13 @@ class PipelineUniquenessTest {
         @Bean
         FakeInfraManagerClient infraManager() {
             return new FakeInfraManagerClient();
+        }
+
+        @Bean
+        PipelineSettings pipelineSettings() {
+            return PipelineSettings.builder()
+                    .executionTimeout(Duration.ofMinutes(50))
+                    .pollingInterval(Duration.ofMinutes(10)).maxFailCount(2).startDelay(Duration.ZERO).build();
         }
     }
 }
