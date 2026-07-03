@@ -11,7 +11,6 @@ import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.exception.MissingTargetException;
 import com.bff.pipeline.exception.PipelineAlreadyActiveException;
 import com.bff.pipeline.exception.ProviderLookupException;
-import com.bff.pipeline.exception.UnsupportedRecipeException;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
@@ -34,7 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 파이프라인 생성(트리거) 계약을 검증한다 — {@code active_target} unique constraint를 통한 target별
  * 유일성(중복 트리거 409)과, 그에 앞선 입력 검증(빈 target 400)·provider 조회 실패 번역(503)·
- * 미지원 (provider, type) 거절(400)까지 create 경로 전체를 다룬다.
+ * provider별 recipe 라우팅까지 create 경로 전체를 다룬다.
  *
  * <p>{@code NOT_SUPPORTED}가 테스트 래핑 트랜잭션을 억제하므로 {@link PipelineInserter}가 독립적으로
  * 커밋한다. 두 번째 insert가 실제 unique 제약 위반을 발생시키는 것은 첫 번째 커밋이 완료된 이후에만
@@ -68,12 +67,15 @@ class PipelineUniquenessTest {
     }
 
     @Test
-    void createRejectsAProviderTypeWithNoRecipeAsBadRequest() {
-        infraManager.onCloudProvider(CloudProvider.GCP);   // 카탈로그에 GCP recipe 없음(데모)
+    void createRoutesEachProviderToItsOwnRecipe() {
+        // 전 provider × type 조합이 recipe를 갖게 되면서 미지원 조합 거절(UnsupportedRecipeException)은 실제
+        // enum 값으로 재현할 수 없다 — 그 분기는 recipe 없는 새 provider가 추가되는 미래를 지키는 가드로 남는다.
+        infraManager.onCloudProvider(CloudProvider.GCP);
 
-        assertThatThrownBy(() -> creator.create("prov-b", PipelineType.INSTALL))
-                .isInstanceOf(UnsupportedRecipeException.class);
-        assertThat(pipelineRepository.findAll()).isEmpty();
+        Pipeline pipeline = creator.create("prov-b", PipelineType.INSTALL);
+
+        assertThat(pipeline.getCloudProvider()).isEqualTo(CloudProvider.GCP);
+        assertThat(pipeline.getRecipeDefinition()).isEqualTo("GCP_INSTALL_V1");
     }
 
     @Test
