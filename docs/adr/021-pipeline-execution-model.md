@@ -3,7 +3,13 @@
 ## Status
 
 Proposed — 2026-06-27 (revised 2026-07-01: condition rebased from `ttl` to a retry count;
-revised 2026-07-03: `PENDING` start-delay wait state, `PENDING → RUNNING` at claim — LIN-30; see Revision history).
+revised 2026-07-03: `PENDING` start-delay wait state, `PENDING → RUNNING` at claim — LIN-30;
+revised 2026-07-03 (alignment pass): index/SQL wording matched to the MySQL 8 implementation,
+`active_target` slot release documented in the cancel and tx2 paths;
+revised 2026-07-04 (alignment pass 2, codex round 1): `task_check` is 0..1 per attempt (not one
+per attempt); no distinct 429/503 backpressure in V1; lease bound covers the multi-call Terraform
+step; backoff is ×2 geometric and jitter desynchronizes pods; metrics catalog is not yet
+instrumented; see Revision history).
 
 This is the **execution half** of the install/delete pipeline design: how the durable state
 machine of [ADR-016](016-install-delete-pipeline-domain-model.md) is actually driven forward.
@@ -53,7 +59,7 @@ this ADR is how those mechanisms work.
 | **No terminal resurrection** (a `CANCELLED`/`DONE` pipeline never reverts) | ownership-guarded write-back + exactly one `status` writer per cancel case (Case A: the API path, for an idle row; Case B: the claim holder, which also applies `PENDING → RUNNING` in tx1) — so **no `status` guard is needed** | Decision 2, 4, 6 |
 | **At-least-once is correct** (a duplicate dispatch is harmless) | infra-idempotency: TF APIs are duplicate-harmless | ADR-016 §5 |
 | **Crash recovery** (a dead worker's pipeline resumes) | lease expiry → reclaim by the next scan; no leader, no journal | Decision 5 |
-| **Completion survives a lost result** | code-level `check(attempt, task)` over the latest attempt; a lost `TERRAFORM_JOB` result → `executionTimeout` → fresh idempotent re-dispatch (a condition's lost poll heals via lease-expiry reclaim, then re-polls) | Decision 4, ADR-016 §5, §6 |
+| **Completion survives a lost result** | code-level `check(target, task, attempt)` over the latest attempt; a lost `TERRAFORM_JOB` result → `executionTimeout` → fresh idempotent re-dispatch (a condition's lost poll heals via lease-expiry reclaim, then re-polls) | Decision 4, ADR-016 §5, §6 |
 
 ### 1. Workers pull work from the DB; no single-instance constraint, no leader election
 
@@ -83,6 +89,12 @@ UPDATE pipeline
  WHERE id = :pipeline_id;
 COMMIT;
 ```
+
+*(SQL in this ADR is illustrative pseudo-SQL in PostgreSQL syntax. The implementation targets
+**MySQL 8** through JPA/Hibernate: the claim renders as `FOR UPDATE SKIP LOCKED` via a
+`PESSIMISTIC_WRITE` lock with a `-2` lock-timeout hint — H2, used in tests, falls back to plain
+`FOR UPDATE` — and the schema is generated from entity annotations; there are no hand-written
+migrations.)*
 
 **The claim predicate spans both non-terminal states.** A start-delayed pipeline sits in
 `PENDING` until its delay elapses (ADR-016 Decision 2); once `next_due_at <= now()` it becomes
@@ -154,8 +166,9 @@ UPDATE pipeline
 the pipeline row; (2) verify `claimed_by = :claim_token` — no-op the whole report if it fails;
 (3) read `cancel_requested`; (4) write task and pipeline `status` — if the flag is set, drive the
 pipeline and **every non-terminal task** (the current task plus any still-`BLOCKED` successors) to
-`CANCELLED` per ADR-016 §7; otherwise apply the normal current-task transition; (5) write the next
-`next_due_at` and release the claim.
+`CANCELLED` per ADR-016 §7; otherwise apply the normal current-task transition; a terminal
+pipeline transition also clears `active_target` in the same write, releasing the per-target
+uniqueness slot (ADR-016 §4); (5) write the next `next_due_at` and release the claim.
 
 **Ownership is verified once, at the pipeline level.** The `claimed_by` check is on the locked
 pipeline row; the task and pipeline writes then happen under that verified, single-writer claim,
@@ -166,8 +179,10 @@ transaction that advances task/pipeline state also clears `claimed_by`/`claimed_
 the new `next_due_at` (seeded at creation by the trigger endpoint). Without this release a
 pipeline that finishes a step but stays `RUNNING` would sit locked until `claimed_until` passes,
 blocking other workers. When the current task reaches `DONE`, the same tx2 flips the next task
-`BLOCKED → READY`. Each attempt writes a `task_attempt` row carrying its `response`, plus a `task_check`
-summary — both under the verified pipeline claim (single writer, no task-level claim needed). The
+`BLOCKED → READY`. Each attempt writes a `task_attempt` row carrying its `response`, and — **when
+a poll is actually observed** — a `task_check` summary (a `TERRAFORM_JOB` attempt that reaches its
+verdict on the first `check` writes none; `task_check` is 0..1 per attempt, ADR-016 §3), both
+under the verified pipeline claim (single writer, no task-level claim needed). The
 two kinds differ in shape: a `TERRAFORM_JOB` attempt polls job status many times, so tx2 UPDATEs
 the same attempt's `task_check` in place across polls; a `CONDITION_CHECK` poll **is** one attempt
 (ADR-016 §6), so each failed poll — not-met or check-error alike — writes a fresh
@@ -175,9 +190,10 @@ the same attempt's `task_check` in place across polls; a `CONDITION_CHECK` poll 
 reschedules the next poll (the task's `next_check_at`, projected to the pipeline's `next_due_at` for
 the claim scan) at `now() + polling_interval`, and the poll that reaches `maxFailCount` sets the task
 (and pipeline) `FAILED` with that poll's `error_code`, scheduling nothing further — no in-place poll loop. A met poll instead writes the final
-`task_attempt`/`task_check` pair (the latest row the completion `check` reads) and drives the task
+`task_attempt`/`task_check` pair (the `task_attempt` is the latest row the completion `check`
+reads; `task_check` stays write-only) and drives the task
 `DONE`, without incrementing `fail_count` or rescheduling.
-Task completion is a code-level `check(attempt, task)` over the **latest** attempt row — the
+Task completion is a code-level `check(target, task, attempt)` over the **latest** attempt row — the
 reconciler reads only that row, and only for completion; claim, scheduling, and pipeline
 transitions never read the attempt tables. For a `TERRAFORM_JOB` a lost attempt result does not
 stall the task: it falls through to `executionTimeout` and re-dispatches a fresh `N`-job run
@@ -220,12 +236,18 @@ A crashed worker's claimed pipeline becomes due again once `claimed_until < now(
 no human intervention — the next scan reclaims it. Hard constraint:
 
 ```
-lease_seconds > max_single_call_timeout + pool_queue_wait + scheduling_margin
+lease_seconds > (max_single_call_timeout × calls_per_step) + pool_queue_wait + scheduling_margin
 ```
 
-A claimed pipeline can sit in the worker thread-pool queue before its external call even
-starts; that queue wait consumes lease time just as the call itself does. The lease must cover
-the full elapsed wall-clock time from claim to tx2 commit, including any queuing delay.
+`calls_per_step` matters because a single step is **not** always one external call: a
+`TERRAFORM_JOB` `check` loops over up to `N` job-status calls and then up to `N` result-log
+fetches within one claim (ADR-016 §3; `TerraformTask`/`TerraformResultRecorder`), so the lease
+must cover that whole sequence, not one call. A claimed pipeline can also sit in the worker
+thread-pool queue before its external calls even start; that queue wait consumes lease time just
+as the calls do. The lease must cover the **full elapsed wall-clock time from claim to tx2
+commit** — every call the step makes, plus any queuing delay. The boot-time fail-fast check only
+enforces the single-call floor (`lease-duration > api-call-timeout`, Operational reference);
+covering the multi-call envelope is operational tuning.
 
 ### 6. Cancel: immediate for an idle pipeline, cooperative for a running one
 
@@ -244,10 +266,12 @@ performed *by* a claim, Decision 2), so it can never be under a live lease while
 API path terminates it directly, in its own transaction, with no worker round-trip:
 
 ```sql
--- A1: terminate the pipeline AND clear the claim (so an expired-lease straggler's tx2 fails
---     its claimed_by guard); fires only when no live worker owns the row.
+-- A1: terminate the pipeline, release the per-target uniqueness slot (active_target,
+--     ADR-016 §4), AND clear the claim (so an expired-lease straggler's tx2 fails its
+--     claimed_by guard); fires only when no live worker owns the row.
 --     The guard spans both non-terminal states so a PENDING pipeline is cancellable here.
-UPDATE pipeline SET status = 'CANCELLED', claimed_by = NULL, claimed_until = NULL
+UPDATE pipeline SET status = 'CANCELLED', active_target = NULL,
+       claimed_by = NULL, claimed_until = NULL, last_activity_at = now()
  WHERE id = :pid AND status IN ('RUNNING', 'PENDING')
    AND (claimed_by IS NULL OR claimed_until < now());
 -- A2: terminalize every non-terminal task (runs only if A1 updated a row)
@@ -319,34 +343,51 @@ for correctness.
 Their exact values live in operational config, not in this ADR:
 
 - **Worker count `N`** caps *concurrent external calls* (`≤ min(N, due pipelines)`). It is
-  **not** a requests-per-second guarantee — `429`/`503` back off by pushing `next_due_at`
-  forward (for a `CONDITION_CHECK`, this backpressure deferral pushes the next poll beyond
-  `polling_interval`, extending the effective elapsed bound in ADR-016 §6).
-- **Lease duration** (`lease_seconds`) must exceed max single-call timeout plus pool queue-wait
-  plus a scheduling margin (see Decision 5). Tune conservatively; a too-short lease has two
-  distinct effects: (1) the **guarded write** prevents the stale straggler from clobbering DB
-  state; (2) **idempotency (ADR-016)** makes the duplicate *external call* to InfraManager
-  harmless. Neither causes corruption, but redundant InfraManager calls consume quota.
+  **not** a requests-per-second guarantee. *In V1 there is no rate-limit-aware backpressure path:*
+  a `429`/`503` (any HTTP status) surfaces from the Feign adapter as a `CallFailedException` →
+  `CHECK_ERROR`, i.e. it is treated as a failed call on the **normal `fail_count` retry budget**
+  (the retry does push `next_due_at` forward by `polling_interval`, but it also consumes budget
+  and can fail the task) — a distinct rate-limit deferral that does *not* consume budget is
+  **deferred**.
+- **Lease duration** (`lease_seconds`) must exceed the **full claim-to-tx2 wall-clock**, not one
+  call: a `TERRAFORM_JOB` `check` can issue up to `N` job-status calls **and** up to `N`
+  result-log fetches sequentially within a single claim, so the bound is
+  `max single-call timeout × (calls per step) + pool queue-wait + scheduling margin` (see
+  Decision 5). The code fail-fast only enforces the single-call floor
+  (`lease-duration > api-call-timeout`); covering the multi-call step envelope is operational
+  tuning. Tune conservatively; a too-short lease has two distinct effects: (1) the **guarded
+  write** prevents the stale straggler from clobbering DB state; (2) **idempotency (ADR-016)**
+  makes the duplicate *external call* to InfraManager harmless. Neither causes corruption, but
+  redundant InfraManager calls consume quota.
 - **Claim-predicate index** — the claim predicate (`status IN ('RUNNING','PENDING') AND
   next_due_at <= now() AND (claimed_until IS NULL OR claimed_until < now())`) needs a supporting
   index; without one, every claim degrades to a full sequential scan + sort under concurrent
-  multi-worker polling. A partial btree index on `(next_due_at) WHERE status IN
-  ('RUNNING','PENDING')` covers the hot path.
+  multi-worker polling. A btree index on `(status, next_due_at)` covers the hot path — the
+  leading `status` column serves the `IN ('RUNNING','PENDING')` filter. (MySQL 8, the target
+  engine, has no partial indexes, so a `(next_due_at) WHERE status IN (...)` index is not an
+  option.) A second index on `(claimed_until)` supports the admission cap's active-claim count
+  (Decision 7).
 - **Terraform-job concurrency cap (`slotCap`)** — the soft gate behavior is defined in
   Decision 7; hard-cap enforcement (counter-CAS) remains deferred. InfraManager's fixed pool
   is the real ceiling; over-submission only deepens its idempotent queue.
 - **DB polling load control** — workers self-poll, so the claim loop needs explicit load
   controls to avoid hammering the DB during quiet periods: no immediate retry after an empty
-  claim result; adaptive backoff with jitter (e.g. 200 ms → 500 ms → 1 s → 2–5 s, reset on
-  work found); when the nearest due pipeline time is known,
-  `sleep = min(nextDueAt − now(), maxIdleSleep)` to avoid over-polling; jitter spread across
-  the sleep to prevent synchronized wakeups across workers. (The claim-predicate partial index
-  already limits per-scan cost; this complements it.)
+  claim result; adaptive **×2 geometric** backoff with jitter — the idle backoff **doubles from
+  `backoff-base` (PT0.2S) before each empty-sweep delay is emitted**, so the first emitted delay is
+  `2 × base` = 400 ms, then 800 ms → 1.6 s → … capped at `backoff-max` (and never above
+  `max-idle-sleep`); it resets to base when work is found (a productive sweep instead reschedules
+  at `poll-interval`). That jittered backoff (already capped at `max-idle-sleep`) is **then**
+  further capped to the nearest due pipeline time when that is sooner, to avoid over-polling —
+  `sleep = min(jittered_backoff, nextDueAt − now())` (the nearest-due cap applies only when
+  `nextDueAt` is in the future; a due time already past leaves the backoff delay unchanged). The
+  jitter (applied to the backoff before that cap) desynchronizes wakeups across **pods/replicas**
+  (the scheduler is one daemon thread per pod, so this desynchronizes replicas, not the worker
+  threads within a pod). (The claim-predicate index already limits per-scan cost; this complements it.)
 
 ### 7. Admission control and TF slot gate (soft caps)
 
-**`runningPipelineCap`** is a **soft pickup target**, not a hard invariant, and it gates
-**claiming, not creation.** Pipeline creation enforces only per-target uniqueness (ADR-016); its
+**`runningPipelineCap`** (config `pipeline.execution.running-pipeline-cap`) is a **soft pickup
+target**, not a hard invariant, and it gates **claiming, not creation.** Pipeline creation enforces only per-target uniqueness (ADR-016); its
 initial status is set **solely by the start delay**, not by admission: `startDelay > 0` creates
 the pipeline `PENDING` — transitioned to `RUNNING` by the first claim once the delay elapses
 (Decision 2) — and `startDelay == 0` creates it `RUNNING` immediately, the prior fast path,
@@ -366,8 +407,10 @@ bounded overshoot is **accepted in V1**. A hard cap would require atomic admissi
 terminal) — **deferred**.
 
 **TF slot gate.** A TF *slot* is Terraform-job execution occupancy (minutes), a different
-resource from API-call concurrency (milliseconds to seconds). `slotCap` is a **soft admission
-target** that slows TF dispatch to relieve InfraManager/Terraform pressure. Soft gate behavior
+resource from API-call concurrency (milliseconds to seconds). `slotCap` (config
+`terraform-slot-cap`; the retry delay is `terraform-slot-retry`) is a **soft admission
+target** that slows TF dispatch to relieve InfraManager/Terraform pressure. Occupancy is
+counted as `IN_PROGRESS` tasks whose `consumes_terraform_slot` flag is set (ADR-016 Schema). Soft gate behavior
 in the worker loop: before a TF dispatch, the worker checks slot availability; if available,
 it dispatches; if not, it keeps the task `READY`, sets `next_due_at = now() + slotRetry`, and
 **releases the claim** (so the worker frees itself to pick up other pipelines). Bounded
@@ -441,31 +484,47 @@ loop:
 ## Operational reference (knobs & metrics)
 
 This section is a reference catalog only. These are **static server config** (e.g. Spring
-`application.yaml`) — not API-mutable runtime knobs — and their values live in operational
+`application.yml`) — not API-mutable runtime knobs — and their values live in operational
 config, not in this ADR. The lease and concurrency values in particular are **tuned in
 operation** against observed InfraManager latency, not fixed at design time.
 
 ### Knobs
 
-| Knob | Meaning |
-|---|---|
-| `workerPerPod` | Thread-pool size per pod; caps concurrent external calls per replica |
-| `activePodCount` | Number of running pods/replicas |
-| `maxReplicas` | Upper bound for autoscaler |
-| `runningPipelineCap` | Soft pickup target for concurrently claimed pipeline work (candidates are `RUNNING`, plus due `PENDING` about to transition at claim) |
-| `slotCap` | Soft admission target for concurrent TF-dispatch slots |
-| `slotRetry` | Delay before re-checking slot availability when slot is full |
-| `leaseDuration` | Claim lease window; see required relationship below |
-| `apiCallTimeout` | Per-call timeout for InfraManager / condition-check calls |
-| `maxIdleSleep` | Upper bound on idle sleep between claim polls |
-| `backoffBase` | Initial backoff interval after an empty-claim result |
-| `backoffMax` | Maximum backoff interval (before jitter) |
-| `jitterRatio` | Fraction of the sleep interval to randomize (e.g. ±20 %) |
+These bind from `pipeline.execution.*` in `application.yml` (the start delay is domain config,
+`pipeline.start-delay` — ADR-016 §2):
 
-Required relationship: `leaseDuration > maxApiCallTimeout + poolQueueWait + safetyMargin`
-(same bound as Decision 5).
+| Knob (`pipeline.execution.*`) | Meaning |
+|---|---|
+| `worker-per-pod` | Thread-pool size per pod; caps concurrent external calls per replica |
+| `running-pipeline-cap` | Soft pickup target for concurrently claimed pipeline work (candidates are `RUNNING`, plus due `PENDING` about to transition at claim) |
+| `terraform-slot-cap` | Soft admission target for concurrent TF-dispatch slots |
+| `terraform-slot-retry` | Delay before re-checking slot availability when the slot gate is full |
+| `lease-duration` | Claim lease window; see required relationship below |
+| `api-call-timeout` | Per-call timeout for InfraManager / condition-check calls |
+| `poll-interval` | Sweep interval while work is being found (idle sweeps back off instead) |
+| `max-idle-sleep` | Upper bound on idle sleep between claim polls |
+| `backoff-base` | Initial backoff interval after an empty-claim result |
+| `backoff-max` | Maximum backoff interval (before jitter) |
+| `jitter-ratio` | Fraction of the sleep interval to randomize (e.g. ±20 %) |
+| `scheduler-initial-delay` | Delay before the first sweep after boot |
+
+Pod topology — `activePodCount` (running replicas) and the autoscaler's `maxReplicas` — is
+deployment-owned (Kubernetes), not application config; it enters this ADR only as a factor of
+`totalWorkerCount` and the soft-cap overshoot bound.
+
+Required relationship:
+`leaseDuration > (maxApiCallTimeout × callsPerStep) + poolQueueWait + safetyMargin`
+(same bound as Decision 5 — `callsPerStep` covers the multi-call `TERRAFORM_JOB` step: up to `N`
+status calls + up to `N` result fetches per claim). The enforceable **core** of this bound —
+`lease-duration > api-call-timeout` (the single-call floor) — is validated fail-fast at boot;
+the call-count multiplier, queue wait, and margin remain operational tuning.
 
 ### Key metrics
+
+These are a **forward-looking target catalog** — the observability surface to build, **not yet
+instrumented** in V1 (no Micrometer/Actuator wiring ships today). The "429/503 count" below is
+likewise a target; see the Worker-count knob for how 429/503 are currently handled (as generic
+`CHECK_ERROR` retries, undistinguished).
 
 - **active workers** — worker threads currently executing a step
 - **total worker count** — `activePodCount × workerPerPod`
@@ -513,8 +572,24 @@ Required relationship: `leaseDuration > maxApiCallTimeout + poolQueueWait + safe
   `polling_interval`, `executionTimeout` is `TERRAFORM_JOB`-only, and a lost condition poll heals
   via lease-expiry reclaim rather than a fresh schedule.
 - 2026-07-03: introduce the `PENDING` start-delay wait state; `PENDING → RUNNING` at claim
-  (LIN-30). Claim predicate and its index widen to `status IN ('RUNNING','PENDING')`; tx1 applies
+  (LIN-30). Claim predicate widens to `status IN ('RUNNING','PENDING')` (the composite
+  `(status, next_due_at)` index serves both values as-is); tx1 applies
   the transition atomically with the lease stamp so the claim holder stays the sole `status`
   writer; Case A cancel guard widens to include `PENDING` while Case B stays `RUNNING`-only
   (a live-lease pipeline is already `RUNNING`); Decision 7 restated (creation status set by start
   delay, `PENDING` is a start-delay timer not an admission queue); PENDING pipeline metric added.
+- 2026-07-03 (alignment pass, post-LIN-30 audit): restored the composite `(status, next_due_at)`
+  claim-index description — the LIN-30 wording port had imported a PostgreSQL partial-index
+  phrasing from its source repo, but MySQL 8 (the target engine) has no partial indexes and the
+  implementation has always used the composite index; added the MySQL 8 + JPA pseudo-SQL note
+  (Decision 2); documented `active_target` uniqueness-slot release in Case A cancel and in tx2's
+  terminal write (ADR-016 §4's mechanism); named the slot-gate occupancy source
+  (`consumes_terraform_slot`, Decision 7); aligned the knob catalog with the
+  `pipeline.execution.*` config keys and moved pod topology out of application config.
+- 2026-07-04 (alignment pass 2, codex round 1): corrected the tx2 write-back to note `task_check`
+  is 0..1 per attempt (a `TERRAFORM_JOB` attempt that completes on its first `check` writes none);
+  stated that V1 has **no distinct 429/503 backpressure** (they surface as `CHECK_ERROR` on the
+  normal retry budget); widened the lease bound to the **multi-call Terraform step envelope**
+  (N status + N result calls per claim), noting the fail-fast check only enforces the single-call
+  floor; corrected the backoff example to the actual **×2 geometric** doubling and the jitter
+  scope to **pods/replicas**; labeled the Key-metrics catalog **not yet instrumented**.
