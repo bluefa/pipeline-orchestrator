@@ -13,6 +13,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,7 +27,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 검증한다 — 실패하면 전체 no-op으로 stale straggler를 막는다; (3) 같은 락 아래에서 {@code cancel_requested}를
  * 읽어 협력적 취소를 경합 없이 관찰한다; (4) outcome을 적용하고 converge한 뒤 BLOCKED 후속을 승격한다;
  * (5) claim을 해제하고 next_due_at을 전진시킨다. CAS나 {@code status=:expected} 가드는 없다 —
- * {@code FOR UPDATE}에 검증된 단일 쓰기자가 더해지므로 필요 없다(Decision 4/6).
+ * {@code FOR UPDATE}에 검증된 단일 쓰기자가 더해지므로 필요 없다(Decision 4/6). 적용할 outcome이 없는
+ * 사이클(취소만 관찰했거나 잔여 비종료 task가 없는 경우)은 {@link #writeBack} 대신 {@link #convergeAndRelease}로
+ * 들어와 (4)의 outcome 적용 없이 같은 순서를 밟는다.
  *
  * <p>현재 태스크가 DONE이 되면 같은 write-back 트랜잭션 안에서 다음 BLOCKED 후속 태스크를 READY로 승격한다(Decision 4 §152).
  * 별도 claim 사이클을 거치지 않으니 트랜잭션 중간에 불변식이 깨지는 상태가 남지 않는다.
@@ -49,17 +52,33 @@ public class StepReporter {
         this.clock = clock;
     }
 
+    /**
+     * run 단계가 계산한 outcome을 현재 task에 적용하고 스텝을 마무리한다. outcome이 없는 사이클은 이 메서드가
+     * 아니라 {@link #convergeAndRelease}를 쓴다. 도입부 가드 세 줄(락+토큰 소유권 → 체인 로드 → 취소 관찰)은
+     * {@link #convergeAndRelease}와 자구까지 동일해야 한다 — 취소가 관찰되면 outcome은 적용 없이 폐기된다.
+     */
     @Transactional
     public void writeBack(long pipelineId, String claimToken, StepOutcome outcome) {
+        Objects.requireNonNull(outcome, "outcome must not be null — use convergeAndRelease for a step with no outcome to apply");
         claimedPipeline(pipelineId, claimToken).ifPresent(pipeline -> {
             List<Task> chain = taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId);
             if (pipeline.isCancelRequested()) { cancel(pipeline, chain); return; }
-            if (outcome != null) {
-                currentTask(chain).ifPresent(task -> taskStateMachine.applyOutcome(task, outcome));
-            }
-            converge(pipeline, chain);
-            promoteBlockedSuccessor(pipeline, chain);
-            releaseClaim(pipeline, chain);
+            currentTask(chain).ifPresent(task -> taskStateMachine.applyOutcome(task, outcome));
+            finishStep(pipeline, chain);
+        });
+    }
+
+    /**
+     * 적용할 outcome이 없는 사이클의 write-back — 취소 관찰(cancel_requested)이나 잔여 비종료 task 없음처럼
+     * run 단계를 건너뛴 claim을 같은 소유권 가드 아래에서 수렴·승격·해제만으로 닫는다. 도입부 가드 세 줄은
+     * {@link #writeBack}과 자구까지 동일해야 한다.
+     */
+    @Transactional
+    public void convergeAndRelease(long pipelineId, String claimToken) {
+        claimedPipeline(pipelineId, claimToken).ifPresent(pipeline -> {
+            List<Task> chain = taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId);
+            if (pipeline.isCancelRequested()) { cancel(pipeline, chain); return; }
+            finishStep(pipeline, chain);
         });
     }
 
@@ -74,6 +93,13 @@ public class StepReporter {
             pipeline.setClaimedBy(null);
             pipeline.setClaimedUntil(null);
         });
+    }
+
+    /** 스텝 마무리 — 수렴 → BLOCKED 후속 승격 → claim 해제·next_due_at 전진. */
+    private void finishStep(Pipeline pipeline, List<Task> chain) {
+        converge(pipeline, chain);
+        promoteBlockedSuccessor(pipeline, chain);
+        releaseClaim(pipeline, chain);
     }
 
     /** 행을 FOR UPDATE로 잠근 뒤 토큰이 일치할 때만 돌려준다(소유권 확인). 불일치하거나 없으면 empty라 전체가 no-op된다. */

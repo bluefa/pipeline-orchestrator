@@ -79,10 +79,15 @@ public class StepRunner {
         return switch (task.getStatus()) {
             case BLOCKED -> StepOutcome.unblock();
             case READY -> runExternalCall(task, true, () -> StepOutcome.dispatched(type.execute(target, task)));
-            case IN_PROGRESS -> runExternalCall(task, false, () -> mapProgress(type.check(target, task, attempt)));
+            case IN_PROGRESS -> runExternalCall(task, false, () -> mapProgress(checkProgress(target, task, attempt, type)));
             case DONE, FAILED, CANCELLED ->
                     throw new IllegalStateException("runStep on a terminal task " + task.getId());
         };
+    }
+
+    /** 현재 attempt가 있으면 check로, 유실됐으면 타입별 복구 정책({@code checkWithoutAttempt})으로 분기한다 — check의 attempt는 항상 non-null이다. */
+    private static TaskProgress checkProgress(String target, Task task, TaskAttempt attempt, TaskType type) {
+        return attempt == null ? type.checkWithoutAttempt(target, task) : type.check(target, task, attempt);
     }
 
     private StepOutcome mapProgress(TaskProgress progress) {
