@@ -42,6 +42,16 @@ public class ConditionCheckTask implements TaskType {
 
     @Override
     public TaskProgress check(String target, Task task, TaskAttempt attempt) {
+        return pollCondition(target, task);
+    }
+
+    /** 조건 폴은 attempt의 response를 읽지 않으므로, 관찰 유실과 무관하게 같은 폴을 수행한다. */
+    @Override
+    public TaskProgress checkWithoutAttempt(String target, Task task) {
+        return pollCondition(target, task);
+    }
+
+    private TaskProgress pollCondition(String target, Task task) {
         ConditionPoll poll = infraManagerClient.checkCondition(target, task.getOperation());
         if (poll == null) {   // 경계 방어: 쓸 수 없는 외부 응답은 raw NPE가 아니라 닫힌 어휘로(TerraformTask와 동일)
             throw new CallFailedException("InfraManager returned no condition result for " + task.getOperation());

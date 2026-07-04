@@ -69,7 +69,7 @@ public class PipelineWorker {
 
     private void processStep(Claim claim, StepContext context) {
         if (nothingToDispatch(context)) {
-            stepReporter.writeBack(claim.pipelineId(), claim.token(), null);
+            stepReporter.convergeAndRelease(claim.pipelineId(), claim.token());
             return;
         }
         if (mustWaitForTerraformSlot(context)) {
@@ -82,7 +82,7 @@ public class PipelineWorker {
 
     /**
      * 던질 외부 작업이 없는 경우다 — 취소가 요청됐거나(그러면 write-back 트랜잭션이 취소를 적용) 남은 비종료 task가 없다(그러면 write-back 트랜잭션이
-     * 종료 상태로 수렴). 어느 쪽이든 외부 호출을 건너뛰고 {@code outcome=null}로 write-back해 수렴·claim 해제만 맡긴다.
+     * 종료 상태로 수렴). 어느 쪽이든 외부 호출을 건너뛰고 {@link StepReporter#convergeAndRelease}로 수렴·claim 해제만 맡긴다.
      */
     private boolean nothingToDispatch(StepContext context) {
         return context.cancelRequested() || context.currentTask() == null;

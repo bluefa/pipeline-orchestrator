@@ -70,6 +70,7 @@ class TaskTypeRegistryTest {
             @Override public String taskName() { return name; }
             @Override public DispatchResult execute(String target, Task task) { return DispatchResult.NONE; }
             @Override public TaskProgress check(String target, Task task, TaskAttempt attempt) { return TaskProgress.SUCCEEDED; }
+            @Override public TaskProgress checkWithoutAttempt(String target, Task task) { return TaskProgress.SUCCEEDED; }
         };
     }
 }

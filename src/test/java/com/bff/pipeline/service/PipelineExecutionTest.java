@@ -275,6 +275,30 @@ class PipelineExecutionTest {
     }
 
     @Test
+    void aMissingAttemptRowRidesExecutionTimeoutViaTheTypeRecoveryPolicy() {
+        Pipeline pipeline = creator.create("e-lost-attempt", PipelineType.DELETE);
+        pipelineWorker.pollOnce();   // dispatch → IN_PROGRESS, attempt 행 기록됨
+
+        taskAttemptRepository.delete(attempt(pipeline, 0));   // 관찰 유실 — attempt 행 자체가 사라짐
+        clock.advance(Duration.ofHours(1));                   // executionTimeout(PT50M) 초과
+        pipelineWorker.pollOnce();   // attempt 유실 → checkWithoutAttempt → retryable EXECUTION_TIMEOUT
+
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
+        assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
+
+        clock.advance(Duration.ofMinutes(11));                // polling_interval(PT10M) 경과 → 재dispatch due
+        pipelineWorker.pollOnce();   // 멱등 재dispatch → attempt 2
+        taskAttemptRepository.delete(attempt(pipeline, 0));   // attempt 2도 유실
+        clock.advance(Duration.ofHours(1));
+        pipelineWorker.pollOnce();   // failCount 예산 소진(maxFailCount=2) → 판별 코드가 task에 남는다
+
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.FAILED);
+        assertThat(task(pipeline, 0).getErrorCode()).isEqualTo(ErrorCode.EXECUTION_TIMEOUT);
+        assertThat(task(pipeline, 0).getFailCount()).isEqualTo(2);   // 유실 재시도도 같은 failCount 예산을 쓴다
+        assertThat(status(pipeline)).isEqualTo(PipelineStatus.FAILED);
+    }
+
+    @Test
     void aThrowingDispatchIsCheckErrorAndRetries() {
         Pipeline pipeline = creator.create("e-throw", PipelineType.DELETE);
         infraManagerClient.onDispatch(() -> { throw new CallFailedException("503"); });

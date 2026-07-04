@@ -45,7 +45,8 @@ import com.bff.pipeline.exception.CallFailedException;
  *
  * response 유실(ADR §3 invariant 3). dispatch는 됐지만 {@code response}가 최신 attempt에 남지 않은 경우(dispatch
  * 뒤 DB 기록 실패나 크래시)에는 곧바로 실패시키지 않는다. 사유를 정확히 로그로 남기고 executionTimeout까지 기다렸다가 재시도
- * 가능한 {@code EXECUTION_TIMEOUT}으로 fallthrough해 멱등 재dispatch한다(failCount 예산을 함께 쓴다). 반면 {@code response}가
+ * 가능한 {@code EXECUTION_TIMEOUT}으로 fallthrough해 멱등 재dispatch한다(failCount 예산을 함께 쓴다). attempt 행
+ * 자체가 유실된 경우도 같은 정책이다({@code checkWithoutAttempt}). 반면 {@code response}가
  * 있는데 역직렬화가 안 되면(malformed) 곧바로 실패 처리한다({@code CHECK_ERROR}).
  *
  * 외부가 돌려준 값을 쓸 수 없는 경우(빈 dispatch 응답, null poll 상태)에는 영속/폴링 대신 호출 실패로 처리해
@@ -89,9 +90,12 @@ public class TerraformTask implements TaskType {
 
     @Override
     public TaskProgress check(String target, Task task, TaskAttempt attempt) {
-        String response = attempt == null ? null : attempt.getResponse();
+        String response = attempt.getResponse();
         if (response == null || response.isBlank()) {
-            return progressForLostResponse(task, attempt);
+            log.warn("task {} attempt {}: dispatch response missing after dispatch (lost DB write or crash); "
+                    + "waiting for executionTimeout before an idempotent re-dispatch",
+                    task.getId(), attempt.getAttemptNumber());
+            return progressUntilExecutionTimeout(task);
         }
         List<String> jobIds;
         try {
@@ -113,10 +117,15 @@ public class TerraformTask implements TaskType {
         return jobId == null || jobId.isBlank();
     }
 
-    private TaskProgress progressForLostResponse(Task task, TaskAttempt attempt) {
-        log.warn("task {} attempt {}: dispatch response missing after dispatch (lost DB write or crash); "
-                + "waiting for executionTimeout before an idempotent re-dispatch",
-                task.getId(), attempt == null ? -1 : attempt.getAttemptNumber());
+    /** 관찰 유실(현재 attempt 행 자체가 없음) — response 유실과 같은 정책으로 executionTimeout까지 기다렸다가 멱등 재dispatch한다. */
+    @Override
+    public TaskProgress checkWithoutAttempt(String target, Task task) {
+        log.warn("task {}: current attempt row missing while IN_PROGRESS (lost observation); "
+                + "waiting for executionTimeout before an idempotent re-dispatch", task.getId());
+        return progressUntilExecutionTimeout(task);
+    }
+
+    private TaskProgress progressUntilExecutionTimeout(Task task) {
         if (TaskSettingsResolver.isPastDeadline(task, TaskSettingsResolver.resolveExecutionTimeout(task, pipelineSettings), clock)) {
             return TaskProgress.failedRetryable(ErrorCode.EXECUTION_TIMEOUT);
         }

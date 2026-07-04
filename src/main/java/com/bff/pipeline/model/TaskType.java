@@ -23,7 +23,9 @@ import com.bff.pipeline.entity.TaskAttempt;
  * 잡지 않고 그대로 전파한다(fail-fast). <em>비즈니스</em> 실패는 결코 예외로 알리지 않는다.
  * {@code check(target, task, attempt)}는 최신 {@code attempt}의 {@code response}를 역직렬화해 진행 상태를 판정하고,
  * 엔진이 다음에 할 행동을 {@link TaskProgress} 값으로 보고한다 — 완료, 보류, 또는 실패(retryable 플래그 포함).
- * 비즈니스 실패는 여기서 데이터이지 예외가 아니다({@code docs/exception-strategy.md} 참조).
+ * {@code attempt}는 항상 존재한다(non-null) — 현재 attempt 행이 유실된 IN_PROGRESS는 엔진이
+ * {@code checkWithoutAttempt(target, task)}로 분기하므로, 유실 시의 복구 정책은 각 구현체가 그 메서드에서
+ * 명시적으로 결정한다. 비즈니스 실패는 여기서 데이터이지 예외가 아니다({@code docs/exception-strategy.md} 참조).
  *
  * <p>라이프사이클 순서는 {@code execute} → {@code check}. {@code check}가 성공을 돌려주면 task는 곧장 DONE이다
  * (ADR-016 §3: 완료는 최신 attempt 위 코드 레벨 check 한 번으로 판정하고, 별도의 사후 단계가 없다).
@@ -43,8 +45,17 @@ public interface TaskType {
 
     /**
      * 최신 {@code attempt}의 {@code response}를 자기 방식으로 역직렬화해 진행 상태를 한 번 판정한다
-     * (ADR-016 §3 invariant 1: 완료는 최신 attempt 결과 위의 코드 레벨 check). 비즈니스 결과는 {@link TaskProgress}
-     * 값이지 예외가 아니다. 호출 실패만 {@code RuntimeException}으로 알린다.
+     * (ADR-016 §3 invariant 1: 완료는 최신 attempt 결과 위의 코드 레벨 check). {@code attempt}는 항상
+     * non-null이다 — 유실된 경우 엔진은 이 메서드 대신 {@link #checkWithoutAttempt}를 부른다. 비즈니스 결과는
+     * {@link TaskProgress} 값이지 예외가 아니다. 호출 실패만 {@code RuntimeException}으로 알린다.
      */
     TaskProgress check(String target, Task task, TaskAttempt attempt);
+
+    /**
+     * IN_PROGRESS인데 현재 attempt 관찰 행이 없을 때(관찰 유실 — dispatch 후 기록 유실이나 수동 개입)의
+     * 타입별 복구 정책이다. 엔진({@code StepRunner})이 null attempt를 이 메서드로 분기하므로 {@link #check}는
+     * attempt를 항상 non-null로 받는다. 결과 규약은 {@link #check}와 같다 — 비즈니스 결과는 {@link TaskProgress}
+     * 값이지 예외가 아니고, 호출 실패만 {@code RuntimeException}으로 알린다.
+     */
+    TaskProgress checkWithoutAttempt(String target, Task task);
 }
