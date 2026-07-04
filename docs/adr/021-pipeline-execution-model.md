@@ -59,7 +59,7 @@ this ADR is how those mechanisms work.
 | **No terminal resurrection** (a `CANCELLED`/`DONE` pipeline never reverts) | ownership-guarded write-back + exactly one `status` writer per cancel case (Case A: the API path, for an idle row; Case B: the claim holder, which also applies `PENDING → RUNNING` in tx1) — so **no `status` guard is needed** | Decision 2, 4, 6 |
 | **At-least-once is correct** (a duplicate dispatch is harmless) | infra-idempotency: TF APIs are duplicate-harmless | ADR-016 §5 |
 | **Crash recovery** (a dead worker's pipeline resumes) | lease expiry → reclaim by the next scan; no leader, no journal | Decision 5 |
-| **Completion survives a lost result** | code-level `check(attempt, task)` over the latest attempt; a lost `TERRAFORM_JOB` result → `executionTimeout` → fresh idempotent re-dispatch (a condition's lost poll heals via lease-expiry reclaim, then re-polls) | Decision 4, ADR-016 §5, §6 |
+| **Completion survives a lost result** | code-level `check(target, task, attempt)` over the latest attempt; a lost `TERRAFORM_JOB` result → `executionTimeout` → fresh idempotent re-dispatch (a condition's lost poll heals via lease-expiry reclaim, then re-polls) | Decision 4, ADR-016 §5, §6 |
 
 ### 1. Workers pull work from the DB; no single-instance constraint, no leader election
 
@@ -193,7 +193,7 @@ the claim scan) at `now() + polling_interval`, and the poll that reaches `maxFai
 `task_attempt`/`task_check` pair (the `task_attempt` is the latest row the completion `check`
 reads; `task_check` stays write-only) and drives the task
 `DONE`, without incrementing `fail_count` or rescheduling.
-Task completion is a code-level `check(attempt, task)` over the **latest** attempt row — the
+Task completion is a code-level `check(target, task, attempt)` over the **latest** attempt row — the
 reconciler reads only that row, and only for completion; claim, scheduling, and pipeline
 transitions never read the attempt tables. For a `TERRAFORM_JOB` a lost attempt result does not
 stall the task: it falls through to `executionTimeout` and re-dispatches a fresh `N`-job run
@@ -484,7 +484,7 @@ loop:
 ## Operational reference (knobs & metrics)
 
 This section is a reference catalog only. These are **static server config** (e.g. Spring
-`application.yaml`) — not API-mutable runtime knobs — and their values live in operational
+`application.yml`) — not API-mutable runtime knobs — and their values live in operational
 config, not in this ADR. The lease and concurrency values in particular are **tuned in
 operation** against observed InfraManager latency, not fixed at design time.
 

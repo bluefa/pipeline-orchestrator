@@ -111,7 +111,7 @@ Three **observation tables** — `task_attempt` (per-retry-attempt outcome), `ta
 (per-attempt poll summary), and `terraform_result` (per-job Terraform log, recorded when a
 `TERRAFORM_JOB` attempt reaches its verdict) — carry what an operator needs to first-diagnose a failure: the raw external
 `response` per attempt (a TF dispatch, or a condition's check payload), the final outcome, whether the condition's terminal poll was not-met (`CONDITION_NOT_MET`) or a check error (`CHECK_ERROR`/`CALL_TIMEOUT`), with the per-cause split in `task_check`, poll counts, the last external response. They also hold the **result the completion
-`check(attempt, task)` reads** to decide a task is done — the reconciler reads only the *latest*
+`check(target, task, attempt)` reads** to decide a task is done — the reconciler reads only the *latest*
 attempt row, and only for that; claim, scheduling, and pipeline transitions never read them.
 Losing a row never corrupts state: for a `TERRAFORM_JOB` a missing latest result falls through to
 `executionTimeout` and re-dispatches (idempotent); a `CONDITION_CHECK` has no async result to lose —
@@ -146,7 +146,7 @@ recorded the attempt result" is healed by re-dispatch — and lets the state mac
 `DISPATCHING` state. InfraManager does not de-duplicate (Constraint 1), so a re-dispatch may
 create *harmless duplicate* jobs. A single `TERRAFORM_JOB` dispatch produces a set of **`N` job
 ids**; the attempt's raw `response` (which carries those job ids) is recorded in `task_attempt`,
-and task completion is a **code-level check** over that result — `check(attempt, task) → done?`,
+and task completion is a **code-level check** over that result — `check(target, task, attempt) → done?`,
 each `TaskType` deserializing its own `response` — not a domain job column. For a `TERRAFORM_JOB`, if the result is lost,
 the task does not stall: the per-task
 `executionTimeout` fires and the task re-dispatches as a fresh run (idempotent), so correctness
@@ -195,7 +195,7 @@ cancel is applied against a live worker is an execution concern (ADR-021).
 
 - Current state is one rule: the row. Self-heals across crashes and redeploys via idempotent
   re-dispatch — no exactly-once machinery.
-- Small and stable: two domain tables, five core enums, two task kinds. The model is unchanged
+- Small and stable: two domain tables, four core enums, two task kinds. The model is unchanged
   when the execution strategy (ADR-021) changes.
 
 **Costs we accept**
@@ -234,7 +234,7 @@ cancel is applied against a live worker is an execution concern (ADR-021).
   `description` is the operator's per-step note on a `CUSTOM` run. `version` is an optimistic
   lock kept as defense-in-depth under the pipeline-row `FOR UPDATE` serialization (ADR-021
   Decision 4). No job-id column: one dispatch's `N` job ids live inside the `task_attempt`
-  `response`, and completion is a code-level `check(attempt, task)` over the latest attempt result.
+  `response`, and completion is a code-level `check(target, task, attempt)` over the latest attempt result.
 
 **Observation tables** (per attempt; only the *latest* `task_attempt` row is read — by the
 completion `check` — nothing else; `task_check` and `terraform_result` are write-only)
