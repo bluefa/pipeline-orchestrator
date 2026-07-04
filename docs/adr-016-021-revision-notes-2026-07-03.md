@@ -289,10 +289,102 @@
 
 ## 반영하지 않은 것 (의도적)
 
-- **메트릭 카탈로그 축소/구현 여부 표기** — ADR-021이 스스로 "reference catalog only"라
-  선언하므로, 미구현 메트릭을 지우는 것은 카탈로그의 목적(운영 시 잴 것들의 위시리스트)과
-  어긋난다.
 - **worker 루프 pseudocode를 sweep/drain 구조로 재작성** — "illustrative"로 명시된 코드라
   구조 일치까지 요구하지 않았다. 안전지점·게이트·release 규칙 등 규범적 서술은 모두 일치한다.
-- **ADR-016 Context의 "~12 pipeline shapes"** — 카탈로그 recipe 규모의 서술로 여전히 유효하다.
-  CUSTOM은 §2와 Enums에서 다룬다.
+
+(Round 1에서 "반영하지 않음"으로 두었던 메트릭 카탈로그와 "~12 pipeline shapes"는 Round 2에서
+정확도 요구에 맞춰 각각 "미계측 target 표기", "8 recipe로 정정"으로 반영했다 — 아래 Round 2 참조.)
+
+---
+
+## Round 2 (codex round 1 findings, 2026-07-04)
+
+Round 1 결과에 대해 **codex(gpt-5.5, xhigh)** 독립 리뷰 + 자체 병렬 감사(ADR-016 스키마/enum,
+ADR-021 실행)를 돌렸다. codex는 P0 2건·P1 5건을 냈고, 모두 primary source(구현 코드/테스트)로
+직접 재검증한 뒤 반영했다. 자체 감사는 컬럼 순서 2건·`recipe_definition` write-once 과장 1건을
+추가로 잡았다. ADR-021 자체 감사는 load-bearing 주장 전부 PASS(P2 4건만) — 그 P2도 함께 반영했다.
+
+### P0 (구현과 모순 — 반드시 수정)
+
+- **P0-1 `task_check` 읽기·카디널리티** (ADR-016 §3 invariant 1·2, task_check 서술; ADR-021 Decision 4).
+  - 문제: "완료 판정이 최신 `task_attempt`/`task_check`를 읽는다", "`task_check`는 attempt당
+    한 행"으로 서술. 실제로 완료 판정 `check(target, task, attempt)`는 `task_attempt`만 읽고
+    `task_check`는 **아예 읽지 않는다**(쓰기 전용 진단). 또 TERRAFORM_JOB이 첫 `check`에 완료하면
+    `task_check` 행이 **0개**다(`ObservationTest.aHappyTerraformTaskRecordsOneDoneAttemptWithItsResponse`가
+    `findByTaskAttemptId(...).isEmpty()`로 고정).
+  - 수정: invariant 1을 "최신 `task_attempt`만 읽고 `task_check`/`terraform_result`는 절대 읽지
+    않음"으로, invariant 2와 task_check 서술을 "attempt당 0..1(첫 check 완료 시 0행)"으로,
+    ADR-021 tx2 서술을 "폴이 관측될 때만 task_check 기록"으로 정정.
+- **P0-2 `fail_count == attempt_number` 과장** (ADR-016 task_attempt).
+  - 문제: "실패 attempt가 커밋되면 `fail_count == attempt_number`"로 단정. `retryOrFail`만
+    `failCount`를 증가시키고 `failOutright`(non-retryable)는 증가시키지 않는다. malformed/빈
+    dispatch 응답 → `failedTerminal(CHECK_ERROR)`(retryable=false) → `failOutright`는 attempt를
+    FAILED로 닫되 `failCount`는 그대로다(`TerraformTask.check`→`TaskStateMachine.failOutright`/`fail`).
+  - 수정: "retryable 실패에서만 성립; outright 실패(CHECK_ERROR/UNKNOWN_TASK)는 `fail_count`
+    증가 없이 attempt를 닫는다(UNKNOWN_TASK는 dispatch 전이면 attempt 행조차 없다)"로 한정.
+
+### P1 (구현했으나 ADR이 누락/오해 소지)
+
+- **P1-1 429/503 backpressure 미구현** (ADR-021 Worker-count knob). Feign의 모든 HTTP 오류
+  (429/503 포함)는 `translating`에서 `CallFailedException`→`CHECK_ERROR`로 뭉뚱그려져 일반
+  `fail_count` 재시도 예산을 소비한다(`InfraManagerFeignAdapter.translating`). 별도 rate-limit
+  deferral은 없다 → "V1엔 distinct backpressure 없음, 일반 CHECK_ERROR 재시도로 흐름"으로 정정.
+- **P1-2 lease 하한의 multi-call 누락** (ADR-021 Decision 5/knob). TF `check` 한 번이 claim
+  안에서 job-status N콜 + result-log N콜을 순차 수행한다(`TerraformTask.aggregate` +
+  `TerraformResultRecorder.recordFinishedJobs`). lease 하한을 "단일 콜"이 아니라 "claim→tx2 전체
+  multi-call envelope"로 넓히고, fail-fast는 단일-콜 하한만 강제함을 명시.
+- **P1-3 `terraform_result` 기록 시점 누락** (ADR-016 §3). run 단계(tx2 밖)에서 best-effort로
+  self-commit되어, stale straggler의 tx2가 no-op돼도 진단 행은 남을 수 있다(무해, 유니크 키로
+  멱등) — 이 타이밍을 명시(`TerraformTask.check`→recorder, 트랜잭션 밖).
+- **P1-4 `TaskOperation` "canonical values" 부정확** (ADR-016 Enums). 표 헤더가 canonical values를
+  표방하나 `TaskOperation`만 서술이었다 → "25개(24 TERRAFORM_JOB = 8 실행단위×PLAN/APPLY/DESTROY
+  + NETWORK_READY), 전체 목록은 `TaskOperation.java`"로 개수·근거 명시(코드로 25 확인).
+- **P1-5 제약 이름 누락** (ADR-016). 409 번역과 terraform_result 멱등이 제약 **이름**에 의존하는데
+  이름이 없었다 → `uq_pipeline_active_target`, `uq_terraform_result_attempt_job` 명시.
+
+### 자체 감사 추가분
+
+- **컬럼 순서 2건**: pipeline 스키마의 `active_target`을 엔티티 선언 순서(도메인 컬럼 맨 끝)로,
+  task 스키마의 `operation`/`task_definition` 순서를 엔티티대로(`operation` 먼저) 정렬.
+- **`recipe_definition` write-once 과장**: 엔티티에서 `cloud_provider`만 `updatable=false`이고
+  `recipe_definition`은 아니다 → "cloud_provider는 write-once, recipe_definition은 create 시
+  1회 기록(불변 강제 아님)"으로 분리 기술.
+
+### ADR-021 자체 감사 P2
+
+- 백오프 예시 `200→500→1s→2-5s`를 실제 ×2 배증(`200→400→800→1.6s→…→backoff-max`)으로 정정
+  (`PipelineScheduler.nextDelay`).
+- "jitter across **workers**"를 "across **pods/replicas**"로 정정(스케줄러는 pod당 단일 데몬 스레드).
+- Key metrics를 "미계측 forward-looking target"으로 명시(Micrometer/Actuator 미배선 확인).
+- task slot 인덱스 `idx_task_slot_status`를 slot 카운트 근거로 ADR-016 task 스키마에 병기.
+
+### codex round 2 재검증 후 잔여 수정 (partial-fix 마무리)
+
+codex round 2는 7건 중 5건 FIXED, 2건 PARTIALLY-FIXED로 판정했다. 부분 수정 2건과 새 P2 1건을
+마저 반영했다:
+
+- **lease 공식 잔재 (P1)**: round 2에서 knob 문단만 multi-call로 고치고 **Decision 5의 공식**과
+  **Operational reference의 required relationship**은 단일-콜 공식(`> max_single_call_timeout + …`)
+  그대로였다. 두 곳 모두 `> (max_single_call_timeout × calls_per_step) + …`로 정정하고, TF check가
+  claim 안에서 status N콜 + result N콜을 도는 근거(`TerraformTask`/`TerraformResultRecorder`)와
+  "fail-fast는 단일-콜 하한만 강제"를 명시.
+- **empty dispatch response 과잉 (P1)**: fail-outright 예시의 "malformed/**empty** dispatch
+  response"에서 empty를 뺐다. `TerraformTask.execute`의 빈 응답은 `CallFailedException`→retryable
+  `CHECK_ERROR`(예산 소비, failCount 증가)이지 outright가 아니다. outright는 **check 단계의 stored
+  응답 malformed/무효 job-id**(`failedTerminal`)와 UNKNOWN_TASK뿐임을 정확히 기술.
+- **백오프 첫 지연 (P2)**: `nextDelay`가 방출 전에 먼저 ×2 하므로 첫 empty-sweep 지연은 base가
+  아니라 **2×base=400ms**다. "200ms → 400ms"를 "첫 방출 400ms → 800ms → …"로 정정.
+
+codex round 2의 나머지 판정(schema 순서·recipe_definition·jitter·metrics)은 모두 PASS.
+round 2 실행 중 `mvn test` 168건 통과도 함께 확인됐다.
+
+### codex round 3 재검증 후 잔여 수정
+
+codex round 3은 위 3건을 모두 FIXED로 확인하고, 재-sweep에서 P0 1건을 추가로 잡았다:
+
+- **nearest-due sleep 공식 (P0)**: `sleep = min(nextDueAt − now(), maxIdleSleep)`는 틀렸다.
+  실제로는 `nextDelay`가 지터 적용된 기하 백오프(이미 `max-idle-sleep`로 캡)를 만들고,
+  `capToNearestDue`가 그 값을 nearest-due로 **다시** 캡한다 →
+  `sleep = min(jittered_backoff, nextDueAt − now())`(nextDueAt이 미래일 때만 적용; 이미 지난
+  due는 백오프 그대로). 공식을 이렇게 정정하고 캡 순서를 명시(`PipelineScheduler.runSweep`/
+  `nextDelay`/`capToNearestDue`, `PipelineSchedulerTest`가 "미래 due는 백오프 유지"로 고정).
