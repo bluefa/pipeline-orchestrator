@@ -5,6 +5,7 @@ import com.bff.pipeline.dto.pipeline.PipelineDetail;
 import com.bff.pipeline.dto.pipeline.PipelineStatistics;
 import com.bff.pipeline.dto.pipeline.PipelineSummary;
 import com.bff.pipeline.dto.pipeline.TaskDetail;
+import com.bff.pipeline.dto.pipeline.TerraformResultDetail;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.StatisticsPeriod;
@@ -71,6 +72,13 @@ public class PipelineController {
     @GetMapping("/{pipelineId}/tasks/{taskId}")
     public TaskDetail taskDetail(@PathVariable Long pipelineId, @PathVariable Long taskId) {
         return queryService.taskDetail(pipelineId, taskId);
+    }
+
+    /** terraform job result 본문 전용 조회(P11) — task 상세의 result 메타에서 "로그 보기"가 lazy 호출한다. */
+    @GetMapping("/{pipelineId}/tasks/{taskId}/attempts/{attemptNumber}/jobs/{jobId}/result")
+    public TerraformResultDetail terraformResult(@PathVariable Long pipelineId, @PathVariable Long taskId,
+            @PathVariable int attemptNumber, @PathVariable String jobId) {
+        return queryService.terraformResult(pipelineId, taskId, attemptNumber, jobId);
     }
 
     @PostMapping("/{pipelineId}/cancel")

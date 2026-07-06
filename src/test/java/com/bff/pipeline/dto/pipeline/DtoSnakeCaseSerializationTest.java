@@ -126,16 +126,37 @@ class DtoSnakeCaseSerializationTest {
     @Test
     void taskAttemptAndNestedCheckSerializeSnakeCase() throws Exception {
         TaskCheckView check = new TaskCheckView(3, 2, 1, 0, "NOT_MET", Instant.parse("2026-07-02T00:05:00Z"));
+        TerraformResultSummary resultSummary = new TerraformResultSummary("j-1", false, true,
+                true, "s3://bucket/j-1.log", Instant.parse("2026-07-02T00:05:00Z"));
         TaskAttemptView attempt = new TaskAttemptView(1, TaskStatus.FAILED, ErrorCode.CHECK_ERROR,
-                "{\"jobIds\":[\"j-1\"]}", Instant.parse("2026-07-02T00:00:00Z"),
-                Instant.parse("2026-07-02T00:05:00Z"), check);
+                "infra-manager call failed: 503", "{\"jobIds\":[\"j-1\"]}", Instant.parse("2026-07-02T00:00:00Z"),
+                Instant.parse("2026-07-02T00:05:00Z"), check, List.of(resultSummary));
 
         String json = mapper.writeValueAsString(attempt);
 
-        assertThat(json).contains("\"attempt_number\":1", "\"error_code\":\"CHECK_ERROR\"", "\"started_at\":",
+        assertThat(json).contains("\"attempt_number\":1", "\"error_code\":\"CHECK_ERROR\"",
+                "\"failure_detail\":\"infra-manager call failed: 503\"", "\"started_at\":",
                 "\"finished_at\":", "\"call_count\":3", "\"not_met_count\":2", "\"api_error_count\":1",
                 "\"call_timeout_count\":0", "\"last_external_status\":\"NOT_MET\"", "\"last_checked_at\":");
-        assertThat(json).doesNotContain("attemptNumber", "errorCode", "callCount", "notMetCount",
-                "apiErrorCount", "lastExternalStatus", "lastCheckedAt");
+        assertThat(json).contains("\"terraform_results\":", "\"job_id\":\"j-1\"", "\"succeeded\":false",
+                "\"truncated\":true", "\"has_body\":true", "\"result_path\":\"s3://bucket/j-1.log\"",
+                "\"created_at\":");
+        // "jobId"는 검사하지 않는다 — 원시 response 문자열의 "jobIds"(외부 payload 원문)에 오검출된다
+        assertThat(json).doesNotContain("attemptNumber", "errorCode", "failureDetail", "callCount", "notMetCount",
+                "apiErrorCount", "lastExternalStatus", "lastCheckedAt", "terraformResults", "hasBody",
+                "resultPath");
+    }
+
+    @Test
+    void terraformResultDetailSerializesSnakeCase() throws Exception {
+        TerraformResultDetail detail = new TerraformResultDetail(5L, 2, "j-1", false, false,
+                "s3://bucket/j-1.log", Instant.parse("2026-07-02T00:05:00Z"), "terraform: error");
+
+        String json = mapper.writeValueAsString(detail);
+
+        assertThat(json).contains("\"task_id\":5", "\"attempt_number\":2", "\"job_id\":\"j-1\"",
+                "\"succeeded\":false", "\"truncated\":false", "\"result_path\":\"s3://bucket/j-1.log\"",
+                "\"created_at\":", "\"content\":\"terraform: error\"");
+        assertThat(json).doesNotContain("taskId", "attemptNumber", "jobId", "resultPath", "createdAt");
     }
 }

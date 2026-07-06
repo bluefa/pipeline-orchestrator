@@ -65,10 +65,10 @@ public class TaskStateMachine {
             case StepOutcome.Dispatched dispatched -> markInProgress(task, dispatched.dispatchResult());
             case StepOutcome.Pending pending -> recordPendingAndReschedule(task, pending.observed());
             case StepOutcome.Succeeded ignored -> complete(task);
-            case StepOutcome.Failed failed -> applyFailure(task, failed.reason(), failed.retryable());
+            case StepOutcome.Failed failed -> applyFailure(task, failed.reason(), failed.retryable(), failed.detail());
             case StepOutcome.CallFailure callFailure -> {
                 if (!callFailure.dispatch()) observationRecorder.recordCheck(task, callFailure.signal());
-                retryOrFail(task, callFailure.reason());
+                retryOrFail(task, callFailure.reason(), callFailure.detail());
             }
             case StepOutcome.ConditionMet met -> completeCondition(task, met.response());
             case StepOutcome.ConditionNotMet notMet -> retryCondition(task, notMet.response());
@@ -87,12 +87,12 @@ public class TaskStateMachine {
     private void retryCondition(Task task, String response) {
         observationRecorder.recordResponse(task, response);
         observationRecorder.recordCheck(task, CheckSignal.NOT_MET);
-        retryOrFail(task, ErrorCode.CONDITION_NOT_MET);
+        retryOrFail(task, ErrorCode.CONDITION_NOT_MET, null);
     }
 
-    private void applyFailure(Task task, ErrorCode reason, boolean retryable) {
-        if (retryable) retryOrFail(task, reason);
-        else failOutright(task, reason);
+    private void applyFailure(Task task, ErrorCode reason, boolean retryable, String failureDetail) {
+        if (retryable) retryOrFail(task, reason, failureDetail);
+        else failOutright(task, reason, failureDetail);
     }
 
     private void unblock(Task task) {
@@ -118,12 +118,16 @@ public class TaskStateMachine {
     }
 
     private void failOutright(Task task, ErrorCode reason) {
-        observationRecorder.endAttempt(task, TaskStatus.FAILED, reason);
+        failOutright(task, reason, null);
+    }
+
+    private void failOutright(Task task, ErrorCode reason, String failureDetail) {
+        observationRecorder.endAttempt(task, TaskStatus.FAILED, reason, failureDetail);
         fail(task, reason);
     }
 
-    private void retryOrFail(Task task, ErrorCode reason) {
-        observationRecorder.endAttempt(task, TaskStatus.FAILED, reason);
+    private void retryOrFail(Task task, ErrorCode reason, String failureDetail) {
+        observationRecorder.endAttempt(task, TaskStatus.FAILED, reason, failureDetail);
         task.setFailCount(task.getFailCount() + 1);
         if (task.getFailCount() >= TaskSettingsResolver.resolveMaxFailCount(task, pipelineSettings)) {
             fail(task, reason);
@@ -140,7 +144,7 @@ public class TaskStateMachine {
         task.setStatus(TaskStatus.DONE);
         task.setFinishedAt(clock.instant());
         taskRepository.save(task);
-        observationRecorder.endAttempt(task, TaskStatus.DONE, null);
+        observationRecorder.endAttempt(task, TaskStatus.DONE, null, null);
     }
 
     private void fail(Task task, ErrorCode reason) {

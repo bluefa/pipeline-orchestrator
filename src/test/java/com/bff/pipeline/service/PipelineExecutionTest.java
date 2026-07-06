@@ -308,6 +308,8 @@ class PipelineExecutionTest {
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
         assertThat(attemptNo(pipeline, 0, 1).getErrorCode()).isEqualTo(ErrorCode.CHECK_ERROR);
+        // 예외 메시지("왜")가 attempt 행에 함께 영속된다 — 서버 로그 없이도 원인을 볼 수 있다
+        assertThat(attemptNo(pipeline, 0, 1).getFailureDetail()).isEqualTo("503");
     }
 
     @Test
@@ -334,6 +336,8 @@ class PipelineExecutionTest {
         assertThat(task(pipeline, 0).getErrorCode()).isEqualTo(ErrorCode.CHECK_ERROR);
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(0);
         assertThat(status(pipeline)).isEqualTo(PipelineStatus.FAILED);
+        // 같은 CHECK_ERROR라도 원인 텍스트로 전송 실패와 malformed 응답을 구분할 수 있다
+        assertThat(attemptNo(pipeline, 0, 1).getFailureDetail()).startsWith("malformed dispatch response:");
     }
 
     @ParameterizedTest
