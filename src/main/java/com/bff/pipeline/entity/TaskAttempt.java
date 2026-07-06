@@ -32,7 +32,7 @@ import lombok.Setter;
  * {@code pipeline}/{@code task}만 본다. 최신 {@code response}가 날아가도(dispatch 후 기록 실패) 정확성은 무너지지
  * 않는다 — per-task {@code executionTimeout}이 만료되면 멱등하게 재dispatch되기 때문이다.
  *
- * <p>{@code failureDetail}은 {@code errorCode}가 답하지 못하는 "왜"를 담는 표시 전용 원인 텍스트다 — 외부 호출
+ * {@code failureDetail}은 {@code errorCode}가 답하지 못하는 "왜"를 담는 표시 전용 원인 텍스트다 — 외부 호출
  * 실패의 예외 메시지(HTTP status·URL)나 malformed 응답의 파싱 오류처럼, 지금까지 서버 로그에만 남던 진단을
  * attempt 행에 함께 영속한다. 외부 유래 텍스트이므로 기록자({@code ObservationRecorder})가 컬럼 길이로 잘라
  * 저장 실패를 막고, 엔진 로직은 이 값을 결코 읽지 않는다.
