@@ -42,11 +42,13 @@ public sealed interface StepOutcome
         public boolean dispatchPhase() { return false; }
     }
 
-    record Failed(ErrorCode reason, boolean retryable) implements StepOutcome {
+    /** {@code detail}은 reason을 보충하는 표시 전용 원인 텍스트다(없으면 null) — task_attempt.failure_detail로 영속된다. */
+    record Failed(ErrorCode reason, boolean retryable, String detail) implements StepOutcome {
         public boolean dispatchPhase() { return false; }
     }
 
-    record CallFailure(ErrorCode reason, CheckSignal signal, boolean dispatch) implements StepOutcome {
+    /** {@code detail}은 호출 실패 예외의 메시지다(HTTP status·URL 등) — task_attempt.failure_detail로 영속된다. */
+    record CallFailure(ErrorCode reason, CheckSignal signal, boolean dispatch, String detail) implements StepOutcome {
         public boolean dispatchPhase() { return dispatch; }
     }
 
@@ -68,9 +70,9 @@ public sealed interface StepOutcome
     static StepOutcome dispatched(DispatchResult dispatchResult) { return new Dispatched(dispatchResult); }
     static StepOutcome pending(CheckSignal signal) { return new Pending(signal); }
     static StepOutcome succeeded() { return new Succeeded(); }
-    static StepOutcome failed(ErrorCode reason, boolean retryable) { return new Failed(reason, retryable); }
-    static StepOutcome callTimeout(boolean dispatch) { return new CallFailure(ErrorCode.CALL_TIMEOUT, CheckSignal.CALL_TIMEOUT, dispatch); }
-    static StepOutcome callFailed(boolean dispatch) { return new CallFailure(ErrorCode.CHECK_ERROR, CheckSignal.API_ERROR, dispatch); }
+    static StepOutcome failed(ErrorCode reason, boolean retryable, String detail) { return new Failed(reason, retryable, detail); }
+    static StepOutcome callTimeout(boolean dispatch, String detail) { return new CallFailure(ErrorCode.CALL_TIMEOUT, CheckSignal.CALL_TIMEOUT, dispatch, detail); }
+    static StepOutcome callFailed(boolean dispatch, String detail) { return new CallFailure(ErrorCode.CHECK_ERROR, CheckSignal.API_ERROR, dispatch, detail); }
     static StepOutcome conditionMet(String response) { return new ConditionMet(response); }
     static StepOutcome conditionNotMet(String response) { return new ConditionNotMet(response); }
     static StepOutcome unknownTask() { return new UnknownTask(); }

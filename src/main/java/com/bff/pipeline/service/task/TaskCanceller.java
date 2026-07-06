@@ -31,7 +31,7 @@ public class TaskCanceller {
     public void cancelNonTerminal(List<Task> chain) {
         Instant now = clock.instant();
         chain.stream().filter(task -> !task.getStatus().isTerminal()).forEach(task -> {
-            observationRecorder.endAttempt(task, TaskStatus.CANCELLED, null);
+            observationRecorder.endAttempt(task, TaskStatus.CANCELLED, null, null);
             task.setStatus(TaskStatus.CANCELLED);
             task.setFinishedAt(now);
             taskRepository.save(task);

@@ -390,6 +390,28 @@ CREATE TABLE terraform_result (
 구현 시 `admin-pipeline-dashboard-requirements.md`의 Task 상세 패널 표에 terraform result 행(✅)과
 P11을 추가한다.
 
+### 4.6 렌더링 주의 — result 본문은 원시 terraform 출력이다 (owner 확정, 2026-07-06)
+
+P11이 내려주는 `content`는 InfraManager가 저장한 terraform 출력 **원문 그대로**다. backend는 어떤
+정규화(ANSI strip, 색상 제거, 줄 정리)도 하지 않는다 — **owner 결정: 이 가공은 backend 책임이 아니다.**
+소비자(FE/BFF)는 다음을 전제해야 한다:
+
+1. **ANSI escape 시퀀스가 포함될 수 있다.** terraform은 non-TTY라고 색을 자동으로 끄지 않으므로,
+   InfraManager가 `-no-color` 없이 실행하면 본문에 SGR 코드(`\x1b[32m+\x1b[0m` 류)가 박힌다. 이걸
+   plain text로 그대로 뿌리면 `←[0m←[1m` 형태의 깨진 문자가 로그 전체에 나타난다. FE에서 strip하거나
+   ansi_up류 렌더러로 처리해야 한다. (상류에서 `-no-color`로 해결되는 것이 최선이며, 이는 InfraManager
+   소관이다 — 확인 전까지 FE는 방어적으로 다룬다.)
+2. **whitespace가 의미를 갖는다.** plan diff는 들여쓰기·컬럼 정렬이 정보다. `<pre>` + monospace로
+   렌더링해야 하며 일반 요소에 흘려 넣으면 접혀서 읽을 수 없다.
+3. **외부 유래 텍스트다.** 반드시 HTML escape해서 뿌린다(innerHTML 금지) — 로그 내용은 신뢰 경계
+   밖에서 온 문자열이다.
+4. **절단 경계가 시퀀스를 자를 수 있다.** 16MB 초과 시 tail 우선 절단(§4.4)은 문자 단위라 ANSI
+   시퀀스나 멀티라인 블록의 중간을 자를 수 있다. `truncated: true`면 앞부분이 잘렸다는 배너와 함께
+   원본 전문은 `result_path`로 안내한다.
+
+색상까지 살린 로그 뷰가 요구되면 그때는 DB 사본이 아니라 `result_path` 원본을 쓰는 별도 결정이
+필요하다(§4.5 커버리지 한계와 같은 성격).
+
 ---
 
 ## 5. 확정 사항 (owner 답변, 2026-07-02)

@@ -162,3 +162,14 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
   lease-expiry crash loop. The failure does NOT become a business ErrorCode — it degrades to an error log
   (duplicates stay debug via the inner targeted catch). Do not flag this instance; DO flag any new broad
   catch that converts a bug into a business outcome.
+- R9 (failure_detail + terraform result read path, feat/terraform-result-exposure): codex round 1 —
+  no P0/P1, MERGE-READY; recurring-review agent — all charter dimensions PASS (transition semantics
+  additive-only, catches still targeted, `TerraformResultMetadata` blessed as a genuine Spring Data
+  projection boundary). **dto-builder recurred post-promotion (3rd occurrence)** on the three new/widened
+  wire DTOs (`TerraformResultSummary`/`TerraformResultDetail`/`TaskAttemptView`, adjacent boolean/String
+  positional args) — fixed same-session with `@Builder` + named `from(...)` construction. Lesson
+  reinforced: the pre-commit gate (recurring-check + recurring-review) ran only AFTER the commit; run it
+  before. Also fixed one added `<p>` javadoc tag (owner: no HTML in comments). New read-path precedent
+  recorded: admin queries MAY read `terraform_result` (design §4.5) — the write-only invariant is about
+  the engine (claim/scheduling/transition), and the body column stays out of list/detail queries via the
+  metadata projection (only the P11 single-row endpoint pays the MEDIUMTEXT I/O).

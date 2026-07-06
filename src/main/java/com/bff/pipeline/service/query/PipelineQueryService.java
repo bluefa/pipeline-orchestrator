@@ -10,6 +10,8 @@ import com.bff.pipeline.dto.pipeline.TaskAttemptView;
 import com.bff.pipeline.dto.pipeline.TaskDefinitionView;
 import com.bff.pipeline.dto.pipeline.TaskDetail;
 import com.bff.pipeline.dto.pipeline.TaskSummary;
+import com.bff.pipeline.dto.pipeline.TerraformResultDetail;
+import com.bff.pipeline.dto.pipeline.TerraformResultSummary;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.CloudProvider;
@@ -19,12 +21,15 @@ import com.bff.pipeline.enums.TaskDefinition;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.exception.PipelineNotFoundException;
 import com.bff.pipeline.exception.TaskNotFoundException;
+import com.bff.pipeline.exception.TerraformResultNotFoundException;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.PipelineStatusCount;
 import com.bff.pipeline.repository.PipelineTaskStatusCount;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.repository.TerraformResultMetadata;
+import com.bff.pipeline.repository.TerraformResultRepository;
 import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.entity.TaskCheck;
 import com.bff.pipeline.utils.TaskSettingsResolver;
@@ -69,17 +74,19 @@ public class PipelineQueryService {
     private final TaskRepository tasks;
     private final TaskAttemptRepository attempts;
     private final TaskCheckRepository checks;
+    private final TerraformResultRepository terraformResults;
     private final ExecutionSettings executionSettings;
     private final PipelineSettings pipelineSettings;
     private final Clock clock;
 
     public PipelineQueryService(PipelineRepository pipelines, TaskRepository tasks,
-            TaskAttemptRepository attempts, TaskCheckRepository checks,
+            TaskAttemptRepository attempts, TaskCheckRepository checks, TerraformResultRepository terraformResults,
             ExecutionSettings executionSettings, PipelineSettings pipelineSettings, Clock clock) {
         this.pipelines = pipelines;
         this.tasks = tasks;
         this.attempts = attempts;
         this.checks = checks;
+        this.terraformResults = terraformResults;
         this.executionSettings = executionSettings;
         this.pipelineSettings = pipelineSettings;
         this.clock = clock;
@@ -227,15 +234,41 @@ public class PipelineQueryService {
                 : null;
     }
 
+    /**
+     * 본문 전용 조회다(P11, 설계 §4.5) — task 상세의 result 메타에서 "로그 보기"가 lazy 호출한다. 소유권 체인
+     * (pipeline 존재 → task 소속)을 검증한 뒤 유니크 키 (taskId, attemptNumber, jobId)의 행 하나만 읽는다.
+     * 행 부재는 404, 본문 조회에 실패했던 포인터 행은 content = null인 200이다 — 두 상태는 안내가 다르다.
+     */
+    public TerraformResultDetail terraformResult(Long pipelineId, Long taskId, int attemptNumber, String jobId) {
+        if (!pipelines.existsById(pipelineId)) {
+            throw new PipelineNotFoundException(pipelineId);
+        }
+        tasks.findById(taskId)
+                .filter(candidate -> candidate.getPipelineId().equals(pipelineId))
+                .orElseThrow(() -> new TaskNotFoundException(pipelineId, taskId));
+        return terraformResults.findByTaskIdAndAttemptNumberAndJobId(taskId, attemptNumber, jobId)
+                .map(TerraformResultDetail::from)
+                .orElseThrow(() -> new TerraformResultNotFoundException(taskId, attemptNumber, jobId));
+    }
+
     /** attempt별 폴 요약을 한 번의 in 질의로 배치 로드해 매핑한다(per-poll condition attempt에서 N+1을 피한다). */
     private List<TaskAttemptView> attemptViews(Long taskId) {
         List<TaskAttempt> attemptList = attempts.findByTaskIdOrderByAttemptNumberAsc(taskId);
         Map<Long, TaskCheck> checkByAttemptId = checks
                 .findByTaskAttemptIdIn(attemptList.stream().map(TaskAttempt::getId).toList()).stream()
                 .collect(Collectors.toMap(TaskCheck::getTaskAttemptId, Function.identity()));
+        Map<Integer, List<TerraformResultSummary>> resultsByAttemptNumber = terraformResultSummaries(taskId);
         return attemptList.stream()
-                .map(attempt -> TaskAttemptView.from(attempt, checkByAttemptId.get(attempt.getId())))
+                .map(attempt -> TaskAttemptView.from(attempt, checkByAttemptId.get(attempt.getId()),
+                        resultsByAttemptNumber.getOrDefault(attempt.getAttemptNumber(), List.of())))
                 .toList();
+    }
+
+    /** attempt 인라인용 result 메타를 attempt_number로 접는다 — 본문 없는 메타 투영이라 로그 I/O를 지불하지 않는다. */
+    private Map<Integer, List<TerraformResultSummary>> terraformResultSummaries(Long taskId) {
+        return terraformResults.findMetadataByTaskId(taskId).stream()
+                .collect(Collectors.groupingBy(TerraformResultMetadata::getAttemptNumber,
+                        Collectors.mapping(TerraformResultSummary::from, Collectors.toList())));
     }
 
     private Page<PipelineSummary> summarize(Page<Pipeline> page) {

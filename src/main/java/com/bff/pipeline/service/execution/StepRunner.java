@@ -94,7 +94,7 @@ public class StepRunner {
         return switch (progress) {
             case TaskProgress.Succeeded ignored -> StepOutcome.succeeded();
             case TaskProgress.Pending pending -> StepOutcome.pending(pending.observed());
-            case TaskProgress.Failed failed -> StepOutcome.failed(failed.reason(), failed.retryable());
+            case TaskProgress.Failed failed -> StepOutcome.failed(failed.reason(), failed.retryable(), failed.detail());
             case TaskProgress.Met met -> StepOutcome.conditionMet(met.response());
             case TaskProgress.NotMet notMet -> StepOutcome.conditionNotMet(notMet.response());
         };
@@ -105,11 +105,11 @@ public class StepRunner {
             return call.get();
         } catch (CallTimeoutException exception) {
             log.warn("InfraManager call timed out for task {} ({})", task.getId(), task.getTaskName());
-            return StepOutcome.callTimeout(dispatch);
+            return StepOutcome.callTimeout(dispatch, exception.getMessage());
         } catch (CallFailedException exception) {
             log.warn("InfraManager call failed for task {} ({}): {}", task.getId(), task.getTaskName(),
                     exception.getMessage());
-            return StepOutcome.callFailed(dispatch);
+            return StepOutcome.callFailed(dispatch, exception.getMessage());
         }
     }
 }

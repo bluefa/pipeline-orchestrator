@@ -26,8 +26,10 @@ public sealed interface TaskProgress {
     /**
      * task가 실패했다. {@code reason}은 영속화되는 실패 원인이고, {@code retryable}은 실패 횟수 상한에
      * 닿기 전이라면 새 재시도를 허용할지를 가른다(잡 실패는 재시도하고, malformed 응답은 재시도하지 않는다).
+     * {@code detail}은 reason이 답하지 못하는 "왜"를 담는 표시 전용 원인 텍스트다(없으면 null) —
+     * {@code task_attempt.failure_detail}로 영속되며 엔진 분기에는 결코 쓰이지 않는다.
      */
-    record Failed(ErrorCode reason, boolean retryable) implements TaskProgress {
+    record Failed(ErrorCode reason, boolean retryable, String detail) implements TaskProgress {
         public Failed { Objects.requireNonNull(reason, "reason"); }
     }
 
@@ -51,11 +53,19 @@ public sealed interface TaskProgress {
     }
 
     static TaskProgress failedRetryable(ErrorCode reason) {
-        return new Failed(reason, true);
+        return new Failed(reason, true, null);
+    }
+
+    static TaskProgress failedRetryable(ErrorCode reason, String detail) {
+        return new Failed(reason, true, detail);
     }
 
     static TaskProgress failedTerminal(ErrorCode reason) {
-        return new Failed(reason, false);
+        return new Failed(reason, false, null);
+    }
+
+    static TaskProgress failedTerminal(ErrorCode reason, String detail) {
+        return new Failed(reason, false, detail);
     }
 
     static TaskProgress met(String response) {

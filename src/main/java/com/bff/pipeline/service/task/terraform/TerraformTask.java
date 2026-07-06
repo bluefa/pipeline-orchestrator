@@ -103,12 +103,14 @@ public class TerraformTask implements TaskType {
         } catch (JsonProcessingException exception) {
             log.warn("task {} attempt {}: malformed dispatch response, failing the task: {}",
                     task.getId(), attempt.getAttemptNumber(), exception.getOriginalMessage());
-            return TaskProgress.failedTerminal(ErrorCode.CHECK_ERROR);
+            return TaskProgress.failedTerminal(ErrorCode.CHECK_ERROR,
+                    "malformed dispatch response: " + exception.getOriginalMessage());
         }
         if (jobIds == null || jobIds.isEmpty() || jobIds.stream().anyMatch(this::isBlankJobId)) {
             log.warn("task {} attempt {}: dispatch response carried no usable job ids, failing the task",
                     task.getId(), attempt.getAttemptNumber());
-            return TaskProgress.failedTerminal(ErrorCode.CHECK_ERROR);
+            return TaskProgress.failedTerminal(ErrorCode.CHECK_ERROR,
+                    "dispatch response carried no usable job ids");
         }
         return aggregate(task, attempt, jobIds);
     }
@@ -127,7 +129,8 @@ public class TerraformTask implements TaskType {
 
     private TaskProgress progressUntilExecutionTimeout(Task task) {
         if (TaskSettingsResolver.isPastDeadline(task, TaskSettingsResolver.resolveExecutionTimeout(task, pipelineSettings), clock)) {
-            return TaskProgress.failedRetryable(ErrorCode.EXECUTION_TIMEOUT);
+            return TaskProgress.failedRetryable(ErrorCode.EXECUTION_TIMEOUT,
+                    "dispatch observation lost (response or attempt row); execution timeout elapsed before the idempotent re-dispatch");
         }
         return TaskProgress.pending(CheckSignal.RUNNING);
     }
@@ -155,11 +158,28 @@ public class TerraformTask implements TaskType {
         }
         resultRecorder.recordFinishedJobs(task, attempt, finished);
         if (anyFailed) {
-            return TaskProgress.failedRetryable(ErrorCode.JOB_FAILED);
+            return TaskProgress.failedRetryable(ErrorCode.JOB_FAILED, describeFailedJobs(finished));
         }
         if (allFinished) {
             return TaskProgress.SUCCEEDED;
         }
-        return TaskProgress.failedRetryable(ErrorCode.EXECUTION_TIMEOUT);
+        return TaskProgress.failedRetryable(ErrorCode.EXECUTION_TIMEOUT, describeUnfinishedJobs(jobIds, finished));
+    }
+
+    /** JOB_FAILED의 "왜" — 실패로 관측된 job id를 원인 텍스트로 남긴다(잡별 로그 본문은 terraform_result가 담당). */
+    private static String describeFailedJobs(Map<String, TerraformPoll> finished) {
+        List<String> failedJobIds = finished.entrySet().stream()
+                .filter(entry -> !entry.getValue().succeeded())
+                .map(Map.Entry::getKey)
+                .toList();
+        return "jobs reported FAILED: " + failedJobIds;
+    }
+
+    /** EXECUTION_TIMEOUT의 "왜" — 타임아웃 시점까지 종결되지 않은 job id를 원인 텍스트로 남긴다. */
+    private static String describeUnfinishedJobs(Set<String> jobIds, Map<String, TerraformPoll> finished) {
+        List<String> unfinishedJobIds = jobIds.stream()
+                .filter(jobId -> !finished.containsKey(jobId))
+                .toList();
+        return "jobs not finished at execution timeout: " + unfinishedJobIds;
     }
 }
