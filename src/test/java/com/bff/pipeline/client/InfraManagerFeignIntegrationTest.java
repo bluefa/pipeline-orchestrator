@@ -68,10 +68,10 @@ class InfraManagerFeignIntegrationTest {
         wireMock.stubFor(get(urlPathEqualTo("/infra/terraform-jobs/apply/job-7"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json")
                         .withBody("{\"id\":7,\"terraformState\":\"COMPLETED\",\"type\":\"APPLY\","
-                                + "\"resultPath\":\"gs://results/7\",\"cloudAuthIdentity\":\"x\"}")));
+                                + "\"cloudAuthIdentity\":\"x\"}")));
 
         assertThat(adapter.terraformJobStatus("job-7", TaskOperation.AWS_SERVICE_TF_APPLY))
-                .isEqualTo(TerraformPoll.success("gs://results/7"));
+                .isEqualTo(TerraformPoll.success("COMPLETED"));
     }
 
     @Test
@@ -102,7 +102,7 @@ class InfraManagerFeignIntegrationTest {
                         .withBody("{\"terraformState\":\"DESTROYED\"}")));
 
         assertThat(adapter.terraformJobStatus("job-9", TaskOperation.GCP_BDC_TF_DESTROY))
-                .isEqualTo(TerraformPoll.success());
+                .isEqualTo(TerraformPoll.success("DESTROYED"));
     }
 
     @Test
@@ -174,7 +174,7 @@ class InfraManagerFeignIntegrationTest {
                         .withBody("{\"terraformState\":\"CREATING\"}")));
 
         assertThat(adapter.terraformJobStatus("job-7", TaskOperation.AWS_SERVICE_TF_APPLY))
-                .isEqualTo(TerraformPoll.running());
+                .isEqualTo(TerraformPoll.running("CREATING"));
     }
 
     private InfraManagerFeignClient feignClient(String baseUrl, int readTimeoutMillis) {

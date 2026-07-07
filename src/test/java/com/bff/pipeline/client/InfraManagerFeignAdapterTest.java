@@ -89,7 +89,7 @@ class InfraManagerFeignAdapterTest {
 
     @Test
     void passesTheJobTypeConstantOnSharedEndpoints() {
-        StubFeignClient stub = stub().withStatus(status("DESTROYED", null));
+        StubFeignClient stub = stub().withStatus(status("DESTROYED"));
 
         adapter(stub).terraformJobStatus("job-9", TaskOperation.GCP_BDC_TF_DESTROY);
         assertThat(stub.lastCall).isEqualTo("gcpBdcJobStatus:DESTROY");
@@ -107,50 +107,50 @@ class InfraManagerFeignAdapterTest {
 
     @Test
     void mapsCompletedToASuccessfulPollForPlanAndApply() {
-        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("COMPLETED", "gs://r/1")));
+        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("COMPLETED")));
 
         assertThat(adapter.terraformJobStatus("job-1", TaskOperation.AWS_SERVICE_TF_APPLY))
-                .isEqualTo(TerraformPoll.success("gs://r/1"));
+                .isEqualTo(TerraformPoll.success("COMPLETED"));
     }
 
     @Test
     void mapsDestroyedToASuccessfulPollForDestroy() {
-        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("DESTROYED", null)));
+        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("DESTROYED")));
 
         assertThat(adapter.terraformJobStatus("job-1", TaskOperation.AWS_SERVICE_TF_DESTROY))
-                .isEqualTo(TerraformPoll.success());
+                .isEqualTo(TerraformPoll.success("DESTROYED"));
     }
 
     @Test
     void mapsFailedToAFailedPoll() {
-        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("FAILED", "gs://r/f")));
+        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("FAILED")));
 
         assertThat(adapter.terraformJobStatus("job-1", TaskOperation.AWS_SERVICE_TF_APPLY))
-                .isEqualTo(TerraformPoll.failure("gs://r/f"));
+                .isEqualTo(TerraformPoll.failure("FAILED", null));
     }
 
     @Test
     void treatsUnknownStatesAsStillRunning() {
         // TerraformState 전체 목록 미확정(owner) — terminal 세 값 외에는 전부 진행 중. executionTimeout이 상한.
-        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("PLANNING", null)));
+        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("PLANNING")));
 
         assertThat(adapter.terraformJobStatus("job-1", TaskOperation.AWS_SERVICE_TF_APPLY))
-                .isEqualTo(TerraformPoll.running());
+                .isEqualTo(TerraformPoll.running("PLANNING"));
     }
 
     @Test
     void treatsTheWrongTerminalStateAsStillRunning() {
         // apply job이 DESTROYED를 보고하는 불가능 조합 — 성공으로 오인하지 않고 진행 중으로 두면 timeout이 회수한다.
-        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("DESTROYED", null)));
+        InfraManagerFeignAdapter adapter = adapter(stub().withStatus(status("DESTROYED")));
 
         assertThat(adapter.terraformJobStatus("job-1", TaskOperation.AWS_SERVICE_TF_APPLY))
-                .isEqualTo(TerraformPoll.running());
+                .isEqualTo(TerraformPoll.running("DESTROYED"));
     }
 
     @Test
     void treatsAMissingOrBlankStateAsACallFailure() {
         InfraManagerFeignAdapter missing = adapter(stub());  // status = null
-        InfraManagerFeignAdapter blank = adapter(stub().withStatus(status("  ", null)));
+        InfraManagerFeignAdapter blank = adapter(stub().withStatus(status("  ")));
 
         assertThatThrownBy(() -> missing.terraformJobStatus("job-1", TaskOperation.AWS_SERVICE_TF_APPLY))
                 .isInstanceOf(CallFailedException.class)
@@ -231,8 +231,8 @@ class InfraManagerFeignAdapterTest {
         return Arrays.stream(ids).mapToObj(DispatchedJob::new).toList();
     }
 
-    private static TerraformJobStatusResponse status(String state, String resultPath) {
-        return new TerraformJobStatusResponse(state, null, resultPath);
+    private static TerraformJobStatusResponse status(String state) {
+        return new TerraformJobStatusResponse(state, null);
     }
 
     /**

@@ -58,6 +58,22 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 
 ## Changelog
 
+- **terraform_job_state review (feat/terraform-job-state-observation) → codex 2 rounds, merge-ready.**
+  Added a fourth write-only observation table `terraform_job_state` (per-job in-progress state, upserted every
+  poll in the run phase, tx-free/best-effort like `terraform_result`) + `TaskAttemptView.job_states[]` inline +
+  a per-job state endpoint + ADR-016 §3 editorial. Codex (gpt-5.5 xhigh) **R1**: no P0/P1; one **P2** — the
+  `NOT_SUPPORTED` (non-rollback) integration tests now write `terraform_job_state` rows during polling but omitted
+  it from their `@AfterEach` cleanup (clean-state policy). Fixed: added `terraformJobStateRepository.deleteAll()`
+  to the 6 affected suites. **R2**: no P0/P1/P2, merge-ready. Confirmed observation-only (engine reads stay limited
+  to the latest `task_attempt`; the table is touched only by the recorder + admin query) and `pollAndObserve`
+  preserves prior `CallFailed`/`CallTimeout` propagation. **Watch-list candidate (2nd occurrence — 1st was
+  `terraform_result`):** a new write-only observation table written by non-rollback integration tests must be added
+  to their `@AfterEach` deleteAll; promote to an agent check on the next hit.
+  **오너 결정(리뷰 중):** `resultPath`는 "어디에도 쓸 수 없는 정보" → 전면 제거. `TerraformJobStatusResponse`·
+  `TerraformPoll`에서 안 읽고, `terraform_result`의 `result_path` 컬럼·`TerraformResultSummary`/`Detail`·메타 투영·
+  recorder·ADR-016 §3 스키마까지 걷어냄. `failReason`은 유지(`last_fail_reason`가 씀). terraform 완료 로그는
+  오직 `/result`(String→`content`)에서만 얻는다.
+
 - **enum-column-widening-safe promoted (rule + agent).** The LIN-30 (PENDING status) codex doc-review flagged
   `Pipeline.status` as a native MySQL `enum(...)` that `ddl-auto=update` won't widen — a real P0, but caught on a
   **stale base**. `origin/main` had already fixed it in **LIN-28 (#24)**, mapping every persisted enum through an

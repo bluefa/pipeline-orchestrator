@@ -39,7 +39,7 @@ public final class FakeInfraManagerClient implements InfraManagerClient {
     }
 
     private Dispatch dispatch = () -> "[\"job-1\"]";
-    private Poll poll = TerraformPoll::running;
+    private Poll poll = () -> TerraformPoll.running("RUNNING");
     private PollByJob pollByJob;
     private Check check = () -> false;
     private Result result = () -> "terraform: ok";

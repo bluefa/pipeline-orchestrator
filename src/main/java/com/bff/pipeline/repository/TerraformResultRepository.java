@@ -22,7 +22,7 @@ public interface TerraformResultRepository extends JpaRepository<TerraformResult
     /** P5 attempt 인라인용 메타 투영 — 본문({@code result})은 존재 여부({@code hasBody})로만 접는다. */
     @Query("""
             select r.attemptNumber as attemptNumber, r.jobId as jobId, r.succeeded as succeeded,
-                   r.truncated as truncated, r.resultPath as resultPath,
+                   r.truncated as truncated,
                    case when r.result is null then false else true end as hasBody,
                    r.createdAt as createdAt
             from TerraformResult r

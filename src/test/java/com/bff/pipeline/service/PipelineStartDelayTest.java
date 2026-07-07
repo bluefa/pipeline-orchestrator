@@ -14,6 +14,7 @@ import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.exception.PipelineAlreadyActiveException;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.repository.TerraformJobStateRepository;
 import com.bff.pipeline.service.execution.PipelineClaimer;
 import com.bff.pipeline.service.execution.PipelineWorker;
 import com.bff.pipeline.service.execution.StepReporter;
@@ -27,6 +28,7 @@ import com.bff.pipeline.service.task.ObservationRecorder;
 import com.bff.pipeline.service.task.TaskCanceller;
 import com.bff.pipeline.service.task.TaskStateMachine;
 import com.bff.pipeline.service.task.TaskTypeRegistry;
+import com.bff.pipeline.service.task.terraform.TerraformJobStateRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformResultRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
 import java.time.Duration;
@@ -51,7 +53,7 @@ import org.springframework.transaction.annotation.Transactional;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
-        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, ConditionCheckTask.class,
+        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, TerraformJobStateRecorder.class, ConditionCheckTask.class,
         ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class, PipelineInserter.class,
         PipelineControl.class, RecipeCatalog.class, PipelineStartDelayTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -67,10 +69,12 @@ class PipelineStartDelayTest {
     @Autowired private PipelineControl control;
     @Autowired private TaskRepository taskRepository;
     @Autowired private PipelineRepository pipelineRepository;
+    @Autowired private TerraformJobStateRepository terraformJobStateRepository;
     @Autowired private MutableClock clock;
 
     @AfterEach
     void clean() {
+        terraformJobStateRepository.deleteAll();
         taskRepository.deleteAll();
         pipelineRepository.deleteAll();
         clock.set(START);

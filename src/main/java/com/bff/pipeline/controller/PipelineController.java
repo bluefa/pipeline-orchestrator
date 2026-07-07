@@ -5,6 +5,7 @@ import com.bff.pipeline.dto.pipeline.PipelineDetail;
 import com.bff.pipeline.dto.pipeline.PipelineStatistics;
 import com.bff.pipeline.dto.pipeline.PipelineSummary;
 import com.bff.pipeline.dto.pipeline.TaskDetail;
+import com.bff.pipeline.dto.pipeline.TerraformJobStateDetail;
 import com.bff.pipeline.dto.pipeline.TerraformResultDetail;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
@@ -79,6 +80,13 @@ public class PipelineController {
     public TerraformResultDetail terraformResult(@PathVariable Long pipelineId, @PathVariable Long taskId,
             @PathVariable int attemptNumber, @PathVariable String jobId) {
         return queryService.terraformResult(pipelineId, taskId, attemptNumber, jobId);
+    }
+
+    /** terraform job 진행-시점 상태 개별 조회 — task 상세의 job 상태에서 특정 job을 조회한다(result 본문 엔드포인트와 대칭). */
+    @GetMapping("/{pipelineId}/tasks/{taskId}/attempts/{attemptNumber}/jobs/{jobId}/state")
+    public TerraformJobStateDetail terraformJobState(@PathVariable Long pipelineId, @PathVariable Long taskId,
+            @PathVariable int attemptNumber, @PathVariable String jobId) {
+        return queryService.terraformJobState(pipelineId, taskId, attemptNumber, jobId);
     }
 
     @PostMapping("/{pipelineId}/cancel")

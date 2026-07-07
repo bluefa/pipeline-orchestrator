@@ -59,12 +59,12 @@ public interface TerraformOperationBinding {
         }
         String state = status.terraformState();
         if (TerraformJobType.FAILED_STATE.equals(state)) {
-            return TerraformPoll.failure(status.resultPath());
+            return TerraformPoll.failure(state, status.failReason());
         }
         if (jobType.successState().equals(state)) {
-            return TerraformPoll.success(status.resultPath());
+            return TerraformPoll.success(state);
         }
-        return TerraformPoll.running();
+        return TerraformPoll.running(state);
     }
 
     /** result 응답 방어 — null 본문은 쓸 수 없는 외부 응답이므로 CallFailed로 닫는다(빈 문자열은 유효한 빈 로그). */

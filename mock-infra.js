@@ -7,7 +7,7 @@
 // API 계약의 진실원은 src/main/java/com/bff/pipeline/client/InfraManagerFeignClient.java 와
 // dto/{DispatchedJob, TerraformJobStatusResponse} 다. 요약:
 //   dispatch (POST/DELETE)      → {"id": <number>} (단건형 family) 또는 [{"id": <number>}] (목록형 family)
-//   status   (GET, /result 아님) → {"terraformState": ..., "failReason": ..., "resultPath": ...}
+//   status   (GET, /result 아님) → {"terraformState": ..., "failReason": ...}
 //   result   (GET .../result)    → text/plain 본문 (Feign String 디코더)
 //   terminal terraformState      → COMPLETED(plan/apply 성공) / DESTROYED(destroy 성공) / FAILED, 그 외 전부 진행중
 //   condition                    → GET /infra/network/ready?target= → {"met": true}
@@ -90,15 +90,15 @@ function statusBody(jobId, path, query) {
     }
     job.polls++;
     if (job.polls <= RUNNING_POLLS) {
-        return { terraformState: 'RUNNING', failReason: null, resultPath: null };
+        return { terraformState: 'RUNNING', failReason: null };
     }
     if (job.fail) {
-        return { terraformState: 'FAILED', failReason: 'mock forced failure', resultPath: null };
+        return { terraformState: 'FAILED', failReason: 'mock forced failure' };
     }
     // destroy 성공 terminal 은 DESTROYED, plan/apply 는 COMPLETED. status 요청이 스스로 destroy 임을 밝힌다.
     const isDestroy = path.includes('/destroy') || query.get('jobType') === 'DESTROY';
     const state = isDestroy ? 'DESTROYED' : 'COMPLETED';
-    return { terraformState: state, failReason: null, resultPath: `s3://mock-infra/tf-${jobId}.log` };
+    return { terraformState: state, failReason: null };
 }
 
 function json(res, obj) {
@@ -170,7 +170,7 @@ async function runSelftest() {
     const single = await postJson('/infra/target-sources/ok/idc/terraform/action?jobType=APPLY&idcTerraformType=CX');
     assert(!Array.isArray(single) && typeof single.id === 'number', 'single dispatch → {id:number}');
 
-    // 3) plan poll: RUNNING × RUNNING_POLLS → COMPLETED, DTO 필드명(terraformState/resultPath) 검증
+    // 3) plan poll: RUNNING × RUNNING_POLLS → COMPLETED, DTO 필드명(terraformState) 검증
     const planId = list[0].id;
     for (let i = 0; i < RUNNING_POLLS; i++) {
         const s = await (await fetch(`${base}/infra/terraform-jobs/plan/${planId}`)).json();
@@ -178,7 +178,6 @@ async function runSelftest() {
     }
     const done = await (await fetch(`${base}/infra/terraform-jobs/plan/${planId}`)).json();
     assert.strictEqual(done.terraformState, 'COMPLETED', 'plan terminal → COMPLETED');
-    assert(typeof done.resultPath === 'string' && done.resultPath.length > 0, 'success 는 resultPath 를 싣는다');
 
     // 4) destroy poll → DESTROYED terminal
     const destroy = await postJson('/infra/target-sources/ok/terraform-jobs/destroy', 'DELETE');

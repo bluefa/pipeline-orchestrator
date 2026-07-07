@@ -24,11 +24,11 @@ import org.springframework.stereotype.Component;
  * 상태 무관여가 계약이다. 여기서 일어나는 어떤 조회·저장 실패도 태스크 판정을 바꾸지 않는다 — job별 경계
  * catch가 이 계약을 강제한다: {@code CallInterruptedException}만 전파하고(인터럽트 의미 보존 — 기록은 상태
  * 전이 커밋 전이라 다음 폴 turn이 같은 판정을 재실행하고, 유니크 키 + 존재 선검사가 이미 저장된 행을
- * 건너뛴다), 그 밖의 모든 실패는 관찰 결손으로 강등해 로그만 남긴다. 외부 응답값(result 본문, resultPath)이
+ * 건너뛴다), 그 밖의 모든 실패는 관찰 결손으로 강등해 로그만 남긴다. 외부 응답값(result 본문)이
  * 저장을 깨뜨려 write-back 자체를 막으면 pipeline이 lease 회수 → 재크래시 루프에 갇히므로, 관찰 전용
  * 컴포넌트에서는 fail-fast보다 이 계약이 우선한다(중복 insert는 debug, 그 외 저장 실패는 error 로그로 노출).
- * job별로 독립 수행해 한 job의 실패가 나머지 job의 저장을 막지 않으며, 조회 실패 job도 본문 없는 포인터 행
- * ({@code result = null} + {@code resultPath})으로 남긴다.
+ * job별로 독립 수행해 한 job의 실패가 나머지 job의 저장을 막지 않으며, 조회 실패 job도 본문 없는 행
+ * ({@code result = null})으로 남긴다.
  */
 @Slf4j
 @Component
@@ -77,7 +77,6 @@ public class TerraformResultRecorder {
                 .attemptNumber(attemptNumber)
                 .jobId(jobId)
                 .succeeded(poll.succeeded())
-                .resultPath(clampResultPath(poll.resultPath()))
                 .result(truncated ? body.substring(body.length() - MAX_RESULT_CHARS) : body)
                 .truncated(truncated)
                 .createdAt(clock.instant())
@@ -109,20 +108,12 @@ public class TerraformResultRecorder {
         return value != null && value.toLowerCase(Locale.ROOT).contains(TerraformResult.ATTEMPT_JOB_CONSTRAINT);
     }
 
-    /** resultPath는 외부 응답값이다 — 컬럼 길이를 넘으면 잘라 저장이 무결성 위반으로 깨지지 않게 방어한다. */
-    private static String clampResultPath(String resultPath) {
-        if (resultPath == null || resultPath.length() <= TerraformResult.RESULT_PATH_LENGTH) {
-            return resultPath;
-        }
-        return resultPath.substring(0, TerraformResult.RESULT_PATH_LENGTH);
-    }
-
-    /** 본문 조회는 best-effort — 호출 실패는 포인터 행으로 강등한다(null 반환). CallInterrupted는 전파. */
+    /** 본문 조회는 best-effort — 호출 실패는 본문 없는 행으로 강등한다(null 반환). CallInterrupted는 전파. */
     private String fetchBody(Task task, String jobId) {
         try {
             return infraManagerClient.terraformJobResult(jobId, task.getOperation());
         } catch (CallFailedException | CallTimeoutException fetchFailure) {
-            log.warn("task {} job {}: terraform result fetch failed, keeping a pointer-only row: {}",
+            log.warn("task {} job {}: terraform result fetch failed, keeping a body-less row: {}",
                     task.getId(), jobId, fetchFailure.getMessage());
             return null;
         }

@@ -24,6 +24,7 @@ import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import com.bff.pipeline.exception.CallFailedException;
+import com.bff.pipeline.exception.CallTimeoutException;
 
 /**
  * Terraform 잡을 디스패치하고 완료까지 폴링하는 {@link TaskType} 구현체다(ADR-016 ed97ec0 §5). {@code execute}는 한 번의
@@ -62,13 +63,15 @@ public class TerraformTask implements TaskType {
 
     private final InfraManagerClient infraManagerClient;
     private final TerraformResultRecorder resultRecorder;
+    private final TerraformJobStateRecorder jobStateRecorder;
     private final PipelineSettings pipelineSettings;
     private final Clock clock;
 
     public TerraformTask(InfraManagerClient infraManagerClient, TerraformResultRecorder resultRecorder,
-            PipelineSettings pipelineSettings, Clock clock) {
+            TerraformJobStateRecorder jobStateRecorder, PipelineSettings pipelineSettings, Clock clock) {
         this.infraManagerClient = infraManagerClient;
         this.resultRecorder = resultRecorder;
+        this.jobStateRecorder = jobStateRecorder;
         this.pipelineSettings = pipelineSettings;
         this.clock = clock;
     }
@@ -141,10 +144,7 @@ public class TerraformTask implements TaskType {
         Map<String, TerraformPoll> finished = new LinkedHashMap<>();
         boolean anyFailed = false;
         for (String jobId : jobIds) {
-            TerraformPoll poll = infraManagerClient.terraformJobStatus(jobId, task.getOperation());
-            if (poll == null) {
-                throw new CallFailedException("InfraManager returned no status for job " + jobId);
-            }
+            TerraformPoll poll = pollAndObserve(task, attempt, jobId);
             if (poll.finished()) {
                 finished.put(jobId, poll);
                 anyFailed |= !poll.succeeded();
@@ -164,6 +164,25 @@ public class TerraformTask implements TaskType {
             return TaskProgress.SUCCEEDED;
         }
         return TaskProgress.failedRetryable(ErrorCode.EXECUTION_TIMEOUT, describeUnfinishedJobs(jobIds, finished));
+    }
+
+    /**
+     * job 상태를 폴하고 진행-시점 관찰({@code terraform_job_state})을 남긴다. 폴 호출이 실패하면 그 job의 오류를
+     * 관찰에 남긴 뒤 기존 판정대로 전파한다(abort-on-first — 판정 불변, 형제 job은 이번 turn 재폴하지 않고 직전
+     * 관측을 유지하며 다음 attempt의 재dispatch로 신선도가 해소된다). 관찰 기록은 판정을 바꾸지 않는다.
+     */
+    private TerraformPoll pollAndObserve(Task task, TaskAttempt attempt, String jobId) {
+        try {
+            TerraformPoll poll = infraManagerClient.terraformJobStatus(jobId, task.getOperation());
+            if (poll == null) {
+                throw new CallFailedException("InfraManager returned no status for job " + jobId);
+            }
+            jobStateRecorder.recordObserved(task, attempt, jobId, poll);
+            return poll;
+        } catch (CallFailedException | CallTimeoutException callError) {
+            jobStateRecorder.recordCallError(task, attempt, jobId, callError.getMessage());
+            throw callError;
+        }
     }
 
     /** JOB_FAILED의 "왜" — 실패로 관측된 job id를 원인 텍스트로 남긴다(잡별 로그 본문은 terraform_result가 담당). */

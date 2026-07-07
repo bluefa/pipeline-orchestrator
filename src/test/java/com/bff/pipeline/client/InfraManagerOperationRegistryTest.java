@@ -86,7 +86,7 @@ class InfraManagerOperationRegistryTest {
         return new TerraformOperationBinding() {
             @Override public TaskOperation operation() { return operation; }
             @Override public List<String> dispatchJobIds(String target) { return List.of("job"); }
-            @Override public TerraformPoll poll(String jobId) { return TerraformPoll.running(); }
+            @Override public TerraformPoll poll(String jobId) { return TerraformPoll.running("RUNNING"); }
             @Override public String result(String jobId) { return "terraform: ok"; }
         };
     }
