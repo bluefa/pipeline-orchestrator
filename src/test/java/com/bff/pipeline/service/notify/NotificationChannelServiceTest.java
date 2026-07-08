@@ -14,14 +14,17 @@ import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.exception.InvalidNotificationWebhookException;
 import com.bff.pipeline.repository.NotificationChannelRepository;
 import com.bff.pipeline.repository.PipelineRepository;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.function.Consumer;
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -242,6 +245,17 @@ class NotificationChannelServiceTest {
         assertThatExceptionOfType(InvalidNotificationWebhookException.class)
                 .isThrownBy(() -> service.upsert(new ChannelUpsert("#infra-alerts", true, webhookUrl)))
                 .satisfies(exception -> assertThat(exception.status()).isEqualTo(HttpStatus.BAD_REQUEST));
+    }
+
+    @Test
+    void aCreationRaceIsRecognizedOnlyForConstraintViolations() {
+        // 동시 최초 upsert 경쟁의 판별 술어 — 제약 위반(singleton PK)만 typed 409 번역 대상이다.
+        DataIntegrityViolationException creationRace = new DataIntegrityViolationException("duplicate singleton",
+                new ConstraintViolationException("duplicate key", new SQLException("PRIMARY"), "PRIMARY"));
+
+        assertThat(NotificationChannelService.isSingletonRowRace(creationRace)).isTrue();
+        assertThat(NotificationChannelService.isSingletonRowRace(
+                new DataIntegrityViolationException("unrelated persistence failure"))).isFalse();
     }
 
     @TestConfiguration

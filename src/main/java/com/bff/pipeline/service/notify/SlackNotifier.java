@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 /**
  * Slack Incoming Webhook으로 종단 알림을 전달하는 sink다(ADR-022, 구현 명세 §4.3). V1 단일 sink라
@@ -47,7 +48,16 @@ public class SlackNotifier {
         notifyRestClient.post().uri(webhookUrl)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(message)
-                .retrieve().toBodilessEntity();   // 비2xx → RestClientException
+                .retrieve()
+                // ack는 2xx만이다(ADR-022 §2). 기본 처리는 4xx/5xx만 던지므로 — 3xx가 성공으로 통과해
+                // notified_at이 잘못 찍히면 알림이 조용히 유실된다 — 나머지 비2xx를 명시적으로 실패로 판정한다.
+                // 4xx/5xx는 기본 RestClientResponseException 경로를 유지해 로그의 resp_class 구분을 살린다.
+                .onStatus(status -> !status.is2xxSuccessful() && !status.isError(),
+                        (request, response) -> {
+                            throw new RestClientException(
+                                    "slack webhook answered non-2xx: " + response.getStatusCode());
+                        })
+                .toBodilessEntity();   // 비2xx → RestClientException
     }
 
     /** payload → Slack 메시지 Map. package-private — 테스트가 형식(이모지/색/필드)을 직접 단언한다. */

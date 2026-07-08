@@ -101,6 +101,17 @@ class SlackNotifierTest {
     }
 
     @Test
+    void aRedirectResponseIsADeliveryFailureNotAnAck() {
+        // ack는 2xx뿐이다(ADR-022 §2) — 3xx가 성공으로 통과하면 notified_at이 잘못 찍혀 알림이 조용히 유실된다.
+        SlackNotifier notifier = new SlackNotifier(
+                restClientOver(new ScriptedRequestFactory(HttpStatus.MOVED_PERMANENTLY)));
+
+        assertThatThrownBy(() -> notifier.deliver(WEBHOOK_URL, donePayload()))
+                .isInstanceOf(RestClientException.class)
+                .hasMessageContaining("non-2xx");
+    }
+
+    @Test
     void theTestDeliveryPostsTheFixedProbeMessage() throws Exception {
         ScriptedRequestFactory slackEndpoint = new ScriptedRequestFactory(HttpStatus.OK);
         SlackNotifier notifier = new SlackNotifier(restClientOver(slackEndpoint));

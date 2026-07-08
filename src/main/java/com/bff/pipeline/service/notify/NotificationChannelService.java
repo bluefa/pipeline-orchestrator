@@ -6,6 +6,7 @@ import com.bff.pipeline.dto.ChannelView;
 import com.bff.pipeline.dto.NotifyHealthView;
 import com.bff.pipeline.entity.NotificationChannel;
 import com.bff.pipeline.exception.InvalidNotificationWebhookException;
+import com.bff.pipeline.exception.NotificationChannelConflictException;
 import com.bff.pipeline.repository.NotificationChannelRepository;
 import com.bff.pipeline.repository.NotifyRepository;
 import java.net.URI;
@@ -13,6 +14,8 @@ import java.net.URISyntaxException;
 import java.time.Clock;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
+import org.hibernate.exception.ConstraintViolationException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -122,7 +125,7 @@ public class NotificationChannelService {
         channel.setChannelLabel(request.channelLabel());
         channel.setEnabled(request.enabled());
         channel.setUpdatedAt(clock.instant());
-        ChannelView view = toView(channels.save(channel));
+        ChannelView view = toView(persistChannel(channel, existing.isEmpty()));
         if (existing.isEmpty()) {
             markLegacyTerminalRowsOutOfScope();
         }
@@ -130,12 +133,44 @@ public class NotificationChannelService {
     }
 
     /**
+     * 저장 — 최초 생성 경로는 saveAndFlush로 즉시 flush해 singleton PK 경쟁을 이 지점에서 표면화하고,
+     * 경쟁에서 진 요청은 raw 중복 키 예외 대신 typed 409({@link NotificationChannelConflictException})로
+     * 번역한다 — raw 인프라 예외가 서비스 경계를 넘지 않는다(AGENTS.md 규칙 4, {@code PipelineCreator}
+     * idiom). 잔여 창: 상대 커밋이 findById와 merge flush 사이에 정확히 끼면 insert 대신 update로 합쳐져
+     * backfill이 한 번 더 돌 수 있으나, 재실행이 억제하는 것은 그 밀리초 창에 종단된 행뿐이라 단일 운영자
+     * admin 규모에서 수용한다(발생 조건 = 동시 "최초" 설정 요청 둘).
+     */
+    private NotificationChannel persistChannel(NotificationChannel channel, boolean creating) {
+        if (!creating) {
+            return channels.save(channel);
+        }
+        try {
+            return channels.saveAndFlush(channel);
+        } catch (DataIntegrityViolationException creationRace) {
+            if (isSingletonRowRace(creationRace)) {
+                throw new NotificationChannelConflictException(creationRace);
+            }
+            throw creationRace;
+        }
+    }
+
+    /** notification_channel의 제약은 singleton PK 하나뿐이라(길이는 사전 가드), 생성 flush의 제약 위반 = 동시 최초 설정 경쟁이다. */
+    static boolean isSingletonRowRace(DataIntegrityViolationException exception) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            if (cause instanceof ConstraintViolationException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * 롤아웃 컷오프 backfill(ADR-022 §5) — singleton 행을 처음 생성하는 upsert(알림 도입 시점)에서만, 같은
      * 트랜잭션 안에서 레거시 종단·미알림 행에 notified_at을 찍어 알림 범위 밖으로 뺀다. backfill된 값은
      * "전달됨"이 아니라 "알림 범위 밖(도입 전)"을 뜻하며, 그 구분은 INFO 로그가 감사 기록으로 남긴다.
      * AGENTS.md 규칙 3(수기 SQL/마이그레이션 금지) 때문에 배포 런북 SQL이 아니라 이 코드가 컷오프를 강제한다.
-     * 동시 최초 upsert 경쟁은 singleton PK가 한쪽만 insert시키고, backfill 자체가 멱등(미알림 종단 행만
-     * 대상)이라 무해하다.
+     * 동시 최초 upsert 경쟁은 singleton PK가 한쪽만 insert시키고(진 쪽은 {@code persistChannel}이 typed 409로
+     * 번역), backfill 자체가 멱등(미알림 종단 행만 대상)이라 무해하다.
      */
     private void markLegacyTerminalRowsOutOfScope() {
         int backfilledRowCount = notifyRepository.markLegacyTerminalRowsOutOfScope(clock.instant());
