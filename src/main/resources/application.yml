@@ -50,6 +50,20 @@ pipeline:
     jitter-ratio: 0.2
     scheduler-initial-delay: PT5S
 
+  # ADR-022 종단 상태 알림(notify). 실행 워커풀과 격리된 단일 스레드 loop의 케이던스·backoff·lease.
+  # Hard constraint: lease-duration > call-timeout (NotifySettings가 fail-fast로 강제).
+  notify:
+    enabled: true
+    poll-interval: PT2S            # 일감 있을 때 loop 케이던스
+    max-idle-sleep: PT10S          # 빈 sweep backoff 상한
+    backoff-base: PT5S             # 전달 실패 backoff 기준(지수)
+    backoff-max: PT10M
+    jitter-ratio: 0.2
+    lease-duration: PT1M           # notify claim lease (> call-timeout 강제)
+    call-timeout: PT10S            # Slack HTTP read timeout
+    max-attempts: 8                # 이 횟수 실패하면 자동 재시도 중단 → 운영 에스컬레이션
+    scheduler-initial-delay: PT10S
+
 # InfraManager 프로덕션 HTTP delegate. base-url·auth-token 은 필수 설정이다 — 도메인이 InfraManagerClient 를
 # 필수 주입받으므로 full 컨텍스트는 이 연동 없이는 못 뜬다(FeignConfig 참조). 값은 env 로 주입한다:
 #   INFRA_MANAGER_BASE_URL(없으면 @FeignClient url 해석 실패), INFRA_MANAGER_TOKEN(비면 인터셉터가 fail-fast).

@@ -39,7 +39,10 @@ import lombok.Setter;
                 @Index(name = "idx_pipeline_claimed_until", columnList = "claimed_until"),
                 // Admin 조회 API(P2/P3/P7) 지원: 상태별 기간 집계·목록, target 이력 최신순.
                 @Index(name = "idx_pipeline_status_created", columnList = "status, created_at"),
-                @Index(name = "idx_pipeline_target_created", columnList = "target, created_at")
+                @Index(name = "idx_pipeline_target_created", columnList = "target, created_at"),
+                // ponytail: ~2,000행 규모엔 (notified_at, notify_next_at) 복합이면 충분. MySQL8은 부분(filtered)
+                // 인덱스가 없으므로 status 필터는 옵티마이저에 맡긴다. 대규모로 커지면 재검토.
+                @Index(name = "idx_pipeline_notify", columnList = "notified_at, notify_next_at")
         })
 @Getter
 @Setter
@@ -113,4 +116,31 @@ public class Pipeline {
     /** cooperative cancel(Case B) 플래그. claim을 쥔 워커가 안전지점에서 읽어 스스로 CANCELLED를 적용한다. */
     @Column(name = "cancel_requested", nullable = false)
     private boolean cancelRequested;
+
+    // ── ADR-022 종단 알림 메타데이터: 도메인 상태가 아니며 reconciler/실행 claim/전이는 읽지 않는다. ──
+
+    /** 전달 완료(sink ack) 마커. non-null이면 알림 대상에서 영구히 빠진다. */
+    @Column(name = "notified_at")
+    private Instant notifiedAt;
+
+    /** 전달 실패 backoff 게이트(다음 재시도 시각). give-up 시 far-future로 민다(보조 표시일 뿐 give-up의 근거는 아니다). */
+    @Column(name = "notify_next_at")
+    private Instant notifyNextAt;
+
+    /** 전달 시도 횟수. backoff 지수와 give-up 임계({@code maxAttempts}) 계산에 쓴다. */
+    @Column(name = "notify_attempts", nullable = false)
+    @Builder.Default
+    private int notifyAttempts = 0;
+
+    /**
+     * notify 전용 fencing token(UUID). ADR-021의 {@code claimed_by}를 재사용하지 않는다 — 실행 admission
+     * soft-cap({@code countByClaimedUntilAfter})이 상태 무관하게 활성 lease를 세므로, 공유하면 종단 행의
+     * notify lease가 실행 처리량 카운트를 오염시킨다(ADR-022 §2).
+     */
+    @Column(name = "notify_claimed_by", length = 36)
+    private String notifyClaimedBy;
+
+    /** notify lease 만료 시각. 만료({@code < now})되면 다음 notify 스캔이 재claim한다. */
+    @Column(name = "notify_claimed_until")
+    private Instant notifyClaimedUntil;
 }
