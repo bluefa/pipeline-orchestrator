@@ -83,6 +83,14 @@ flag correct code, and respect `// harness-allow:` annotations.
     swapped argument still compiles. FLAG a positional `new` of such a DTO (the canonical miss:
     `new PipelineDetail(19 args)`); a 2–3-arg record with distinct types is fine positionally.
 
+16. **column-length-guard.** A String crossing a trust boundary (request DTO field, external API value)
+    into a `@Column(length = N)` write must be length-guarded before flush — a typed 400
+    (`OrchestrationException` subtype) at the boundary, not a raw `DataIntegrityViolationException`
+    surfacing as a generic 500 (or, worse, trapping a write-back loop — see ledger R8). The guard and the
+    `@Column` share ONE constant on the entity (e.g. `NotificationChannel.WEBHOOK_URL_MAX_LENGTH`), never
+    a re-spelled magic number. FLAG an unguarded boundary String persisted into a bounded column, and FLAG
+    a length guard whose limit is a literal duplicated from the entity.
+
 ## Output
 
 A short list of FLAG findings, each `file:line` + the fix, or "No findings." Review only — do not edit.
