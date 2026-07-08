@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.bff.pipeline.dto.ChannelUpsert;
 import com.bff.pipeline.dto.ChannelView;
+import com.bff.pipeline.dto.NotifyHealthView;
 import com.bff.pipeline.dto.TestResult;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.ErrorCode;
@@ -179,6 +180,21 @@ class DtoSnakeCaseSerializationTest {
         String json = mapper.writeValueAsString(new TestResult(false, "channel not configured"));
 
         assertThat(json).contains("\"delivered\":false", "\"error\":\"channel not configured\"");
+    }
+
+    @Test
+    void notifyHealthViewSerializesSnakeCase() throws Exception {
+        String json = mapper.writeValueAsString(NotifyHealthView.builder()
+                .giveUpCount(2)
+                .oldestUnnotifiedAt(Instant.parse("2026-07-09T00:00:00Z"))
+                .oldestDeliveryPendingAt(Instant.parse("2026-07-09T00:05:00Z"))
+                .channelActive(true)
+                .build());
+
+        assertThat(json).contains("\"give_up_count\":2", "\"oldest_unnotified_at\":",
+                "\"oldest_delivery_pending_at\":", "\"channel_active\":true");
+        assertThat(json).doesNotContain("giveUpCount", "oldestUnnotifiedAt", "oldestDeliveryPendingAt",
+                "channelActive");
     }
 
     @Test

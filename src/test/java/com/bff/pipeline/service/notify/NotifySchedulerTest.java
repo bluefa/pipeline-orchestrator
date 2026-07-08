@@ -3,10 +3,16 @@ package com.bff.pipeline.service.notify;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.bff.pipeline.config.NotifySettings;
 import com.bff.pipeline.dto.NotifyPayload;
 import com.bff.pipeline.entity.NotificationChannel;
 import com.bff.pipeline.model.NotifyClaim;
+import com.bff.pipeline.repository.NotifyRepository;
+import java.lang.reflect.Proxy;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -16,13 +22,19 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 /**
  * {@link NotifyScheduler}의 순수 로직 단위 테스트다({@code PipelineSchedulerTest} 스타일 — 스케줄러 스레드
- * 기동 없이 {@code deliverOne}/{@code nextDelay}를 직접 호출한다). 채널 gate(미설정/비활성이면 claim 0건),
- * 성공/실패의 write-back 라우팅(실패는 sweep을 죽이지 않고 backoff 기록으로 흡수), 빈 sweep의 geometric
- * idle backoff와 일감 발견 시 리셋을 검증한다.
+ * 기동 없이 {@code deliverOne}/{@code nextDelay}/{@code runSweep}을 직접 호출한다). 채널 gate(미설정/비활성이면
+ * claim 0건), 성공/실패의 write-back 라우팅(실패는 sweep을 죽이지 않고 backoff 기록으로 흡수), 실패 WARN의
+ * 구조화 필드(attempt = write-back 반환값, fencing no-op면 stale-no-op — 구현 명세 §7 MUST 필드), give-up
+ * 경보 폴링(주기당 1회 countGivenUp 조회 + 0 초과면 ERROR 로그 — Logback ListAppender로 캡처 단언), 빈
+ * sweep의 geometric idle backoff와 일감 발견 시 리셋을 검증한다. 협력자는 이 repo 규약대로 fake로 대체한다
+ * — NotifyRepository는 인터페이스라 countGivenUp만 응답하는 JDK Proxy fake를 쓴다.
  */
 class NotifySchedulerTest {
 
@@ -54,17 +66,43 @@ class NotifySchedulerTest {
     }
 
     @Test
-    void aDeliveryFailureIsRoutedToOnFailureAndTheSweepStaysAlive() {
-        RecordingWriteBack writeBack = new RecordingWriteBack();
+    void aDeliveryFailureIsRoutedToOnFailureAndTheWarnLogCarriesTheIncrementedAttempt() {
+        RecordingWriteBack writeBack = new RecordingWriteBack(OptionalInt.of(3));
         NotifyScheduler scheduler = scheduler(
                 claimerYielding(new NotifyClaim(42L, "claim-token-42", payload(42L))),
                 failingSlackNotifier(new IllegalStateException("slack 5xx")),
                 writeBack, channelGate(Optional.of(configuredChannel())));
-
-        assertThat(scheduler.deliverOne()).isTrue();    // 실패해도 "일감이 있었다" — 케이던스는 pollInterval 유지
+        ListAppender<ILoggingEvent> capturedLogs = attachListAppender();
+        try {
+            assertThat(scheduler.deliverOne()).isTrue();    // 실패해도 "일감이 있었다" — 케이던스는 pollInterval 유지
+        } finally {
+            detachListAppender(capturedLogs);
+        }
 
         assertThat(writeBack.failures).containsExactly("42:claim-token-42");
         assertThat(writeBack.successes).isEmpty();
+        // 구현 명세 §7 MUST 필드 — attempt는 write-back의 post-increment 반환값이다(write-back이 로그보다 먼저)
+        assertThat(messagesAtLevel(capturedLogs, Level.WARN)).singleElement().asString()
+                .contains("pipeline=42", "status=DONE", "attempt=3", "sink=slack",
+                        "resp_class=IllegalStateException");
+    }
+
+    @Test
+    void aStaleNoOpFailureWriteBackIsLoggedWithoutAFabricatedAttemptCount() {
+        RecordingWriteBack writeBack = new RecordingWriteBack(OptionalInt.empty());   // fencing no-op 모사
+        NotifyScheduler scheduler = scheduler(
+                claimerYielding(new NotifyClaim(42L, "claim-token-42", payload(42L))),
+                failingSlackNotifier(new IllegalStateException("slack 5xx")),
+                writeBack, channelGate(Optional.of(configuredChannel())));
+        ListAppender<ILoggingEvent> capturedLogs = attachListAppender();
+        try {
+            assertThat(scheduler.deliverOne()).isTrue();
+        } finally {
+            detachListAppender(capturedLogs);
+        }
+
+        assertThat(messagesAtLevel(capturedLogs, Level.WARN)).singleElement().asString()
+                .contains("attempt=stale-no-op");
     }
 
     @Test
@@ -75,8 +113,9 @@ class NotifySchedulerTest {
                 throw new IllegalStateException("db down during write-back");
             }
 
-            @Override public void onFailure(long pipelineId, String token) {
+            @Override public OptionalInt onFailure(long pipelineId, String token) {
                 failures.add(pipelineId + ":" + token);
+                return OptionalInt.of(1);
             }
         };
         NotifyScheduler scheduler = scheduler(
@@ -95,6 +134,44 @@ class NotifySchedulerTest {
                 new RecordingWriteBack(), channelGate(Optional.of(configuredChannel())));
 
         assertThat(scheduler.deliverOne()).isFalse();
+    }
+
+    @Test
+    void theGiveUpAlertPollsOncePerIntervalAndRaisesAnErrorLog() {
+        AtomicInteger givenUpQueryCount = new AtomicInteger();
+        NotifyScheduler scheduler = scheduler(claimerYielding(), recordingSlackNotifier(),
+                new RecordingWriteBack(), channelGate(Optional.empty()),
+                givenUpCountingRepository(3, givenUpQueryCount));
+        scheduler.stop();   // 종료된 loop → runSweep이 후속 sweep을 재예약하지 않아 직접 호출이 결정적이다
+        ListAppender<ILoggingEvent> capturedLogs = attachListAppender();
+        try {
+            scheduler.runSweep();   // 생성 시 폴링 시각 = now → 첫 sweep이 즉시 1회 폴링한다
+            scheduler.runSweep();   // 폴링 시각이 전진했고 주기 미도래 → countGivenUp 재조회 없음
+        } finally {
+            detachListAppender(capturedLogs);
+        }
+
+        assertThat(givenUpQueryCount.get()).isEqualTo(1);
+        assertThat(messagesAtLevel(capturedLogs, Level.ERROR)).singleElement().asString()
+                .contains("give-up", "count=3");
+    }
+
+    @Test
+    void aZeroGiveUpBacklogPollsWithoutRaisingAnErrorLog() {
+        AtomicInteger givenUpQueryCount = new AtomicInteger();
+        NotifyScheduler scheduler = scheduler(claimerYielding(), recordingSlackNotifier(),
+                new RecordingWriteBack(), channelGate(Optional.empty()),
+                givenUpCountingRepository(0, givenUpQueryCount));
+        scheduler.stop();
+        ListAppender<ILoggingEvent> capturedLogs = attachListAppender();
+        try {
+            scheduler.runSweep();
+        } finally {
+            detachListAppender(capturedLogs);
+        }
+
+        assertThat(givenUpQueryCount.get()).isEqualTo(1);
+        assertThat(messagesAtLevel(capturedLogs, Level.ERROR)).isEmpty();
     }
 
     @Test
@@ -127,11 +204,16 @@ class NotifySchedulerTest {
 
     private NotifyScheduler scheduler(NotifyClaimer claimer, SlackNotifier slackNotifier,
             NotifyWriteBack writeBack, NotificationChannelService channels) {
-        return new NotifyScheduler(claimer, slackNotifier, writeBack, channels, null, settings(), CLOCK);
+        return scheduler(claimer, slackNotifier, writeBack, channels, null);
+    }
+
+    private NotifyScheduler scheduler(NotifyClaimer claimer, SlackNotifier slackNotifier,
+            NotifyWriteBack writeBack, NotificationChannelService channels, NotifyRepository notifyRepository) {
+        return new NotifyScheduler(claimer, slackNotifier, writeBack, channels, notifyRepository, settings(), CLOCK);
     }
 
     private static NotificationChannelService channelGate(Optional<NotificationChannel> channel) {
-        return new NotificationChannelService(null, null) {
+        return new NotificationChannelService(null, null, null, null) {
             @Override public Optional<NotificationChannel> activeChannel() {
                 return channel;
             }
@@ -175,6 +257,43 @@ class NotifySchedulerTest {
         return new RecordingSlackNotifier(failure);
     }
 
+    /**
+     * countGivenUp만 응답하는 fake {@code NotifyRepository} — 인터페이스(JpaRepository 상속)라 anonymous
+     * 서브클래스 대신 JDK Proxy로 만든다. 그 외 메서드 호출은 테스트 결함이므로 즉시 실패시킨다.
+     */
+    private static NotifyRepository givenUpCountingRepository(long givenUpCount, AtomicInteger queryCount) {
+        return (NotifyRepository) Proxy.newProxyInstance(
+                NotifyRepository.class.getClassLoader(),
+                new Class<?>[] {NotifyRepository.class},
+                (proxy, method, methodArguments) -> {
+                    if ("countGivenUp".equals(method.getName())) {
+                        queryCount.incrementAndGet();
+                        return givenUpCount;
+                    }
+                    throw new AssertionError("unexpected NotifyRepository call: " + method.getName());
+                });
+    }
+
+    /** 스케줄러 로그를 캡처하는 Logback ListAppender — 구조화 WARN/ERROR 필드를 단언하는 데 쓴다. */
+    private static ListAppender<ILoggingEvent> attachListAppender() {
+        Logger schedulerLogger = (Logger) LoggerFactory.getLogger(NotifyScheduler.class);
+        ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+        listAppender.start();
+        schedulerLogger.addAppender(listAppender);
+        return listAppender;
+    }
+
+    private static void detachListAppender(ListAppender<ILoggingEvent> listAppender) {
+        ((Logger) LoggerFactory.getLogger(NotifyScheduler.class)).detachAppender(listAppender);
+    }
+
+    private static List<String> messagesAtLevel(ListAppender<ILoggingEvent> listAppender, Level level) {
+        return listAppender.list.stream()
+                .filter(loggingEvent -> loggingEvent.getLevel() == level)
+                .map(ILoggingEvent::getFormattedMessage)
+                .toList();
+    }
+
     /** 전달 호출을 기록하거나(성공 모사) 지정된 예외를 던지는(실패 모사) 스텁 sink. */
     private static final class RecordingSlackNotifier extends SlackNotifier {
         private final List<String> deliveredTo = new ArrayList<>();
@@ -198,9 +317,15 @@ class NotifySchedulerTest {
     private static final class RecordingWriteBack extends NotifyWriteBack {
         private final List<String> successes = new ArrayList<>();
         private final List<String> failures = new ArrayList<>();
+        private final OptionalInt failureAttempts;
 
         private RecordingWriteBack() {
+            this(OptionalInt.of(1));
+        }
+
+        private RecordingWriteBack(OptionalInt failureAttempts) {
             super(null, null, null);
+            this.failureAttempts = failureAttempts;
         }
 
         @Override
@@ -209,8 +334,9 @@ class NotifySchedulerTest {
         }
 
         @Override
-        public void onFailure(long pipelineId, String token) {
+        public OptionalInt onFailure(long pipelineId, String token) {
             failures.add(pipelineId + ":" + token);
+            return failureAttempts;
         }
     }
 }

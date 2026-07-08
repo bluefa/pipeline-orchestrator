@@ -10,6 +10,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -25,7 +26,9 @@ import org.springframework.stereotype.Component;
  * 채널 gate: 매 sweep마다 활성 채널을 새로 읽어(캐시 없음 — 반영 지연 상한 = 1 sweep) 미설정/비활성이면
  * claim 자체를 하지 않고 idle한다 — attempts를 소진하지 않아 backlog가 보존되고 채널 (재)활성화 시 소급
  * 발화한다. 전달은 트랜잭션 밖에서 일어나고, 성공은 {@code NotifyWriteBack.onSuccess}, 실패
- * (RuntimeException)는 WARN 구조화 로그 후 {@code onFailure}(backoff/give-up)로 기록한다.
+ * (RuntimeException)는 {@code onFailure}(backoff/give-up)로 기록한 뒤 그 반환값(증가된 attempts)을 실어
+ * WARN 구조화 로그를 남긴다 — 구현 명세 §7의 MUST 필드(attempt 포함)를 채우기 위해 write-back이 로그보다
+ * 먼저다(fencing no-op면 attempt=stale-no-op).
  *
  * 케이던스: 일감이 있었으면 pollInterval(idle backoff 리셋), 빈 sweep이면 maxIdleSleep 상한의 geometric
  * idle backoff. sweep 자체 예외는 WARN으로 잡아 루프를 유지하고, 종료({@code loop.isShutdown()}) 후에는
@@ -103,10 +106,13 @@ public class NotifyScheduler {
 
     /**
      * 활성 채널이 있으면 한 건 claim→전달→기록한다. 반환값은 "일감이 있었나"다 — 채널 gate가 닫혔거나
-     * claim할 행이 없으면 false(idle backoff 대상). 전달 실패는 WARN 구조화 로그(응답 분류 = 예외 클래스)
-     * 후 backoff 기록으로 흡수한다 — 실패가 sweep을 죽이지 않는다. catch의 범위는 전달 호출뿐이다 —
-     * attempts++는 "실제로 호출했으나 실패"로 한정되므로(ADR-022 §2), 전달 성공 후의 onSuccess 실패는
-     * 전달 실패로 기록하지 않고 runSweep으로 전파한다(lease가 남아 만료 후 재claim → at-least-once 중복 수용).
+     * claim할 행이 없으면 false(idle backoff 대상). 전달 실패는 backoff 기록(onFailure) 후 그 반환값을 실은
+     * WARN 구조화 로그(구현 명세 §7 MUST 필드: pipeline·status·attempt·sink·resp_class = 예외 클래스)로
+     * 흡수한다 — attempt 값을 알기 위해 write-back이 로그보다 먼저이고, 실패가 sweep을 죽이지 않는다.
+     * catch의 범위는 전달 호출뿐이다 — attempts++는 "실제로 호출했으나 실패"로 한정되므로(ADR-022 §2),
+     * 전달 성공 후의 onSuccess 실패는 전달 실패로 기록하지 않고 runSweep으로 전파한다(lease가 남아 만료 후
+     * 재claim → at-least-once 중복 수용). 같은 이유로 onFailure 자체의 실패(DB 다운 등)도 runSweep의
+     * loop-survival WARN으로 전파된다.
      */
     boolean deliverOne() {
         Optional<NotificationChannel> activeChannel = channels.activeChannel();
@@ -121,14 +127,19 @@ public class NotifyScheduler {
         try {
             slackNotifier.deliver(activeChannel.get().getSlackWebhookUrl(), claimed.payload());
         } catch (RuntimeException deliveryFailed) {   // harness-allow: targeted-catch — sink 경계: 모든 전달 실패를 backoff/give-up으로 수렴, 에스컬레이션은 give-up 경보(spec §4.4/§5)
-            log.warn("notify delivery failed pipeline={} status={} sink=slack resp_class={}",
-                    claimed.pipelineId(), claimed.payload().terminalStatus(),
+            OptionalInt attempts = notifyWriteBack.onFailure(claimed.pipelineId(), claimed.token());
+            log.warn("notify delivery failed pipeline={} status={} attempt={} sink=slack resp_class={}",
+                    claimed.pipelineId(), claimed.payload().terminalStatus(), attemptLabel(attempts),
                     deliveryFailed.getClass().getSimpleName(), deliveryFailed);
-            notifyWriteBack.onFailure(claimed.pipelineId(), claimed.token());
             return true;
         }
         notifyWriteBack.onSuccess(claimed.pipelineId(), claimed.token());
         return true;
+    }
+
+    /** 실패 WARN의 attempt 필드 값 — write-back이 fencing no-op였으면 수치 대신 stale-no-op으로 표시한다. */
+    private static String attemptLabel(OptionalInt attempts) {
+        return attempts.isPresent() ? Integer.toString(attempts.getAsInt()) : "stale-no-op";
     }
 
     /** 일감이 있었으면 pollInterval(백오프 리셋), 빈 sweep이면 maxIdleSleep 상한의 geometric idle backoff. */

@@ -2,19 +2,27 @@ package com.bff.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.bff.pipeline.config.NotifySettings;
+import com.bff.pipeline.dto.ChannelUpsert;
 import com.bff.pipeline.dto.NotifyPayload;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
+import com.bff.pipeline.enums.TaskDefinition;
 import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.model.NotifyClaim;
+import com.bff.pipeline.repository.NotificationChannelRepository;
 import com.bff.pipeline.repository.NotifyRepository;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.notify.NotificationChannelService;
 import com.bff.pipeline.service.notify.NotifyClaimer;
 import com.bff.pipeline.service.notify.NotifyWriteBack;
 import java.time.Duration;
@@ -25,6 +33,7 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
@@ -37,13 +46,15 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * ADR-022 notify claim/write-back 생명주기 검증이다({@code PipelineSoftCapTest} 패턴 미러 — 래핑 트랜잭션을
  * 끄고 claim 트랜잭션과 write-back 트랜잭션이 실제로 분리 커밋되게 한다). claim 술어(종단·미알림·due·
- * lease 가용·give-up 배제), NULL notify_next_at 우선의 결정적 순서, FAILED payload의 실패 task 채움,
- * 토큰 fencing(성공·실패 양쪽 no-op), 지수 backoff와 give-up, 실행 admission 카운트와의 격리,
- * at-least-once(lease 만료 후 재claim = 중복 전달 수용), 그리고 두 age 지표 쿼리의 분리를 검증한다.
+ * lease 가용·give-up 배제), NULL notify_next_at 우선의 결정적 순서, FAILED payload의 실패 task 채움
+ * (taskDefinition 우선, 레거시 행은 mechanism fallback), 토큰 fencing(성공·실패 양쪽 no-op — 실패 no-op은
+ * empty 반환), 지수 backoff와 give-up(ERROR 로그 포함), 실행 admission 카운트와의 격리, at-least-once
+ * (lease 만료 후 재claim = 중복 전달 수용), 두 age 지표 쿼리의 분리, 그리고 최초 채널 upsert의 롤아웃 컷오프
+ * backfill(레거시 종단 행 소급 발화 방지, ADR-022 §5)을 검증한다.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({NotifyClaimer.class, NotifyWriteBack.class, NotifyLifecycleTest.Wiring.class})
+@Import({NotifyClaimer.class, NotifyWriteBack.class, NotificationChannelService.class, NotifyLifecycleTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class NotifyLifecycleTest {
 
@@ -51,18 +62,22 @@ class NotifyLifecycleTest {
     private static final int MAX_ATTEMPTS = 3;
     private static final Duration LEASE = Duration.ofMinutes(1);
     private static final Duration BACKOFF_BASE = Duration.ofSeconds(5);
+    private static final String WEBHOOK_URL = "https://hooks.slack.com/services/T0001/B0002/token";
 
     @Autowired private NotifyClaimer claimer;
     @Autowired private NotifyWriteBack writeBack;
+    @Autowired private NotificationChannelService channelService;
     @Autowired private NotifyRepository notifyRepository;
     @Autowired private PipelineRepository pipelineRepository;
     @Autowired private TaskRepository taskRepository;
+    @Autowired private NotificationChannelRepository notificationChannelRepository;
     @Autowired private MutableClock clock;
 
     @AfterEach
     void clean() {
         taskRepository.deleteAll();
         pipelineRepository.deleteAll();
+        notificationChannelRepository.deleteAll();
         clock.set(START);
     }
 
@@ -115,29 +130,49 @@ class NotifyLifecycleTest {
     @Test
     void aFailedPipelineFillsThePayloadFromTheLowestSequenceFailedTask() {
         Pipeline failed = savePipeline("nt-failed", PipelineStatus.FAILED);
-        saveTask(failed.getId(), 0, TaskOperation.AWS_SERVICE_TF_APPLY, TaskStatus.DONE, null);
-        saveTask(failed.getId(), 1, TaskOperation.AWS_SERVICE_TF_APPLY, TaskStatus.FAILED, ErrorCode.JOB_FAILED);
-        saveTask(failed.getId(), 2, TaskOperation.NETWORK_READY, TaskStatus.FAILED, ErrorCode.CHECK_ERROR);
+        saveTask(failed.getId(), 0, TaskDefinition.AWS_SERVICE_APPLY_V1, TaskStatus.DONE, null);
+        saveTask(failed.getId(), 1, TaskDefinition.AWS_SERVICE_APPLY_V1, TaskStatus.FAILED, ErrorCode.JOB_FAILED);
+        saveTask(failed.getId(), 2, TaskDefinition.NETWORK_READY_V1, TaskStatus.FAILED, ErrorCode.CHECK_ERROR);
 
         NotifyPayload payload = claimer.claimOne().orElseThrow().payload();
 
-        assertThat(payload.failedTask()).isEqualTo(TaskOperation.Mechanism.TERRAFORM_JOB);   // sequence 최소 FAILED
+        // failed_task = recipe 진실원인 taskDefinition(상수 이름) — mechanism은 여러 step이 공유해 단계를 못 가린다
+        assertThat(payload.failedTask()).isEqualTo(TaskDefinition.AWS_SERVICE_APPLY_V1.name());   // sequence 최소 FAILED
         assertThat(payload.errorCode()).isEqualTo(ErrorCode.JOB_FAILED.name());
         assertThat(payload.terminalStatus()).isEqualTo(PipelineStatus.FAILED.name());
         assertThat(payload.type()).isEqualTo(PipelineType.INSTALL.name());
         assertThat(payload.targetRef()).isEqualTo("nt-failed");    // opaque target 키 그대로 — 연결 상세 없음
         assertThat(payload.schemaVersion()).isEqualTo(NotifyPayload.SCHEMA_VERSION);
 
-        Set<String> closedTaskNames = Arrays.stream(TaskOperation.values())
-                .map(TaskOperation::mechanism)
+        Set<String> closedTaskKeys = Arrays.stream(TaskDefinition.values())
+                .map(TaskDefinition::name)
                 .collect(Collectors.toSet());
-        assertThat(payload.failedTask()).isIn(closedTaskNames);    // 닫힌 recipe task 키 집합에 속함(PII 계약)
+        assertThat(payload.failedTask()).isIn(closedTaskKeys);     // 닫힌 recipe task 키 집합에 속함(PII 계약)
+    }
+
+    @Test
+    void aLegacyFailedTaskWithoutADefinitionFallsBackToTheMechanismTaskName() {
+        Pipeline failed = savePipeline("nt-failed-legacy", PipelineStatus.FAILED);
+        taskRepository.save(Task.builder()   // 드레인 전 레거시 행 모사 — taskDefinition이 없다
+                .pipelineId(failed.getId())
+                .sequence(0)
+                .taskName(TaskOperation.AWS_SERVICE_TF_APPLY.mechanism())
+                .operation(TaskOperation.AWS_SERVICE_TF_APPLY)
+                .status(TaskStatus.FAILED)
+                .errorCode(ErrorCode.JOB_FAILED)
+                .failCount(0)
+                .build());
+
+        NotifyPayload payload = claimer.claimOne().orElseThrow().payload();
+
+        // fallback도 enum 유래 닫힌 어휘(mechanism)라 PII 계약을 지킨다
+        assertThat(payload.failedTask()).isEqualTo(TaskOperation.Mechanism.TERRAFORM_JOB);
     }
 
     @Test
     void aNonFailedPipelinePayloadCarriesNoFailedTaskOrErrorCode() {
         Pipeline done = savePipeline("nt-done-clean", PipelineStatus.DONE);
-        saveTask(done.getId(), 0, TaskOperation.AWS_SERVICE_TF_APPLY, TaskStatus.DONE, null);
+        saveTask(done.getId(), 0, TaskDefinition.AWS_SERVICE_APPLY_V1, TaskStatus.DONE, null);
 
         NotifyPayload payload = claimer.claimOne().orElseThrow().payload();
 
@@ -169,7 +204,8 @@ class NotifyLifecycleTest {
         NotifyClaim claim = claimer.claimOne().orElseThrow();
 
         writeBack.onSuccess(claim.pipelineId(), "not-the-claim-token");
-        writeBack.onFailure(claim.pipelineId(), "not-the-claim-token");
+        // fencing no-op은 attempts를 돌려주지 않는다 — 호출자가 attempt=stale-no-op으로 로깅하는 근거
+        assertThat(writeBack.onFailure(claim.pipelineId(), "not-the-claim-token")).isEmpty();
 
         Pipeline after = reload(done);
         assertThat(after.getNotifiedAt()).isNull();
@@ -215,7 +251,7 @@ class NotifyLifecycleTest {
         Pipeline done = savePipeline("nt-backoff-cycle", PipelineStatus.DONE);
 
         NotifyClaim claim = claimer.claimOne().orElseThrow();
-        writeBack.onFailure(claim.pipelineId(), claim.token());
+        assertThat(writeBack.onFailure(claim.pipelineId(), claim.token())).hasValue(1);   // post-increment 반환
         Pipeline after = reload(done);
         assertThat(after.getNotifyAttempts()).isEqualTo(1);
         assertThat(after.getNotifyNextAt()).isEqualTo(clock.instant().plus(BACKOFF_BASE));   // base × 2^0
@@ -223,18 +259,29 @@ class NotifyLifecycleTest {
 
         clock.advance(BACKOFF_BASE);   // backoff 경과 → due
         claim = claimer.claimOne().orElseThrow();
-        writeBack.onFailure(claim.pipelineId(), claim.token());
+        assertThat(writeBack.onFailure(claim.pipelineId(), claim.token())).hasValue(2);
         after = reload(done);
         assertThat(after.getNotifyAttempts()).isEqualTo(2);
         assertThat(after.getNotifyNextAt()).isEqualTo(clock.instant().plus(BACKOFF_BASE.multipliedBy(2)));   // 지수 전진
 
         clock.advance(BACKOFF_BASE.multipliedBy(2));
         claim = claimer.claimOne().orElseThrow();
-        writeBack.onFailure(claim.pipelineId(), claim.token());   // MAX_ATTEMPTS번째 실패 → give-up
+        ListAppender<ILoggingEvent> capturedLogs = attachWriteBackListAppender();
+        try {
+            writeBack.onFailure(claim.pipelineId(), claim.token());   // MAX_ATTEMPTS번째 실패 → give-up
+        } finally {
+            detachWriteBackListAppender(capturedLogs);
+        }
         after = reload(done);
         assertThat(after.getNotifyAttempts()).isEqualTo(MAX_ATTEMPTS);
         assertThat(after.getNotifyNextAt()).isEqualTo(clock.instant().plus(NotifyWriteBack.GIVE_UP_FAR_FUTURE));
         assertThat(notifyRepository.countGivenUp(MAX_ATTEMPTS)).isEqualTo(1);
+        // give-up은 ERROR로 즉시 드러난다(진단 보조 — 정규 경보 소스는 countGivenUp 폴링, ADR-022 §4)
+        assertThat(capturedLogs.list).anySatisfy(loggingEvent -> {
+            assertThat(loggingEvent.getLevel()).isEqualTo(Level.ERROR);
+            assertThat(loggingEvent.getFormattedMessage())
+                    .contains("give-up", "after " + MAX_ATTEMPTS + " attempts");
+        });
 
         clock.advance(NotifyWriteBack.GIVE_UP_FAR_FUTURE.plusSeconds(1));   // far-future마저 지나도
         assertThat(claimer.claimOne()).isEmpty();                 // attempts 술어가 재선택을 막는다
@@ -278,6 +325,34 @@ class NotifyLifecycleTest {
         assertThat(notifyRepository.countGivenUp(MAX_ATTEMPTS)).isEqualTo(1);
     }
 
+    @Test
+    void theFirstChannelUpsertBackfillsLegacyTerminalRowsOutOfNotifyScope() {
+        Pipeline legacyDone = savePipeline("nt-legacy-done", PipelineStatus.DONE);
+        Pipeline legacyFailed = savePipeline("nt-legacy-failed", PipelineStatus.FAILED);
+        Pipeline running = savePipeline("nt-legacy-running", PipelineStatus.RUNNING);
+
+        channelService.upsert(new ChannelUpsert("#infra-alerts", true, WEBHOOK_URL));   // 최초 채널 설정 = 도입 시점
+
+        // backfill된 notified_at은 "전달됨"이 아니라 "알림 범위 밖(도입 전)" 마커다(ADR-022 §5)
+        assertThat(reload(legacyDone).getNotifiedAt()).isEqualTo(START);
+        assertThat(reload(legacyFailed).getNotifiedAt()).isEqualTo(START);
+        assertThat(reload(running).getNotifiedAt()).isNull();      // 비종단 행은 건드리지 않는다
+        assertThat(claimer.claimOne()).isEmpty();                  // 레거시 종단 행의 소급 발화(폭주)가 없다
+    }
+
+    @Test
+    void aSubsequentUpsertNeverBackfillsPostAdoptionBacklog() {
+        channelService.upsert(new ChannelUpsert("#infra-alerts", true, WEBHOOK_URL));   // 도입(최초 upsert)
+        Pipeline postAdoption = savePipeline("nt-post-adoption", PipelineStatus.DONE);  // 도입 후 종단
+
+        channelService.upsert(new ChannelUpsert("#infra-alerts", false, null));   // 비활성화
+        channelService.upsert(new ChannelUpsert("#infra-alerts", true, null));    // 재활성화
+
+        // 도입 후 비활성 기간의 backlog는 보존돼 소급 발화한다(ADR-022 §4의 의도된 동작)
+        assertThat(reload(postAdoption).getNotifiedAt()).isNull();
+        assertThat(claimer.claimOne().orElseThrow().pipelineId()).isEqualTo(postAdoption.getId());
+    }
+
     private Pipeline savePipeline(String target, PipelineStatus status) {
         return savePipeline(target, status, builder -> { });
     }
@@ -296,13 +371,14 @@ class NotifyLifecycleTest {
         return pipelineRepository.save(builder.build());
     }
 
-    private void saveTask(Long pipelineId, int sequence, TaskOperation operation, TaskStatus status,
+    private void saveTask(Long pipelineId, int sequence, TaskDefinition definition, TaskStatus status,
             ErrorCode errorCode) {
         taskRepository.save(Task.builder()
                 .pipelineId(pipelineId)
                 .sequence(sequence)
-                .taskName(operation.mechanism())   // PipelineInserter와 동일 파생: taskName = mechanism
-                .operation(operation)
+                .taskName(definition.mechanism())      // PipelineInserter와 동일 파생: taskName = mechanism 캐시
+                .operation(definition.operation())
+                .taskDefinition(definition.name())     // recipe 진실원 — failed_task의 1순위 원천
                 .status(status)
                 .errorCode(errorCode)
                 .failCount(0)
@@ -311,6 +387,19 @@ class NotifyLifecycleTest {
 
     private Pipeline reload(Pipeline pipeline) {
         return pipelineRepository.findById(pipeline.getId()).orElseThrow();
+    }
+
+    /** write-back 로그를 캡처하는 Logback ListAppender — give-up ERROR의 구조화 필드를 단언하는 데 쓴다. */
+    private static ListAppender<ILoggingEvent> attachWriteBackListAppender() {
+        Logger writeBackLogger = (Logger) LoggerFactory.getLogger(NotifyWriteBack.class);
+        ListAppender<ILoggingEvent> listAppender = new ListAppender<>();
+        listAppender.start();
+        writeBackLogger.addAppender(listAppender);
+        return listAppender;
+    }
+
+    private static void detachWriteBackListAppender(ListAppender<ILoggingEvent> listAppender) {
+        ((Logger) LoggerFactory.getLogger(NotifyWriteBack.class)).detachAppender(listAppender);
     }
 
     @TestConfiguration

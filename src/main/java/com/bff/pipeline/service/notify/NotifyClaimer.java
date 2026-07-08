@@ -29,7 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 두 lease가 같은 행에서 경합할 일도 없다.
  *
  * FAILED 파이프라인의 payload는 sequence 최소의 FAILED task에서 {@code failedTask}/{@code errorCode}를
- * 채운다(비-FAILED는 null). PII 하드 계약(ADR-022 §4): {@code targetRef}는 전용 매핑 지점
+ * 채운다(비-FAILED는 null) — failedTask는 recipe 진실원인 taskDefinition 우선, 열화 행은 mechanism 캐시
+ * fallback. PII 하드 계약(ADR-022 §4): {@code targetRef}는 전용 매핑 지점
  * {@link #toTargetRef}에서만 나오고, raw hostname·account·DB명 등 민감 연결 식별자는 payload에 절대
  * 직렬화하지 않는다(MUST NOT) — NotifyPayloadPiiTest가 이 규칙을 강제한다.
  */
@@ -63,8 +64,10 @@ public class NotifyClaimer {
 
     /**
      * 허용 필드만 싣는 payload를 구성한다. type은 write-once 캐시라 미해석 옛 값이 null로 열화할 수 있어
-     * null-guard가 필수다(NPE 방지). failedTask는 닫힌 recipe task 키(taskName = TaskOperation mechanism,
-     * 부팅 시 TaskTypeRegistry가 검증하는 닫힌 어휘)만, errorCode는 승인된 {@link ErrorCode} 이름만 나간다.
+     * null-guard가 필수다(NPE 방지). failedTask는 닫힌 recipe task 키(ADR-022 §4)만 나간다 — recipe 정체성의
+     * 진실원인 taskDefinition(TaskDefinition 상수 이름)을 우선하고, 정의가 비어 있는 레거시/드레인 전 행은
+     * mechanism 캐시인 taskName으로 fallback한다({@link #toFailedTaskKey}). errorCode는 승인된
+     * {@link ErrorCode} 이름만 나간다.
      */
     private NotifyPayload buildPayload(Pipeline pipeline) {
         Optional<Task> failedTask = pipeline.getStatus() == PipelineStatus.FAILED
@@ -75,10 +78,20 @@ public class NotifyClaimer {
                 .type(pipeline.getType() == null ? null : pipeline.getType().name())
                 .terminalStatus(pipeline.getStatus().name())
                 .targetRef(toTargetRef(pipeline))
-                .failedTask(failedTask.map(Task::getTaskName).orElse(null))
+                .failedTask(failedTask.map(NotifyClaimer::toFailedTaskKey).orElse(null))
                 .errorCode(failedTask.map(Task::getErrorCode).map(ErrorCode::name).orElse(null))
                 .schemaVersion(NotifyPayload.SCHEMA_VERSION)
                 .build();
+    }
+
+    /**
+     * 실패 task → 닫힌 recipe task 키. taskDefinition이 recipe 정체성의 진실원(TaskDefinition 상수 이름)이라
+     * 우선하고, taskName은 mechanism 캐시라 여러 step이 같은 값을 공유하므로(예: 한 recipe의 모든 terraform
+     * step이 TERRAFORM_JOB) 정의가 없는 레거시/드레인 전 행의 fallback으로만 쓴다. 두 어휘 모두 enum 유래의
+     * 닫힌 집합이다(NotifyPayloadPiiTest가 강제).
+     */
+    private static String toFailedTaskKey(Task failed) {
+        return failed.getTaskDefinition() != null ? failed.getTaskDefinition() : failed.getTaskName();
     }
 
     /** 실패 task = sequence 최소의 FAILED task. 기존 체인 조회(findByPipelineIdOrderBySequenceAsc)를 재사용한다. */

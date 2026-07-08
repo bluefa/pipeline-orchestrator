@@ -30,15 +30,21 @@ public class NotificationChannel {
     /** 단일 sink이므로 고정 PK. upsert는 항상 이 id를 쓴다. */
     public static final long SINGLETON_ID = 1L;
 
+    /** webhook 컬럼 길이 — 컬럼 정의와 upsert 입력 가드가 같은 상수를 본다(길이 재철자 금지). */
+    public static final int WEBHOOK_URL_MAX_LENGTH = 512;
+
+    /** label 컬럼 길이 — 컬럼 정의와 upsert 입력 가드가 같은 상수를 본다. */
+    public static final int CHANNEL_LABEL_MAX_LENGTH = 128;
+
     @Id
     private Long id;
 
     /** Slack Incoming Webhook URL. secret — 조회 응답에서는 마스킹한다(원문은 절대 반환하지 않는다). */
-    @Column(name = "slack_webhook_url", length = 512)
+    @Column(name = "slack_webhook_url", length = WEBHOOK_URL_MAX_LENGTH)
     private String slackWebhookUrl;
 
     /** admin 표시용 별칭(예: "#infra-alerts"). 전송 라우팅엔 쓰지 않는다 — webhook이 채널을 결정한다. */
-    @Column(name = "channel_label", length = 128)
+    @Column(name = "channel_label", length = CHANNEL_LABEL_MAX_LENGTH)
     private String channelLabel;
 
     @Column(name = "enabled", nullable = false)

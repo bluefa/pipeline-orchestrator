@@ -9,6 +9,7 @@ import java.util.Optional;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.query.Param;
@@ -93,4 +94,21 @@ public interface NotifyRepository extends JpaRepository<Pipeline, Long> {
             + "and p.notifiedAt is null "
             + "and p.notifyAttempts >= :maxAttempts")
     long countGivenUp(@Param("maxAttempts") int maxAttempts);
+
+    /**
+     * 롤아웃 컷오프 backfill(ADR-022 §5) — 알림 도입 전에 이미 종단이던 미알림 행 전체에
+     * {@code notified_at = :enabledAt}을 찍어 알림 범위 밖으로 뺀다. 여기서 backfill된 값은 "전달됨" ack가
+     * 아니라 "알림 범위 밖(도입 전)" 마커다. 채널 행이 존재하기 전엔 notifier가 절대 발화하지 못하므로
+     * (스케줄러의 채널 gate) 최초 채널 설정이 곧 도입 시점이고, 그 upsert 트랜잭션
+     * ({@code NotificationChannelService.upsert})이 이 update를 1회 호출한다 — 배포 런북의 수기 SQL 대신
+     * 코드로 강제하는 이유는 AGENTS.md 규칙 3(수기 SQL/마이그레이션 금지)이다. 술어가 미알림 종단 행만
+     * 대상으로 하므로 멱등이다. 반환값은 영향 행 수(운영 감사 로그용).
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update Pipeline p set p.notifiedAt = :enabledAt "
+            + "where p.status in (com.bff.pipeline.enums.PipelineStatus.DONE, "
+            + "com.bff.pipeline.enums.PipelineStatus.FAILED, "
+            + "com.bff.pipeline.enums.PipelineStatus.CANCELLED) "
+            + "and p.notifiedAt is null")
+    int markLegacyTerminalRowsOutOfScope(@Param("enabledAt") Instant enabledAt);
 }

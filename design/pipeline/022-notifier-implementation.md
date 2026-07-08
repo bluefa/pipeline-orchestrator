@@ -528,7 +528,7 @@ public class NotifyScheduler {
   드물게 두 번 보일 수 있고 V1은 이를 수용한다(§1). `pipeline_id`는 사람이 눈으로 중복을 식별하는
   키일 뿐, Slack이 제거해 주는 게 아니다. 자동 dedupe가 필요하면 Slack 앞 멱등 브리지(후속).
 - **give-up 복구**: admin 이 수동으로 `notify_next_at`/`notify_attempts` 를 리셋하면 재시도된다
-  (전용 admin 액션은 V1 비범위 — DB 수정 또는 후속). 
+  (전용 admin 액션은 V1 비범위 — DB 수정 또는 후속).
 
 ## 6. Admin: Slack 채널 관리
 
