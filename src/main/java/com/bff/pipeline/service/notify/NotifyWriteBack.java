@@ -13,30 +13,40 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * notify write-back 트랜잭션 — 전달(외부 호출, 트랜잭션 밖)의 결과를 guarded로 기록한다(ADR-022 §2).
- * 성공이면 {@code notified_at}을 스탬프하고 lease와 stale backoff 메타데이터({@code notify_next_at})를
- * 비운다. 실패면 attempts를 post-increment로 올리고, {@code maxAttempts} 도달 시 give-up(far-future
- * {@code notify_next_at}은 보조 표시일 뿐 — 재클레임 배제는 claim 술어의 attempts 비교가 담당한다) +
- * ERROR 로그, 아니면 상한 있는 지수 backoff(jitter 포함)로 다음 재시도 시각을 민다. 어느 쪽이든 lease는
- * 해제한다. {@code onFailure}는 증가된 attempts를 돌려준다(fencing no-op면 empty) — 호출자
- * ({@code NotifyScheduler})가 실패 WARN의 attempt 필드(구현 명세 §7 MUST)를 이 값으로 채운다.
+ * 알림 전송(트랜잭션 밖에서 일어나는 Slack 호출)의 결과를 DB에 기록하는 트랜잭션이다.
+ * 성공이면 {@code notified_at}에 시각을 적어 그 파이프라인을 알림 대상에서 영구히 빼고,
+ * 점유 정보와 남아 있던 재시도 예약({@code notify_next_at})을 지운다.
+ * 실패면 시도 횟수({@code notify_attempts})를 1 올리고 다음 재시도 시각을 정한다.
+ * 실패가 반복될수록 재시도 간격이 두 배씩 늘어난다(상한 있음, 무작위 오차 포함).
+ * 횟수가 {@code maxAttempts}에 닿으면 자동 재시도를 중단한다 — {@code notify_next_at}을 먼 미래로 밀고
+ * ERROR 로그를 남긴다. 이때 먼 미래 값은 눈에 보이는 표시일 뿐이고,
+ * 그 행이 다시 잡히지 않게 막는 실제 장치는 조회 조건의 시도 횟수 비교다.
+ * 성공이든 실패든 점유는 해제한다.
+ * {@code onFailure}는 올린 뒤의 시도 횟수를 돌려주고, 기록이 무효 처리됐으면 empty를 돌려준다.
+ * 호출자({@code NotifyScheduler})가 실패 WARN 로그의 attempt 필드를 이 값으로 채운다.
  *
- * 두 경로 모두 같은 fencing 가드 술어({@link #ownsLiveNotifyClaim})를 탄다 — 기존
- * {@link PipelineRepository#findByIdForUpdate}로 행을 잠근 뒤 token 일치 + 아직 미알림
- * ({@code notified_at is null})일 때만 적용한다. lease 만료 뒤 되살아난 stale worker의 실패 write-back이,
- * 그 사이 다른 worker가 성공시켜 이미 notified_at이 찍힌 행의 attempts/backoff를 오염시키는 것을 막는다
- * (0행 매칭과 동형의 no-op).
+ * 성공 기록과 실패 기록 모두 같은 확인 절차({@link #ownsLiveNotifyClaim})를 거친다.
+ * 기존 {@link PipelineRepository#findByIdForUpdate}로 행을 잠근 뒤, 발급받았던 점유 확인용 토큰이
+ * 행의 것과 일치하고 아직 알림이 나가지 않은 상태({@code notified_at}이 null)일 때만 기록한다.
+ * 이 확인이 막는 사고: 점유가 만료된 뒤 뒤늦게 돌아온 서버가 실패를 기록하려 할 때,
+ * 그 사이 다른 서버가 이미 성공시킨 행의 시도 횟수와 재시도 예약을 망가뜨리는 것.
+ * 확인에 걸리면 아무것도 바꾸지 않는다.
  *
- * 구조화 전달 로그(ADR-022 §결과 감사 보조): 성공 INFO / give-up ERROR 모두 pipeline_id·terminal_status·
- * attempt·sink를 싣는다. 실패 WARN(응답 분류 포함)은 예외를 쥔 호출자({@code NotifyScheduler})가 남긴다.
+ * 감사용 구조화 로그: 성공 INFO와 자동 재시도 중단 ERROR는 여기서 남기고,
+ * 둘 다 pipeline_id·terminal_status·attempt·sink를 싣는다.
+ * 실패 WARN은 예외를 쥐고 있는 호출자({@code NotifyScheduler})가 응답 분류와 함께 남긴다.
+ * 자세한 배경은 ADR-022 참조.
  */
 @Slf4j
 @Component
 public class NotifyWriteBack {
 
-    /** give-up 보조 표시용 far-future 오프셋. 재클레임 배제의 근거가 아니라 정렬/가시성용이다(테스트가 참조). */
+    /**
+     * 자동 재시도 중단을 표시하는 먼 미래 오프셋. 그 행이 다시 잡히지 않게 막는 근거가 아니라
+     * 정렬과 눈에 띄기 위한 표시일 뿐이다(테스트가 참조한다).
+     */
     public static final Duration GIVE_UP_FAR_FUTURE = Duration.ofDays(3650);
-    /** 지수 backoff 시프트 상한 — long 오버플로 방지(이 지수면 어차피 backoffMax에 잘린다). */
+    /** 재시도 간격을 두 배씩 늘릴 때 지수의 상한. long 오버플로를 막는다(이 지수쯤 되면 어차피 backoffMax에 잘린다). */
     private static final int MAX_BACKOFF_SHIFT = 20;
 
     private final PipelineRepository pipelineRepository;
@@ -59,13 +69,14 @@ public class NotifyWriteBack {
                     pipeline.setNotifiedAt(clock.instant());
                     pipeline.setNotifyClaimedBy(null);
                     pipeline.setNotifyClaimedUntil(null);
-                    pipeline.setNotifyNextAt(null);   // stale backoff 메타데이터 제거(postmortem 혼선 방지)
+                    pipeline.setNotifyNextAt(null);   // 남아 있던 재시도 예약을 지운다(나중에 원인 분석할 때 헷갈리지 않게)
                 });
     }
 
     /**
-     * 실패 write-back — 증가된(post-increment, ADR-022 §2) attempts를 돌려준다. fencing 가드에 걸린
-     * stale write-back은 아무것도 바꾸지 않고 empty를 돌려준다 — 호출자는 이를 attempt=stale-no-op으로 로깅한다.
+     * 전송 실패를 기록한다. 시도 횟수를 1 올리고, 올린 뒤의 값을 돌려준다.
+     * 점유 확인에 걸린 뒤늦은 기록이면 아무것도 바꾸지 않고 empty를 돌려준다 —
+     * 호출자는 이를 attempt=stale-no-op으로 로깅한다.
      */
     @Transactional
     public OptionalInt onFailure(long pipelineId, String token) {
@@ -90,15 +101,18 @@ public class NotifyWriteBack {
     }
 
     /**
-     * fencing 가드 술어 — token 일치 + 아직 미알림({@code notified_at is null})일 때만 write-back을 허용한다
-     * (stale-straggler fencing). 토큰 불일치 = lease 만료 후 재claim, notified_at non-null = 다른 worker가
-     * 이미 성공 — 둘 다 no-op. 성공·실패 write-back이 모두 findByIdForUpdate 행 잠금 아래에서 이 술어를 탄다.
+     * 결과를 기록해도 되는지 확인하는 조건이다. 토큰이 행의 {@code notifyClaimedBy}와 일치하고,
+     * 아직 알림이 나가지 않은 상태({@code notified_at}이 null)일 때만 기록을 허용한다.
+     * 토큰이 다르면 점유가 만료된 뒤 다른 서버가 새로 점유한 것이다.
+     * {@code notified_at}이 차 있으면 다른 서버가 이미 성공시킨 것이다.
+     * 두 경우 모두 아무것도 기록하지 않는다.
+     * 성공 기록과 실패 기록 모두 findByIdForUpdate로 행을 잠근 상태에서 이 확인을 거친다.
      */
     private static boolean ownsLiveNotifyClaim(Pipeline pipeline, String token) {
         return token.equals(pipeline.getNotifyClaimedBy()) && pipeline.getNotifiedAt() == null;
     }
 
-    /** 상한 있는 지수 backoff + jitter. attempts는 post-increment된 값(1부터)이다. */
+    /** 다음 재시도까지 기다릴 시간. 실패할수록 두 배씩 늘고 상한에서 멈추며, 무작위 오차(jitter)를 더한다. attempts는 이미 1 올린 값(1부터)이다. */
     private Duration backoff(int attempts) {
         long baseMillis = settings.backoffBase().toMillis() * (1L << Math.min(attempts - 1, MAX_BACKOFF_SHIFT));
         long cappedMillis = Math.min(baseMillis, settings.backoffMax().toMillis());

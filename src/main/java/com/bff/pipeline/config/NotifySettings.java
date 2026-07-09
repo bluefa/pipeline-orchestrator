@@ -6,23 +6,29 @@ import lombok.Builder;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * application.yml의 {@code pipeline.notify.*} 키에서 바인딩되는 ADR-022 종단 상태 알림(notify) 설정이다
- * ({@code @ConfigurationProperties(prefix = "pipeline.notify")}). 실행 설정({@link ExecutionSettings})과
- * 자원·회계를 공유하지 않는 별도 loop의 케이던스·backoff·lease·give-up 임계를 이 record가 소유한다.
+ * 종단 알림 기능의 설정 모음이다. application.yml의 {@code pipeline.notify.*} 키에서 읽어온다.
  *
- * Slack 전달 채널도 이 설정이 소유한다(오너 결정 2026-07-09 — admin 채널 관리 대신 환경변수 주입).
- * {@code slackWebhookUrl}은 env로 주입되는 secret이다 — 어떤 로그·응답에도 원문을 찍지 않는다.
- * {@code enabledAfter}는 알림 도입 시점 컷오프다(ADR-022 §5의 대안인 활성 컷오프 술어) — claim 술어가
- * {@code last_activity_at >= enabledAfter}를 요구하므로 그 이전에 종단된 행은 알림 범위 밖이 되어 레거시
- * 종단 행의 소급 발화 폭주를 막는다. backfill 마이그레이션이 없는 방식이라 이 값은 상시 유지해야 한다
- * (지우면 레거시 전부가 다시 알림 대상이 된다).
+ * 각 설정의 의미:
+ * - {@code enabled}: 알림 기능 스위치. 끄면(기본값) 알림 스레드가 아예 돌지 않는다.
+ * - {@code slackWebhookUrl}: 알림을 보낼 Slack Incoming Webhook 주소. 환경변수
+ *   {@code PIPELINE_NOTIFY_SLACK_WEBHOOK_URL}로 주입하는 비밀값이라 로그나 API 응답에 원문을 남기지 않는다.
+ * - {@code enabledAfter}: 이 시각 이후에 끝난 파이프라인만 알린다는 기준 시각. 알림 기능을 처음 켜는 순간
+ *   과거에 끝난 파이프라인 전부가 한꺼번에 Slack으로 쏟아지는 것을 막는다. 이 값을 지우거나 과거로 옮기면
+ *   옛 파이프라인들이 다시 알림 대상이 되므로, 한 번 정했으면 계속 유지해야 한다.
+ * - {@code pollInterval}, {@code maxIdleSleep}: 알림 스레드가 얼마나 자주 도는지. 보낼 게 있으면
+ *   pollInterval 간격으로 돌고, 없으면 maxIdleSleep까지 점점 느리게 돈다.
+ * - {@code backoffBase}, {@code backoffMax}, {@code jitterRatio}: 전송이 실패했을 때 다음 재시도까지
+ *   기다리는 시간. 실패가 반복될수록 backoffBase에서 backoffMax까지 두 배씩 늘어난다.
+ * - {@code leaseDuration}: 한 서버가 한 건의 알림 전송을 점유하는 시간. 점유한 서버가 죽어도 이 시간이
+ *   지나면 다른 서버가 이어받는다.
+ * - {@code callTimeout}: Slack HTTP 호출 제한 시간.
+ * - {@code maxAttempts}: 이 횟수만큼 전송에 실패하면 자동 재시도를 멈추고 사람 개입을 기다린다.
  *
- * compact constructor가 fail-fast로 검증한다 — 모든 Duration은 양수, {@code maxAttempts}는 1 이상,
- * {@code jitterRatio}는 0~1 범위, {@code backoffMax >= backoffBase}, 그리고 ADR-021 Decision 5와 같은 이유의
- * 하드 제약 {@code leaseDuration > callTimeout}을 강제한다(어기면 문제 키 이름과 함께 시작에 실패한다).
- * lease가 호출 타임아웃보다 짧으면 정상 운영 중에도 write-back이 만료된 lease로 no-op되는 병리가 생긴다.
- * {@code enabled = true}일 때만 {@code slackWebhookUrl}(non-blank)과 {@code enabledAfter}(non-null)가
- * 필수다 — notifier를 켜는 배포는 전달 채널과 컷오프를 함께 제공해야 하고, 꺼진 배포는 둘 다 생략할 수 있다.
+ * 잘못된 설정은 서버가 뜨는 시점에 바로 실패시키고, 어느 키가 문제인지 메시지에 담는다. 시간 값은 모두
+ * 양수여야 하고, maxAttempts는 1 이상, jitterRatio는 0~1, backoffMax는 backoffBase 이상이어야 한다.
+ * leaseDuration은 callTimeout보다 길어야 한다 — 짧으면 Slack 응답을 기다리는 사이에 점유가 먼저 풀려서,
+ * 정상 동작인데도 전송 결과가 기록되지 못하는 문제가 생긴다. 알림을 켜는(enabled=true) 배포는
+ * slackWebhookUrl과 enabledAfter를 반드시 함께 줘야 하고, 꺼진 배포는 둘 다 생략할 수 있다.
  */
 @Builder
 @ConfigurationProperties(prefix = "pipeline.notify")

@@ -9,11 +9,13 @@ import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link NotifySettings} 부팅-시 fail-fast 검증(ADR-022 구현 명세 §3). 특히 {@code leaseDuration > callTimeout}
- * 하드 제약과 {@code backoffMax >= backoffBase}, 양수 Duration/시도 상한/jitter 경계를 어기면 문제 키 이름과
- * 함께 즉시 실패해야 한다. 채널이 env 주입으로 바뀐 뒤(오너 결정 2026-07-09)의 조건부 필수도 검증한다 —
- * {@code enabled = true}면 webhook(non-blank)과 도입 컷오프({@code enabledAfter})가 필수이고, 꺼진 배포는
- * 둘 다 생략할 수 있다.
+ * {@link NotifySettings}가 잘못된 설정을 서버가 뜨는 시점에 바로 실패시키는지 검증한다.
+ * 특히: 점유 시간이 Slack 호출 제한 시간보다 길어야 한다는 제약({@code leaseDuration > callTimeout}),
+ * {@code backoffMax >= backoffBase}, 시간 값 양수, 시도 횟수 상한, jitter 범위.
+ * 어느 것을 어기든 문제가 된 설정 키 이름이 에러 메시지에 들어가야 한다.
+ * 채널이 환경변수 주입으로 바뀐 뒤(오너 결정 2026-07-09)의 조건부 필수도 검증한다 —
+ * {@code enabled = true}면 webhook 주소(공백 불가)와 도입 시각({@code enabledAfter})이 필수이고,
+ * 꺼진 배포는 둘 다 생략할 수 있다.
  */
 class NotifySettingsTest {
 

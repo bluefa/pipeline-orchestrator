@@ -117,30 +117,35 @@ public class Pipeline {
     @Column(name = "cancel_requested", nullable = false)
     private boolean cancelRequested;
 
-    // ── ADR-022 종단 알림 메타데이터: 도메인 상태가 아니며 reconciler/실행 claim/전이는 읽지 않는다. ──
+    // ── ADR-022 종단 알림 메타데이터: 도메인 상태가 아니다. reconciler·실행 점유·상태 전이는 이 필드들을 읽지 않는다. ──
 
-    /** 전달 완료(sink ack) 마커. non-null이면 알림 대상에서 영구히 빠진다. */
+    /** 알림 전달이 완료된(전송처가 성공으로 응답한) 시각. 값이 차면 이 행은 알림 대상에서 영구히 빠진다. */
     @Column(name = "notified_at")
     private Instant notifiedAt;
 
-    /** 전달 실패 backoff 게이트(다음 재시도 시각). give-up 시 far-future로 민다(보조 표시일 뿐 give-up의 근거는 아니다). */
+    /**
+     * 전송 실패 후 다음 재시도 시각. 이 시각이 오기 전에는 다시 잡지 않는다.
+     * 자동 재시도를 중단할 때는 먼 미래로 민다 — 눈에 보이는 표시일 뿐,
+     * 재선택을 막는 실제 장치는 시도 횟수 비교다.
+     */
     @Column(name = "notify_next_at")
     private Instant notifyNextAt;
 
-    /** 전달 시도 횟수. backoff 지수와 give-up 임계({@code maxAttempts}) 계산에 쓴다. */
+    /** 알림 전송을 시도한 횟수. 재시도 간격 계산과 자동 재시도 중단 판정({@code maxAttempts} 도달)에 쓴다. */
     @Column(name = "notify_attempts", nullable = false)
     @Builder.Default
     private int notifyAttempts = 0;
 
     /**
-     * notify 전용 fencing token(UUID). ADR-021의 {@code claimed_by}를 재사용하지 않는다 — 실행 admission
-     * soft-cap({@code countByClaimedUntilAfter})이 상태 무관하게 활성 lease를 세므로, 공유하면 종단 행의
-     * notify lease가 실행 처리량 카운트를 오염시킨다(ADR-022 §2).
+     * 알림 전용 점유 확인용 토큰(UUID). 점유할 때마다 새로 발급하고, 전송 결과 기록은 이 값이 일치할 때만 허용된다.
+     * ADR-021의 {@code claimed_by}를 재사용하지 않는 이유: 실행의 동시 실행 제한
+     * ({@code countByClaimedUntilAfter})은 파이프라인 상태와 무관하게 점유가 살아 있는 행을 전부 세므로,
+     * 컬럼을 공유하면 끝난 행의 알림 점유가 그 수를 부풀려 실행 처리량을 깎는다.
      */
     @Column(name = "notify_claimed_by", length = 36)
     private String notifyClaimedBy;
 
-    /** notify lease 만료 시각. 만료({@code < now})되면 다음 notify 스캔이 재claim한다. */
+    /** 알림 점유의 만료 시각. 이 시각이 지나면({@code < now}) 점유가 저절로 풀려 다음 알림 스캔이 다시 잡는다. */
     @Column(name = "notify_claimed_until")
     private Instant notifyClaimedUntil;
 }

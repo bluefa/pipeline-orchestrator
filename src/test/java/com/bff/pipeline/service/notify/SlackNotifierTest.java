@@ -19,9 +19,10 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 /**
- * {@link SlackNotifier} 순수 단위 테스트다. 메시지 형식(상태별 이모지/색, FAILED 전용 필드, 항상 포함되는
- * pipeline_id, null type 열화)은 package-private {@code toSlackMessage}로 직접 단언하고, HTTP 경계(2xx 성공,
- * 비2xx는 RestClientException)는 스크립트된 응답을 돌려주는 가짜 요청 팩토리 위의 진짜 RestClient로 검증한다.
+ * {@link SlackNotifier} 단위 테스트다. 메시지 형식(상태별 이모지와 색, FAILED 전용 필드,
+ * 항상 들어가는 pipeline_id, type이 null인 옛 데이터 처리)은 package-private {@code toSlackMessage}를
+ * 직접 불러 단언한다. HTTP 경계(2xx만 성공, 그 외는 RestClientException)는 정해진 응답을 돌려주는
+ * 가짜 요청 팩토리 위에 진짜 RestClient를 올려 검증한다.
  */
 class SlackNotifierTest {
 
@@ -102,7 +103,7 @@ class SlackNotifierTest {
 
     @Test
     void aRedirectResponseIsADeliveryFailureNotAnAck() {
-        // ack는 2xx뿐이다(ADR-022 §2) — 3xx가 성공으로 통과하면 notified_at이 잘못 찍혀 알림이 조용히 유실된다.
+        // 성공으로 인정하는 응답은 2xx뿐이다 — 3xx가 성공으로 통과하면 notified_at이 잘못 찍혀 알림이 조용히 사라진다.
         SlackNotifier notifier = new SlackNotifier(
                 restClientOver(new ScriptedRequestFactory(HttpStatus.MOVED_PERMANENTLY)));
 
@@ -146,7 +147,7 @@ class SlackNotifierTest {
                 .findFirst().orElseThrow();
     }
 
-    /** 항상 지정된 상태 코드를 돌려주는 스크립트 요청 팩토리 — 마지막 요청을 붙잡아 URI/본문을 단언하게 한다. */
+    /** 항상 지정된 상태 코드를 돌려주는 가짜 요청 팩토리. 마지막 요청을 붙잡아 두어 URI와 본문을 단언할 수 있게 한다. */
     static final class ScriptedRequestFactory implements ClientHttpRequestFactory {
         private final HttpStatus responseStatus;
         MockClientHttpRequest lastRequest;
