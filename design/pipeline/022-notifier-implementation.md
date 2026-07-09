@@ -15,9 +15,14 @@
 
 > **구현 노트(pipeline-orchestrator, 2026-07-09, 오너 결정)**: §2.2/§6의 admin 채널 관리
 > (notification_channel 테이블·REST·마스킹·SSRF·테스트 전송)는 구현하지 않는다 — webhook은
-> env var(`PIPELINE_NOTIFY_SLACK_WEBHOOK_URL`)로 주입하고 enable/disable은 재시작으로 반영한다.
-> 롤아웃 컷오프는 §5(ADR) 대안인 활성 컷오프 술어(`pipeline.notify.enabled-after`)를 채택.
-> §7의 두 age 쿼리는 소비 표면(actuator/admin)이 생길 때 재도입.
+> env var(`PIPELINE_NOTIFY_SLACK_WEBHOOK_URL`)로 주입하고 enable/disable은 재시작으로 반영한다
+> (§4.5의 런타임 채널 가드는 부팅 `enabled` 가드로 대체). 롤아웃 컷오프는 활성 컷오프 술어
+> (`pipeline.notify.enabled-after`, claim에 `last_activity_at >= :enabledAfter`)다 — **ADR-022
+> §5가 이를 채택안으로 개정**되었고 §2 채널 gate도 부팅 가드/재시작 의미론으로 개정되었다
+> (ADR-022 개정 이력 2026-07-09 참조). §7의 두 age 쿼리는 소비 표면(actuator/admin)이 생길 때
+> 재도입하며, give-up 경보의 V1 배선은 NotifyScheduler가 `countGivenUp`을 주기(5분) 폴링해
+> ERROR 로그로 승격하는 것이다. 이 노트·아래 ⛔ 마킹과 본문이 충돌하면 **개정된 ADR-022
+> 본문이 정본**이다.
 
 ## 0. 범위와 원칙 (작게 시작)
 
@@ -25,6 +30,7 @@
 - **인터페이스 추상화 없음** — `NotificationSink` 같은 인터페이스를 두지 않고 `SlackNotifier`
   구체 클래스로 직접 구현한다. 다중 sink가 실제로 필요해지면 그때 추출한다(YAGNI).
 - **Slack 채널은 Admin Page에서 관리** — webhook URL/활성여부를 admin UI에서 등록·수정.
+  (⛔ 미구현 — 2026-07-09 오너 결정, 위 구현 노트: env var 로 대체.)
 - **관측 전용, 게이팅 아님** — 알림은 pipeline/task 도메인 상태에 영향을 주지 않는다(ADR-022 불변식).
 - **실행과 격리** — notify는 실행 워커풀·admission cap과 자원/회계를 공유하지 않는다.
 
@@ -51,7 +57,7 @@ NotifyScheduler (단일 데몬 loop, 실행 스케줄러와 별개)
 ## 2. DB 변경 (JPA 엔티티, 손으로 쓰는 SQL 없음)
 
 `ddl-auto: update`가 엔티티 애노테이션에서 스키마를 만든다. **`Pipeline` 엔티티에 필드 5개 + 인덱스 1개**를 더하고,
-**설정 엔티티 `NotificationChannel` 1개**를 새로 만든다.
+**설정 엔티티 `NotificationChannel` 1개**를 새로 만든다(⛔ 후자는 미구현 — §2.2, 채널은 env var).
 
 ### 2.1 `Pipeline` 에 추가
 
@@ -87,6 +93,9 @@ private Instant notifyClaimedUntil;
 > **`active_target` 유일 제약과 무관** — notify 컬럼은 알림 메타데이터일 뿐 도메인 불변식과 얽히지 않는다.
 
 ### 2.2 새 엔티티 `NotificationChannel` (단일 행 설정)
+
+> ⛔ **미구현(2026-07-09 오너 결정)** — 이 엔티티/테이블은 만들지 않는다; 채널은 env var로
+> 관리한다. §0 구현 노트와 ADR-022 개정 이력 참조.
 
 V1은 **단일 논리 sink**이므로 이 테이블은 사실상 1행이다(`id=1` 고정). admin이 이 1행을 수정한다.
 
@@ -184,12 +193,26 @@ pipeline:
 > **maxNotifyCount = `max-attempts`(기본 8).** 넘으면 `notify_next_at` 을 far-future 로 밀어 자동
 > 재시도를 멈추고 ERROR 로그 + 지표로 사람이 개입하게 한다(§5).
 
+> **신규 키 2개(2026-07-09 오너 결정 — 실제 `application.yml` 정합).** 위 record/yml 표본에
+> 더해 `NotifySettings` 는 다음을 갖는다:
+> `slack-webhook-url`(Slack Incoming Webhook URL — **secret**, env
+> `PIPELINE_NOTIFY_SLACK_WEBHOOK_URL` 로만 주입하고 로그·응답에 원문을 찍지 않는다)과
+> `enabled-after`(ISO-8601 `Instant` 도입 컷오프 — claim 술어 `last_activity_at >= enabled-after`,
+> ADR-022 §5 채택안). **`enabled=true` 면 둘 다 필수**로 compact constructor 가 fail-fast 한다.
+> `enabled` 기본은 `${PIPELINE_NOTIFY_ENABLED:false}` 이고, `enabled-after` 는 빈 문자열/sentinel
+> 기본값을 두지 않는다(컷오프 무력화 = 레거시 종단 전부 발화) — 켜는 배포가 실제 도입 시각을
+> env/yml 로 명시 제공한다.
+
 ## 4. Claim / 전달 / write-back
 
 ### 4.1 `NotifyRepository` (Spring Data JPA)
 
 `PipelineRepository` 의 claim 패턴을 그대로 따른다(`@Lock(PESSIMISTIC_WRITE)` + `@QueryHints`
 lock-timeout `-2` → MySQL8에서 `FOR UPDATE SKIP LOCKED` 렌더, H2에선 무시).
+
+> ⛔ **spec 편차(2026-07-09 오너 결정)** — 아래 코드의 두 age 쿼리
+> (`oldestUnnotifiedAt`/`oldestDeliveryPending`)는 삭제(소비 표면 도입 시 재도입 — §7 참조)이고,
+> claim 술어에는 활성 컷오프 `and p.lastActivityAt >= :enabledAfter`가 추가되었다(§0 구현 노트).
 
 ```java
 public interface NotifyRepository extends JpaRepository<Pipeline, Long> {
@@ -358,6 +381,8 @@ public class SlackNotifier {
     /** 실패(비2xx/타임아웃/IO)면 예외 → 호출자(NotifyScheduler)가 잡아 tx2 backoff. */
     public void deliver(String webhookUrl, NotifyPayload p) { post(webhookUrl, toSlackMessage(p)); }
 
+    // ⛔ 미구현(2026-07-09 오너 결정): 아래 deliverTest/TEST_MESSAGE(admin 테스트 전송, §6)는
+    //    만들지 않는다 — admin 표면이 없다.
     private static final String TEST_MESSAGE = ":bell: PII 파이프라인 알림 채널 테스트 메시지";
 
     /** admin 테스트 전송 — 실제 pipeline 없이 고정 메시지. */
@@ -455,6 +480,11 @@ public class NotifyWriteBack {
 
 ### 4.5 `NotifyScheduler` (단일 데몬 loop)
 
+> ⛔ **미구현(2026-07-09 오너 결정)** — 아래 코드의 런타임 채널 가드
+> (`NotificationChannelService.activeChannel()`)는 **부팅 `enabled` 가드로 대체**되었다
+> (disabled면 loop 자체가 뜨지 않고, webhook은 `NotifySettings.slackWebhookUrl()`을 쓴다).
+> §0 구현 노트와 ADR-022 개정 이력 참조.
+
 `PipelineScheduler` 를 축소 모델링 — 워커 풀 fan-out 없이 **단일 스레드**. 채널 미설정/비활성이면 claim 안 함.
 
 ```java
@@ -538,6 +568,9 @@ public class NotifyScheduler {
 
 ## 6. Admin: Slack 채널 관리
 
+> ⛔ **미구현(2026-07-09 오너 결정)** — 이 절 전체(REST·DTO·SSRF·마스킹·테스트 전송·frontend
+> 카드)는 구현하지 않는다; 채널은 env var로 관리한다. §0 구현 노트와 ADR-022 개정 이력 참조.
+
 ### 6.1 Orchestrator REST (신규 `NotificationChannelController`)
 
 기존 컨트롤러 패턴(`@RestController`, 인바운드 접두어 **`/api/v1`**, `GlobalAdvice` 예외 처리) 따른다.
@@ -619,7 +652,9 @@ public record TestResult(
 
 - **give-up 경보(필수·정규 소스 = DB 폴링, 배포 게이트)** — actuator 가 없어도 **`countGivenUp
   (maxAttempts)` 리포지토리 술어를 주기 폴링하는 인터럽 잡**(예: `@Scheduled` 로 N 분마다 조회)을
-  두어 `> 0` 이면 담당자에게 page 한다. 로그는 유실·수집 누락·배선 전 발생이 가능하므로 정규
+  두어 `> 0` 이면 담당자에게 page 한다(구현된 V1 배선: `NotifyScheduler` 가 sweep 안에서 5분
+  주기로 `countGivenUp` 을 폴링해 `> 0` 이면 ERROR 로그로 승격 — 조직 스택은 같은 DB 술어를
+  폴링한다). 로그는 유실·수집 누락·배선 전 발생이 가능하므로 정규
   경보 소스로 삼지 않는다. **이 DB 폴링 경보 배선은 notifier 프로덕션 가동 전제**다. actuator
   도입 후에는 같은 술어를 `notify.giveup.total` gauge 로 승격한다.
 - **구조화 로그(감사 재구성 보조, ADR-022 §결과)** — success/failure/give-up 모두 최소
@@ -634,6 +669,8 @@ public record TestResult(
   (`notify_delivery_pending_age`, 미도래 backoff 행 제외 — 건강한 재시도 대기를 전달 막힘으로
   오인하지 않게). **“전달 정체” 경보는 후자를 쓰고, 활성 채널일 때만 평가**한다(비활성 시 suppress).
   gauge 노출은 후속(YAGNI)이나 쿼리는 처음부터 둘로 나눈다. `countGivenUp(maxAttempts)` 는 give-up 수(사람 개입 필요).
+  > ⛔ **삭제(2026-07-09 오너 결정)** — 두 age 쿼리는 소비 표면(actuator/관리 조회)이 없어
+  > 두지 않는다; 그 표면 도입 시 위 정의대로 재도입(개정 ADR-022 §4). `countGivenUp` 만 남는다.
 - actuator 를 추가하면 gauge 노출: `notify.backlog.oldest.age.seconds`(총),
   `notify.delivery.pending.age.seconds`(활성 채널 한정), `notify.attempts.total`(counter),
   `notify.giveup.total`(gauge=`countGivenUp`). **도입은 후속**(YAGNI).
@@ -647,7 +684,8 @@ public record TestResult(
   (대안: `countByClaimedUntilAfter` 에 `status in (RUNNING,PENDING)` 필터 추가로 재사용 — 실행 회계
   질의를 건드리므로 기각). → **ADR-022 스키마/§2 갱신 완료**(컬럼 3 → 5, "재사용" → notify 전용 lease "전용 쌍").
 - **인터페이스 없음** — `SlackNotifier` 구체 클래스. 다중 sink 필요 시 추출(현재 비범위).
-- **단일 sink** — `notification_channel` 1행. 다중·독립 재시도 sink 는 ADR-022 가 유보(per-sink 상태).
+- **단일 sink** — `notification_channel` 1행(⛔ 2026-07-09 이후 채널 저장은 테이블이 아니라
+  env var — §0 노트). 다중·독립 재시도 sink 는 ADR-022 가 유보(per-sink 상태).
 - **부분 인덱스 없음(MySQL8)** — `active_target` 유일 제약과 같은 제약. 복합 인덱스 + 소규모로 흡수.
 
 ## 9. 패키지 배치 (레이어 규칙 준수)
@@ -667,15 +705,22 @@ public record TestResult(
 | `InvalidNotificationWebhookException`(extends `OrchestrationException`) | `exception` |
 | `OrchestrationErrorCode.INVALID_NOTIFICATION_WEBHOOK` (enum 값 추가) | 기존 `exception` |
 
+> ⛔ **미구현(2026-07-09 오너 결정)** — 표의 `NotificationChannel`·`NotificationChannelService`·
+> `NotificationChannelController`·`ChannelUpsert`/`ChannelView`/`TestResult`·
+> `InvalidNotificationWebhookException`/`INVALID_NOTIFICATION_WEBHOOK` 행은 만들지 않는다
+> (채널은 env var — §0 구현 노트 참조).
+
 ## 10. 구현 순서 (슬라이스)
 
 1. `Pipeline` 5필드 + `idx_pipeline_notify` 추가 → 앱 부팅(`ddl-auto: update`)으로 컬럼 생성 확인.
 2. `NotifySettings` + yml 키 + `PipelineConfig` 등록 → 잘못된 값에 fail-fast 되는지 확인.
 3. `NotificationChannel` 엔티티 + `NotificationChannelService`(activeChannel/upsert/mask) + 컨트롤러.
+   (⛔ 미구현 — 2026-07-09 오너 결정, 채널은 env var. §0 구현 노트 참조.)
 4. `NotifyRepository`(claim/guard/oldest) + `NotifyClaimer`(tx1) + `NotifyWriteBack`(tx2).
 5. `SlackNotifier`(RestClient, 타임아웃) + payload 빌더(PII 허용 필드만).
 6. `NotifyScheduler`(단일 loop, 채널 가드).
 7. **(별도 repo `pii-agent-demo`)** Frontend admin 카드 + Next 프록시 route — 백엔드(1~6) 빌드와 독립.
+   (⛔ 미구현 — 2026-07-09 오너 결정, admin 채널 표면 없음. §0 구현 노트 참조.)
 8. 테스트(§11).
 
 ## 11. 테스트 체크리스트 (H2 MySQL-mode, `@DataJpaTest`/단위)
@@ -697,6 +742,8 @@ public record TestResult(
   이후 claim 에서 재선택 안 됨(far-future 아니라 attempts 술어로).
 - **격리**: notify lease 스탬프가 `countByClaimedUntilAfter`(실행 캡)에 **안 잡힘**(전용 컬럼 검증).
 - **채널 가드**: 미설정/비활성이면 claim 0건(scheduler idle).
+  > ⛔ **미구현(2026-07-09 오너 결정)** — 부팅 `enabled` 가드로 대체(disabled 면 loop 미기동);
+  > 검증 대상은 `NotifyScheduler.start()` 의 enabled 분기다.
 - **payload PII (`NotifyPayloadPiiTest`)**: 허용 필드만 직렬화하고 다음을 명시 단언한다 —
   (a) 직렬화 JSON 에 raw 연결 식별자(host/port/credential/DB명 패턴)가 **없음**(`toTargetRef` 외
   경로로 민감 값이 새면 실패), (b) `failed_task` 값이 **닫힌 recipe 키 집합에 속함**(raw provider/
@@ -704,12 +751,17 @@ public record TestResult(
   `FAILED` 는 `buildPayload` 가 sequence 최소 FAILED task 에서 `failed_task`/`error_code` 를 채운다
   (비-FAILED 는 null).
 - **webhook 마스킹**: `GET` 응답에 원문 webhook 이 없다(마스킹만).
+  > ⛔ **미구현(2026-07-09 오너 결정)** — admin GET 이 없다(채널은 env var; secret 은 로그·응답에 원문 금지).
 - **SSRF 검증**: 비-https·비-정확일치 host·userinfo 포함 webhook `PUT` 은 typed 400 으로 거절.
+  > ⛔ **미구현(2026-07-09 오너 결정)** — upsert 엔드포인트가 없다(webhook 은 배포 env 로만 주입).
 - **DTO snake_case**: 세 신규 DTO(`ChannelUpsert`/`ChannelView`/`TestResult`) 케이스를
   `DtoSnakeCaseSerializationTest` 에 **명시적으로 추가**(자동 발견 아님).
+  > ⛔ **미구현(2026-07-09 오너 결정)** — 세 채널 DTO 를 만들지 않는다.
 - **upsert 필드 규칙**: `slack_webhook_url` null/blank → 기존 유지, 값 → 교체; `enabled` 생략(null) → 400;
   최초 upsert 는 `SINGLETON_ID` 로 insert.
+  > ⛔ **미구현(2026-07-09 오너 결정)** — upsert 가 없다(채널은 env var).
 - **test 엔드포인트**: 전달 실패해도 200 + `{delivered:false, error}`; 미설정이면 `channel not configured`.
+  > ⛔ **미구현(2026-07-09 오너 결정)** — 테스트 전송 엔드포인트가 없다.
 - **at-least-once**: 성공 후 tx2 전 크래시 모사 → 재전달(중복 Slack 메시지 수용, `pipeline_id` 로 식별).
 
 ## 12. 링크
