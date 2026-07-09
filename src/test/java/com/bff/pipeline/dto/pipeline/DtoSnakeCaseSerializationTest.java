@@ -168,14 +168,15 @@ class DtoSnakeCaseSerializationTest {
     @Test
     void terraformJobStateDetailSerializesSnakeCase() throws Exception {
         TerraformJobStateDetail detail = new TerraformJobStateDetail(5L, 2, "j-1", "FAILED",
-                "Error: exit status 1", null, 3, Instant.parse("2026-07-02T00:05:00Z"));
+                "Error: exit status 1", null, "{\"terraformState\":\"FAILED\"}", 3,
+                Instant.parse("2026-07-02T00:05:00Z"));
 
         String json = mapper.writeValueAsString(detail);
 
         assertThat(json).contains("\"task_id\":5", "\"attempt_number\":2", "\"job_id\":\"j-1\"",
                 "\"last_state\":\"FAILED\"", "\"last_fail_reason\":\"Error: exit status 1\"", "\"last_error\":null",
-                "\"poll_count\":3", "\"last_polled_at\":");
+                "\"last_response\":", "\"poll_count\":3", "\"last_polled_at\":");
         assertThat(json).doesNotContain("taskId", "attemptNumber", "jobId", "lastState", "lastFailReason",
-                "lastError", "pollCount", "lastPolledAt");
+                "lastError", "lastResponse", "pollCount", "lastPolledAt");
     }
 }

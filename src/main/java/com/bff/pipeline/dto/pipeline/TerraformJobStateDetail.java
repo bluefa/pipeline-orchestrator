@@ -9,7 +9,9 @@ import lombok.Builder;
  * terraform job 하나의 진행-시점 상태 전용 조회 응답이다({@link TerraformJobState}) — task 상세 패널에서 특정 job의
  * 상태를 개별 조회할 때 쓴다. attempt 인라인 요약({@link TerraformJobStateSummary})과 달리 (task, attempt, job)를 함께
  * 실어 응답이 스스로를 식별하게 한다. 기존 terraform result 본문 엔드포인트와 대칭이나, 상태는 무거운 본문이 없어
- * lazy가 아니라 바로 담는다. 와이어 필드는 snake_case로 직렬화한다. 인접 동형 인자가 많아 {@code @Builder}로 만든다.
+ * 상세는 인라인 요약과 달리 무거울 수 있는 응답 원문({@code last_response})까지 담는다 — result 본문 엔드포인트가
+ * 메타는 인라인, 본문은 상세에서만 내주는 것과 같은 결이다. 와이어 필드는 snake_case로 직렬화한다. 인접 동형
+ * 인자가 많아 {@code @Builder}로 만든다.
  */
 @Builder
 public record TerraformJobStateDetail(
@@ -19,6 +21,7 @@ public record TerraformJobStateDetail(
         @JsonProperty("last_state") String lastState,
         @JsonProperty("last_fail_reason") String lastFailReason,
         @JsonProperty("last_error") String lastError,
+        @JsonProperty("last_response") String lastResponse,
         @JsonProperty("poll_count") int pollCount,
         @JsonProperty("last_polled_at") Instant lastPolledAt) {
 
@@ -30,6 +33,7 @@ public record TerraformJobStateDetail(
                 .lastState(state.getLastState())
                 .lastFailReason(state.getLastFailReason())
                 .lastError(state.getLastError())
+                .lastResponse(state.getLastResponse())
                 .pollCount(state.getPollCount())
                 .lastPolledAt(state.getLastPolledAt())
                 .build();

@@ -16,7 +16,6 @@ import com.bff.pipeline.dto.pipeline.TerraformResultDetail;
 import com.bff.pipeline.dto.pipeline.TerraformResultSummary;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
-import com.bff.pipeline.entity.TerraformJobState;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.StatisticsPeriod;
@@ -32,6 +31,7 @@ import com.bff.pipeline.repository.PipelineTaskStatusCount;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.repository.TerraformJobStateMetadata;
 import com.bff.pipeline.repository.TerraformJobStateRepository;
 import com.bff.pipeline.repository.TerraformResultMetadata;
 import com.bff.pipeline.repository.TerraformResultRepository;
@@ -293,10 +293,10 @@ public class PipelineQueryService {
                         Collectors.mapping(TerraformResultSummary::from, Collectors.toList())));
     }
 
-    /** attempt 인라인용 job별 진행-시점 상태를 attempt_number로 접는다 — 본문 없는 경량 행이라 배치 1질의로 로드한다. */
+    /** attempt 인라인용 job별 진행-시점 상태를 attempt_number로 접는다 — 응답 원문 없는 메타 투영이라 원문 I/O를 지불하지 않는다. */
     private Map<Integer, List<TerraformJobStateSummary>> terraformJobStateSummaries(Long taskId) {
-        return terraformJobStates.findByTaskIdOrderByAttemptNumberAscIdAsc(taskId).stream()
-                .collect(Collectors.groupingBy(TerraformJobState::getAttemptNumber,
+        return terraformJobStates.findMetadataByTaskId(taskId).stream()
+                .collect(Collectors.groupingBy(TerraformJobStateMetadata::getAttemptNumber,
                         Collectors.mapping(TerraformJobStateSummary::from, Collectors.toList())));
     }
 

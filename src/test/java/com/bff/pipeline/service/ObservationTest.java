@@ -149,7 +149,8 @@ class ObservationTest {
         assertThat(attempts).allSatisfy(attempt -> {
             assertThat(attempt.getStatus()).isEqualTo(TaskStatus.FAILED);
             assertThat(attempt.getErrorCode()).isEqualTo(ErrorCode.CONDITION_NOT_MET);
-            assertThat(attempt.getResponse()).isEqualTo("{\"met\":false}");   // raw check payload recorded
+            // 타입 DTO가 버리는 detail 필드까지 원문 그대로 task_attempt.response에 실린다(full-body 관측)
+            assertThat(attempt.getResponse()).isEqualTo("{\"met\":false,\"detail\":\"probe\"}");
             assertThat(taskCheckRepository.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
                 assertThat(check.getCallCount()).isEqualTo(1);
                 assertThat(check.getNotMetCount()).isEqualTo(1);
@@ -171,7 +172,8 @@ class ObservationTest {
         TaskAttempt attempt = taskAttemptRepository.findByTaskIdAndAttemptNumber(conditionTaskId, 1).orElseThrow();
         assertThat(attempt.getStatus()).isEqualTo(TaskStatus.DONE);
         assertThat(attempt.getErrorCode()).isNull();
-        assertThat(attempt.getResponse()).isEqualTo("{\"met\":true}");   // raw check payload recorded on the met poll
+        // met 폴의 원문도 여분 필드 포함 full-body 그대로 기록된다
+        assertThat(attempt.getResponse()).isEqualTo("{\"met\":true,\"detail\":\"probe\"}");
         assertThat(taskCheckRepository.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
             assertThat(check.getCallCount()).isEqualTo(1);
             assertThat(check.getLastExternalStatus()).isEqualTo("MET");

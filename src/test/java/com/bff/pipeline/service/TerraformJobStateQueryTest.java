@@ -120,16 +120,19 @@ class TerraformJobStateQueryTest {
     void liveStateIsQueryableWhileTheTaskIsStillInProgress() {
         Pipeline pipeline = creator.create("tjs-live", PipelineType.DELETE);
         infraManagerClient.onDispatch(() -> "[\"job-1\"]");
-        infraManagerClient.onPoll(() -> TerraformPoll.running("APPLYING"));   // 아직 진행 중 — 종결 아님
+        // 아직 진행 중(종결 아님) — 상태 필드로는 안 보이는 원문 body까지 함께 관측된다
+        infraManagerClient.onPoll(() -> TerraformPoll.running("APPLYING")
+                .withResponse("{\"terraformState\":\"APPLYING\",\"id\":7}"));
 
         pipelineWorker.pollOnce();   // dispatch → IN_PROGRESS
         pipelineWorker.pollOnce();   // poll → 아직 running, 종결 전
         long taskId = firstTask(pipeline).getId();
 
-        // 종결 전인데도 job의 마지막 관측 상태가 조회된다 — 이 관찰의 핵심 가치
+        // 종결 전인데도 job의 마지막 관측 상태와 응답 원문이 조회된다 — 이 관찰의 핵심 가치
         assertThat(taskRepository.findById(taskId).orElseThrow().getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
         TerraformJobStateDetail state = queryService.terraformJobState(pipeline.getId(), taskId, 1, "job-1");
         assertThat(state.lastState()).isEqualTo("APPLYING");
+        assertThat(state.lastResponse()).isEqualTo("{\"terraformState\":\"APPLYING\",\"id\":7}");
         assertThat(state.lastError()).isNull();
     }
 

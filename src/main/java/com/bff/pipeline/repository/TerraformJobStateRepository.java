@@ -4,6 +4,7 @@ import com.bff.pipeline.entity.TerraformJobState;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 /**
  * {@link TerraformJobState} 관찰 행의 영속성 계층이다. 엔진 로직은 절대 읽지 않는 쓰기 전용 진단 데이터이며,
@@ -13,9 +14,17 @@ import org.springframework.data.jpa.repository.JpaRepository;
  */
 public interface TerraformJobStateRepository extends JpaRepository<TerraformJobState, Long> {
 
-    /** upsert 가드 + per-job 상태 엔드포인트 — 유니크 키 전체를 지정해 행 하나만 읽는다. */
+    /** upsert 가드 + per-job 상태 엔드포인트 — 유니크 키 전체를 지정해 행 하나(응답 원문 포함)만 읽는다. */
     Optional<TerraformJobState> findByTaskIdAndAttemptNumberAndJobId(Long taskId, int attemptNumber, String jobId);
 
-    /** P5 attempt 인라인 — task의 전 job 상태를 attempt_number로 접어 병합한다. */
-    List<TerraformJobState> findByTaskIdOrderByAttemptNumberAscIdAsc(Long taskId);
+    /** P5 attempt 인라인용 메타 투영 — 응답 원문({@code lastResponse}, TEXT)은 제외해 상세 패널이 그 I/O를 안 낸다. */
+    @Query("""
+            select s.attemptNumber as attemptNumber, s.jobId as jobId, s.lastState as lastState,
+                   s.lastFailReason as lastFailReason, s.lastError as lastError,
+                   s.pollCount as pollCount, s.lastPolledAt as lastPolledAt
+            from TerraformJobState s
+            where s.taskId = :taskId
+            order by s.attemptNumber asc, s.id asc
+            """)
+    List<TerraformJobStateMetadata> findMetadataByTaskId(Long taskId);
 }

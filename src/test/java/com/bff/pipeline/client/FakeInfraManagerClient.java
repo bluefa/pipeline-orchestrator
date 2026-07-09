@@ -88,7 +88,8 @@ public final class FakeInfraManagerClient implements InfraManagerClient {
     @Override
     public ConditionPoll checkCondition(String target, TaskOperation operation) {
         boolean met = check.run();
-        return new ConditionPoll(met, "{\"met\":" + met + "}");
+        // detail은 타입 DTO가 안 읽는 여분 필드다 — full-body 원문이 task_attempt.response까지 관통하는지 검증용.
+        return new ConditionPoll(met, "{\"met\":" + met + ",\"detail\":\"probe\"}");
     }
 
     @Override

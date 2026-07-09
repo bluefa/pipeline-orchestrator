@@ -189,3 +189,25 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
   recorded: admin queries MAY read `terraform_result` (design §4.5) — the write-only invariant is about
   the engine (claim/scheduling/transition), and the body column stays out of list/detail queries via the
   metadata projection (only the P11 single-row endpoint pays the MEDIUMTEXT I/O).
+- R10 (last raw response capture, feat/terraform-job-state-observation): full-body capture of the
+  terraform status response (`terraform_job_state.last_response`, TEXT) and the condition-check response
+  (`task_attempt.response`), via a delegating `@JsonCreator(mode=DELEGATING)` that binds the whole body to
+  `JsonNode`, extracts the typed fields, and keeps `node.toString()` as `raw` — so fields the typed DTO
+  drops survive. Codex 4 rounds → merge-ready. Findings fixed:
+  - **R1 P1 lenient-boolean-coercion (NEW pattern):** `JsonNode.asBoolean()` on a wrong-type `met`
+    (`{"met":"nope"}`) coerces to `false`, turning a malformed external response into a `CONDITION_NOT_MET`
+    business outcome — violating the closed call-failure vocabulary. Fix: accept only `met.isBoolean()`,
+    else `null` → `CallFailed`. **DO flag any `JsonNode.asX()` coercion that turns malformed external data
+    into a business outcome; require a real type-check (`isBoolean`/`isTextual`/...) at trust boundaries.**
+  - **R2 P2 read-path body-in-summary:** the new TEXT `last_response` was hydrated by the inline
+    `job_states[]` summary path — same precedent as R9. Fix: body-less metadata projection
+    (`TerraformJobStateMetadata` + `findMetadataByTaskId`); only the per-job `/state` detail endpoint pays
+    the body I/O.
+  - **R3 P1 judgment-tx column overflow (NEW pattern):** capturing the FULL condition body into
+    `task_attempt.response` (a column written INSIDE the write-back tx2, unlike best-effort observation
+    tables) means a large external body can fail `save`, roll back the completion judgment, and trap the
+    pipeline in a lease-expiry loop. Fix: truncate the condition body to the column limit
+    (`ConditionOperationBinding.RESPONSE_MAX_LENGTH`) before it enters the engine — condition-only; the
+    terraform DISPATCH response (read back to drive polling) is deliberately NOT truncated. **DO flag any
+    NEW unbounded external string routed into a judgment-tx column; bound it (truncate) or move it to a
+    best-effort observation write.**

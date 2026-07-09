@@ -3,6 +3,7 @@ package com.bff.pipeline.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.bff.pipeline.client.condition.ConditionOperationBinding;
 import com.bff.pipeline.client.condition.NetworkReadyBinding;
 import com.bff.pipeline.client.terraform.IdcTerraformType;
 import com.bff.pipeline.client.terraform.TerraformBindingCatalog;
@@ -183,7 +184,7 @@ class InfraManagerFeignAdapterTest {
 
     @Test
     void treatsAMissingConditionFieldAsACallFailure() {
-        InfraManagerFeignAdapter adapter = adapter(stub().withReady(new NetworkReadyResponse(null)));
+        InfraManagerFeignAdapter adapter = adapter(stub().withReady(new NetworkReadyResponse(null, "{}")));
 
         assertThatThrownBy(() -> adapter.checkCondition("target-a", TaskOperation.NETWORK_READY))
                 .isInstanceOf(CallFailedException.class);
@@ -191,11 +192,21 @@ class InfraManagerFeignAdapterTest {
 
     @Test
     void returnsTheConditionOutcome() {
-        InfraManagerFeignAdapter met = adapter(stub().withReady(new NetworkReadyResponse(true)));
-        InfraManagerFeignAdapter notMet = adapter(stub().withReady(new NetworkReadyResponse(false)));
+        InfraManagerFeignAdapter met = adapter(stub().withReady(new NetworkReadyResponse(true, "{\"met\":true}")));
+        InfraManagerFeignAdapter notMet = adapter(stub().withReady(new NetworkReadyResponse(false, "{\"met\":false}")));
 
         assertThat(met.checkCondition("target-a", TaskOperation.NETWORK_READY).met()).isTrue();
         assertThat(notMet.checkCondition("target-a", TaskOperation.NETWORK_READY).met()).isFalse();
+    }
+
+    @Test
+    void clampsAnOverlongConditionBodyToTheColumnLimit() {
+        // task_attempt.response는 완료 판정 tx 안에서 써지므로, 컬럼(TEXT)을 넘는 body는 판정을 깨지 않게 잘려야 한다.
+        String huge = "x".repeat(ConditionOperationBinding.RESPONSE_MAX_LENGTH + 5000);
+        InfraManagerFeignAdapter adapter = adapter(stub().withReady(new NetworkReadyResponse(true, huge)));
+
+        assertThat(adapter.checkCondition("target-a", TaskOperation.NETWORK_READY).response())
+                .hasSize(ConditionOperationBinding.RESPONSE_MAX_LENGTH);
     }
 
     @Test
@@ -219,7 +230,7 @@ class InfraManagerFeignAdapterTest {
     private InfraManagerFeignAdapter adapter(StubFeignClient stub) {
         InfraManagerOperationRegistry registry = new InfraManagerOperationRegistry(
                 TerraformBindingCatalog.rows(stub),
-                List.of(new NetworkReadyBinding(stub, objectMapper)));
+                List.of(new NetworkReadyBinding(stub)));
         return new InfraManagerFeignAdapter(stub, registry, objectMapper);
     }
 
@@ -231,8 +242,10 @@ class InfraManagerFeignAdapterTest {
         return Arrays.stream(ids).mapToObj(DispatchedJob::new).toList();
     }
 
+    // raw는 여기선 null로 둔다 — 이 단위 테스트는 state→poll 정규화만 검증하고, 응답 원문 캡처는 실 디코더를
+    // 관통하는 InfraManagerFeignIntegrationTest가 확인한다(withResponse(null)이라 정규화 폴과 그대로 같다).
     private static TerraformJobStatusResponse status(String state) {
-        return new TerraformJobStatusResponse(state, null);
+        return new TerraformJobStatusResponse(state, null, null);
     }
 
     /**

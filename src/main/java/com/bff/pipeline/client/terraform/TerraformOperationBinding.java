@@ -58,8 +58,13 @@ public interface TerraformOperationBinding {
             throw new CallFailedException("InfraManager returned an incomplete status for job " + jobId);
         }
         String state = status.terraformState();
+        // 판정은 terminal 세 값만 해석하지만, 관찰용 원문(response)은 어느 상태든 그대로 실어 진행-시점 가시성을 남긴다.
+        return normalize(state, jobType, status.failReason()).withResponse(status.raw());
+    }
+
+    private static TerraformPoll normalize(String state, TerraformJobType jobType, String failReason) {
         if (TerraformJobType.FAILED_STATE.equals(state)) {
-            return TerraformPoll.failure(state, status.failReason());
+            return TerraformPoll.failure(state, failReason);
         }
         if (jobType.successState().equals(state)) {
             return TerraformPoll.success(state);

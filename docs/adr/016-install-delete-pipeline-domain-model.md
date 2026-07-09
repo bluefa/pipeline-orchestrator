@@ -266,7 +266,9 @@ completion `check` — nothing else; `task_check` and `terraform_result` are wri
   **is** one attempt (`call_count = 1`), so a row is inserted per poll (bounded by `maxFailCount`)
   and its count columns are degenerate (0/1, mirroring the attempt's outcome); the row is kept for
   **one schema and one completion-check code path across both kinds**, carrying the poll's typed
-  outcome (`last_external_status`) while the raw payload stays in `task_attempt.response`. The
+  outcome (`last_external_status`) while the **full check response body** (every field, preserved
+  verbatim as compact JSON, truncated to the `task_attempt.response` `TEXT` limit so a large body
+  cannot break the write-back tx) stays in `task_attempt.response`, overwritten each poll (its last value). The
   not-met-vs-error breakdown for a condition is therefore a **cross-row diagnostic aggregate**
   (summing the per-poll rows), distinct from the completion `check`, which reads only the latest
   `task_attempt` row and never `task_check` (invariant #1).
@@ -285,11 +287,13 @@ completion `check` — nothing else; `task_check` and `terraform_result` are wri
   (design: [terraform-client-and-postcheck-design.md](../terraform-client-and-postcheck-design.md) §4.4).
 
 - `terraform_job_state(id, task_id, attempt_number, job_id, last_state, last_fail_reason,
-  last_error, poll_count, last_polled_at)` — the in-progress (poll-time) observation: while a
+  last_error, last_response, poll_count, last_polled_at)` — the in-progress (poll-time) observation: while a
   `TERRAFORM_JOB` attempt polls its jobs, each observed job's row is UPSERTed in place every poll,
   carrying the raw un-normalized `terraformState` (`last_state`), the status response's failure
-  reason when a job is FAILED (`last_fail_reason`), and the poll call's own error when the status
-  call itself fails (`last_error`). Like `terraform_result` it is written in the **run phase —
+  reason when a job is FAILED (`last_fail_reason`), the poll call's own error when the status
+  call itself fails (`last_error`), and the **full status response body** of the last good poll
+  (`last_response`, `TEXT` — every field the typed status DTO drops, preserved verbatim as compact
+  JSON; a poll-call failure keeps the prior body). Like `terraform_result` it is written in the **run phase —
   outside the guarded tx2** and keyed `(task_id, attempt_number, job_id)`
   (`uq_terraform_job_state`), so re-poll (crash / lease-expiry reclaim) upserts the same row
   idempotently; `poll_count` is a best-effort counter (a re-run may over-count) while the state

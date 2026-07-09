@@ -35,11 +35,15 @@ public class TerraformJobStateRecorder {
         this.clock = clock;
     }
 
-    /** 정상 폴 1회의 job 상태를 upsert한다 — 원시 상태·실패 사유를 최신값으로 덮고, 이 폴엔 호출 오류가 없으니 {@code lastError}를 지운다. */
+    /**
+     * 정상 폴 1회의 job 상태를 upsert한다 — 원시 상태·실패 사유·응답 원문을 최신값으로 덮고, 이 폴엔 호출 오류가
+     * 없으니 {@code lastError}를 지운다. 원문(response)은 TEXT 컬럼이라 clamp하지 않는다.
+     */
     public void recordObserved(Task task, TaskAttempt attempt, String jobId, TerraformPoll poll) {
         upsert(task, attempt, jobId, row -> {
             row.setLastState(clamp(poll.state(), TerraformJobState.STATE_LENGTH));
             row.setLastFailReason(clamp(poll.failReason(), TerraformJobState.DETAIL_LENGTH));
+            row.setLastResponse(poll.response());
             row.setLastError(null);
         });
     }

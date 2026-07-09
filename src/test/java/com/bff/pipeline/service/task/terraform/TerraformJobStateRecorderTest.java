@@ -86,6 +86,19 @@ class TerraformJobStateRecorderTest {
     }
 
     @Test
+    void recordsTheResponseBodyAndKeepsItAcrossACallError() {
+        recorder().recordObserved(task(42L), attempt(1), "job-1",
+                TerraformPoll.running("APPLYING").withResponse("{\"terraformState\":\"APPLYING\",\"id\":7}"));
+        recorder().recordCallError(task(42L), attempt(1), "job-1", "infra-manager call failed: 503");
+
+        assertThat(repository.findAll()).singleElement().satisfies(row -> {
+            // 원문은 마지막 정상 폴 것을 유지한다 — 호출 실패 turn은 body를 못 받으므로 직전 원문을 보존한다.
+            assertThat(row.getLastResponse()).isEqualTo("{\"terraformState\":\"APPLYING\",\"id\":7}");
+            assertThat(row.getLastError()).isEqualTo("infra-manager call failed: 503");
+        });
+    }
+
+    @Test
     void clampsOverlongExternalTextToColumnLengths() {
         recorder().recordObserved(task(42L), attempt(1), "job-1",
                 TerraformPoll.failure("F".repeat(40), "r".repeat(600)));

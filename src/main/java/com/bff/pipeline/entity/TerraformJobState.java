@@ -74,6 +74,13 @@ public class TerraformJobState {
     @Column(name = "last_error", length = DETAIL_LENGTH)
     private String lastError;
 
+    /**
+     * 마지막 정상 폴이 받은 status 응답 body 전문(compact JSON, 전 필드 보존). 상태 필드로는 안 보이는 원본
+     * 진단값을 담는다. status 본문은 512를 넘을 수 있어 TEXT로 둔다(terraform_result.result와 같은 결). 폴 호출
+     * 자체가 실패한 turn은 직전 원문을 유지한다. 첫 폴이 호출 실패면 null일 수 있다. */
+    @Column(name = "last_response", columnDefinition = "TEXT")
+    private String lastResponse;
+
     @Column(name = "poll_count", nullable = false)
     private int pollCount;
 
