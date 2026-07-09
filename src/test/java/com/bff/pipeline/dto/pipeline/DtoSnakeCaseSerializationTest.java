@@ -2,10 +2,6 @@ package com.bff.pipeline.dto.pipeline;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.bff.pipeline.dto.ChannelUpsert;
-import com.bff.pipeline.dto.ChannelView;
-import com.bff.pipeline.dto.NotifyHealthView;
-import com.bff.pipeline.dto.TestResult;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.PipelineStatus;
@@ -149,52 +145,6 @@ class DtoSnakeCaseSerializationTest {
         assertThat(json).doesNotContain("attemptNumber", "errorCode", "failureDetail", "callCount", "notMetCount",
                 "apiErrorCount", "lastExternalStatus", "lastCheckedAt", "terraformResults", "hasBody",
                 "resultPath");
-    }
-
-    @Test
-    void channelUpsertSerializesSnakeCase() throws Exception {
-        ChannelUpsert upsert = new ChannelUpsert("#infra-alerts", true,
-                "https://hooks.slack.com/services/T0001/B0002/token");
-
-        String json = mapper.writeValueAsString(upsert);
-
-        assertThat(json).contains("\"channel_label\":\"#infra-alerts\"", "\"enabled\":true",
-                "\"slack_webhook_url\":");
-        assertThat(json).doesNotContain("channelLabel", "slackWebhookUrl");
-    }
-
-    @Test
-    void channelViewSerializesSnakeCase() throws Exception {
-        String json = mapper.writeValueAsString(ChannelView.builder()
-                .channelLabel("#infra-alerts").enabled(true).webhookConfigured(true)
-                .webhookMasked("https://hooks.slack.com/…/xxxx")
-                .updatedAt(Instant.parse("2026-07-09T00:00:00Z")).build());
-
-        assertThat(json).contains("\"channel_label\":\"#infra-alerts\"", "\"enabled\":true",
-                "\"webhook_configured\":true", "\"webhook_masked\":", "\"updated_at\":");
-        assertThat(json).doesNotContain("channelLabel", "webhookConfigured", "webhookMasked", "updatedAt");
-    }
-
-    @Test
-    void testResultSerializesSnakeCase() throws Exception {
-        String json = mapper.writeValueAsString(new TestResult(false, "channel not configured"));
-
-        assertThat(json).contains("\"delivered\":false", "\"error\":\"channel not configured\"");
-    }
-
-    @Test
-    void notifyHealthViewSerializesSnakeCase() throws Exception {
-        String json = mapper.writeValueAsString(NotifyHealthView.builder()
-                .giveUpCount(2)
-                .oldestUnnotifiedAt(Instant.parse("2026-07-09T00:00:00Z"))
-                .oldestDeliveryPendingAt(Instant.parse("2026-07-09T00:05:00Z"))
-                .channelActive(true)
-                .build());
-
-        assertThat(json).contains("\"give_up_count\":2", "\"oldest_unnotified_at\":",
-                "\"oldest_delivery_pending_at\":", "\"channel_active\":true");
-        assertThat(json).doesNotContain("giveUpCount", "oldestUnnotifiedAt", "oldestDeliveryPendingAt",
-                "channelActive");
     }
 
     @Test

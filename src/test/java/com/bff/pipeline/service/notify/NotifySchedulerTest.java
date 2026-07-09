@@ -1,6 +1,7 @@
 package com.bff.pipeline.service.notify;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import ch.qos.logback.classic.Level;
@@ -9,7 +10,6 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.bff.pipeline.config.NotifySettings;
 import com.bff.pipeline.dto.NotifyPayload;
-import com.bff.pipeline.entity.NotificationChannel;
 import com.bff.pipeline.model.NotifyClaim;
 import com.bff.pipeline.repository.NotifyRepository;
 import java.lang.reflect.Proxy;
@@ -23,18 +23,21 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 /**
  * {@link NotifyScheduler}의 순수 로직 단위 테스트다({@code PipelineSchedulerTest} 스타일 — 스케줄러 스레드
- * 기동 없이 {@code deliverOne}/{@code nextDelay}/{@code runSweep}을 직접 호출한다). 채널 gate(미설정/비활성이면
- * claim 0건), 성공/실패의 write-back 라우팅(실패는 sweep을 죽이지 않고 backoff 기록으로 흡수), 실패 WARN의
- * 구조화 필드(attempt = write-back 반환값, fencing no-op면 stale-no-op — 구현 명세 §7 MUST 필드), give-up
- * 경보 폴링(주기당 1회 countGivenUp 조회 + 0 초과면 ERROR 로그 — Logback ListAppender로 캡처 단언), 빈
- * sweep의 geometric idle backoff와 일감 발견 시 리셋을 검증한다. 협력자는 이 repo 규약대로 fake로 대체한다
- * — NotifyRepository는 인터페이스라 countGivenUp만 응답하는 JDK Proxy fake를 쓴다.
+ * 기동 없이 {@code deliverOne}/{@code nextDelay}/{@code runSweep}을 직접 호출한다). 채널 gate(=start의
+ * enabled 가드 — disabled면 loop 자체를 올리지 않는다; 오너 결정 2026-07-09의 env 채널), 전달 webhook이
+ * 설정({@code settings.slackWebhookUrl()})에서 나오는 것, 성공/실패의 write-back 라우팅(실패는 sweep을
+ * 죽이지 않고 backoff 기록으로 흡수), 실패 WARN의 구조화 필드(attempt = write-back 반환값, fencing no-op면
+ * stale-no-op — 구현 명세 §7 MUST 필드), give-up 경보 폴링(주기당 1회 countGivenUp 조회 + 0 초과면 ERROR
+ * 로그 — Logback ListAppender로 캡처 단언), 빈 sweep의 geometric idle backoff와 일감 발견 시 리셋을
+ * 검증한다. 협력자는 이 repo 규약대로 fake로 대체한다 — NotifyRepository는 인터페이스라 countGivenUp만
+ * 응답하는 JDK Proxy fake를 쓴다.
  */
 class NotifySchedulerTest {
 
@@ -43,23 +46,36 @@ class NotifySchedulerTest {
     private static final String WEBHOOK_URL = "https://hooks.slack.com/services/T0001/B0002/token";
 
     @Test
-    void anInactiveChannelGateIdlesWithoutClaiming() {
-        NotifyScheduler scheduler = scheduler(claimerNeverCalled(), recordingSlackNotifier(),
-                new RecordingWriteBack(), channelGate(Optional.empty()));
+    void aDisabledMasterSwitchNeverSchedulesTheLoop() {
+        NotifyScheduler scheduler = new NotifyScheduler(claimerNeverCalled(), recordingSlackNotifier(),
+                new RecordingWriteBack(), null, disabledSettings(), CLOCK);
 
-        assertThat(scheduler.deliverOne()).isFalse();   // claim 시도 자체가 없어야 한다(claimerNeverCalled가 보증)
+        // 종료된 executor에 schedule하면 RejectedExecutionException이 난다 — enabled 가드가 그 전에
+        // 끊어야(loop 미기동 = 채널 gate) start가 조용히 돌아온다. 아래 enabled 케이스가 대조군이다.
+        scheduler.stop();
+        assertThatCode(scheduler::start).doesNotThrowAnyException();
     }
 
     @Test
-    void aSuccessfulDeliveryIsRoutedToOnSuccess() {
+    void anEnabledMasterSwitchSchedulesTheLoop() {
+        NotifyScheduler scheduler = scheduler(claimerNeverCalled(), recordingSlackNotifier(),
+                new RecordingWriteBack());
+
+        scheduler.stop();
+        assertThatThrownBy(scheduler::start).isInstanceOf(RejectedExecutionException.class);
+    }
+
+    @Test
+    void aSuccessfulDeliveryGoesToTheConfiguredWebhookAndIsRoutedToOnSuccess() {
         RecordingSlackNotifier slackNotifier = recordingSlackNotifier();
         RecordingWriteBack writeBack = new RecordingWriteBack();
         NotifyScheduler scheduler = scheduler(
                 claimerYielding(new NotifyClaim(42L, "claim-token-42", payload(42L))),
-                slackNotifier, writeBack, channelGate(Optional.of(configuredChannel())));
+                slackNotifier, writeBack);
 
         assertThat(scheduler.deliverOne()).isTrue();
 
+        // webhook은 채널 조회 없이 settings.slackWebhookUrl()에서 그대로 나온다
         assertThat(slackNotifier.deliveredTo).containsExactly(WEBHOOK_URL + "#42");
         assertThat(writeBack.successes).containsExactly("42:claim-token-42");
         assertThat(writeBack.failures).isEmpty();
@@ -71,7 +87,7 @@ class NotifySchedulerTest {
         NotifyScheduler scheduler = scheduler(
                 claimerYielding(new NotifyClaim(42L, "claim-token-42", payload(42L))),
                 failingSlackNotifier(new IllegalStateException("slack 5xx")),
-                writeBack, channelGate(Optional.of(configuredChannel())));
+                writeBack);
         ListAppender<ILoggingEvent> capturedLogs = attachListAppender();
         try {
             assertThat(scheduler.deliverOne()).isTrue();    // 실패해도 "일감이 있었다" — 케이던스는 pollInterval 유지
@@ -93,7 +109,7 @@ class NotifySchedulerTest {
         NotifyScheduler scheduler = scheduler(
                 claimerYielding(new NotifyClaim(42L, "claim-token-42", payload(42L))),
                 failingSlackNotifier(new IllegalStateException("slack 5xx")),
-                writeBack, channelGate(Optional.of(configuredChannel())));
+                writeBack);
         ListAppender<ILoggingEvent> capturedLogs = attachListAppender();
         try {
             assertThat(scheduler.deliverOne()).isTrue();
@@ -120,7 +136,7 @@ class NotifySchedulerTest {
         };
         NotifyScheduler scheduler = scheduler(
                 claimerYielding(new NotifyClaim(42L, "claim-token-42", payload(42L))),
-                recordingSlackNotifier(), writeBack, channelGate(Optional.of(configuredChannel())));
+                recordingSlackNotifier(), writeBack);
 
         // 전달은 성공했다 — write-back 실패는 attempts를 태우지 않고 runSweep의 loop-survival WARN으로 전파된다
         // (lease가 남아 만료 후 재claim → at-least-once 중복 수용, ADR-022 §2 "전달 실패" 한정)
@@ -129,9 +145,9 @@ class NotifySchedulerTest {
     }
 
     @Test
-    void anEmptyClaimWithAnActiveChannelIsAnIdleSweep() {
+    void anEmptyClaimIsAnIdleSweep() {
         NotifyScheduler scheduler = scheduler(claimerYielding(), recordingSlackNotifier(),
-                new RecordingWriteBack(), channelGate(Optional.of(configuredChannel())));
+                new RecordingWriteBack());
 
         assertThat(scheduler.deliverOne()).isFalse();
     }
@@ -140,8 +156,7 @@ class NotifySchedulerTest {
     void theGiveUpAlertPollsOncePerIntervalAndRaisesAnErrorLog() {
         AtomicInteger givenUpQueryCount = new AtomicInteger();
         NotifyScheduler scheduler = scheduler(claimerYielding(), recordingSlackNotifier(),
-                new RecordingWriteBack(), channelGate(Optional.empty()),
-                givenUpCountingRepository(3, givenUpQueryCount));
+                new RecordingWriteBack(), givenUpCountingRepository(3, givenUpQueryCount));
         scheduler.stop();   // 종료된 loop → runSweep이 후속 sweep을 재예약하지 않아 직접 호출이 결정적이다
         ListAppender<ILoggingEvent> capturedLogs = attachListAppender();
         try {
@@ -160,8 +175,7 @@ class NotifySchedulerTest {
     void aZeroGiveUpBacklogPollsWithoutRaisingAnErrorLog() {
         AtomicInteger givenUpQueryCount = new AtomicInteger();
         NotifyScheduler scheduler = scheduler(claimerYielding(), recordingSlackNotifier(),
-                new RecordingWriteBack(), channelGate(Optional.empty()),
-                givenUpCountingRepository(0, givenUpQueryCount));
+                new RecordingWriteBack(), givenUpCountingRepository(0, givenUpQueryCount));
         scheduler.stop();
         ListAppender<ILoggingEvent> capturedLogs = attachListAppender();
         try {
@@ -177,7 +191,7 @@ class NotifySchedulerTest {
     @Test
     void emptySweepsGrowGeometricallyCapAtMaxIdleSleepAndResetOnWork() {
         NotifyScheduler scheduler = scheduler(claimerYielding(), recordingSlackNotifier(),
-                new RecordingWriteBack(), channelGate(Optional.empty()));
+                new RecordingWriteBack());
 
         assertThat(scheduler.nextDelay(false)).isEqualTo(Duration.ofSeconds(2));   // base 1s × 2
         assertThat(scheduler.nextDelay(false)).isEqualTo(Duration.ofSeconds(4));
@@ -199,30 +213,35 @@ class NotifySchedulerTest {
                 .callTimeout(Duration.ofSeconds(10))
                 .maxAttempts(8)
                 .schedulerInitialDelay(Duration.ofSeconds(10))
+                .slackWebhookUrl(WEBHOOK_URL)
+                .enabledAfter(NOW)
+                .build();
+    }
+
+    /** master switch off — enabled=false면 webhook/enabledAfter 없이도 유효하다(NotifySettings 조건부 필수). */
+    private static NotifySettings disabledSettings() {
+        return NotifySettings.builder()
+                .enabled(false)
+                .pollInterval(Duration.ofSeconds(2))
+                .maxIdleSleep(Duration.ofSeconds(8))
+                .backoffBase(Duration.ofSeconds(1))
+                .backoffMax(Duration.ofMinutes(10))
+                .jitterRatio(0.0)
+                .leaseDuration(Duration.ofMinutes(1))
+                .callTimeout(Duration.ofSeconds(10))
+                .maxAttempts(8)
+                .schedulerInitialDelay(Duration.ofSeconds(10))
                 .build();
     }
 
     private NotifyScheduler scheduler(NotifyClaimer claimer, SlackNotifier slackNotifier,
-            NotifyWriteBack writeBack, NotificationChannelService channels) {
-        return scheduler(claimer, slackNotifier, writeBack, channels, null);
+            NotifyWriteBack writeBack) {
+        return scheduler(claimer, slackNotifier, writeBack, null);
     }
 
     private NotifyScheduler scheduler(NotifyClaimer claimer, SlackNotifier slackNotifier,
-            NotifyWriteBack writeBack, NotificationChannelService channels, NotifyRepository notifyRepository) {
-        return new NotifyScheduler(claimer, slackNotifier, writeBack, channels, notifyRepository, settings(), CLOCK);
-    }
-
-    private static NotificationChannelService channelGate(Optional<NotificationChannel> channel) {
-        return new NotificationChannelService(null, null, null, null) {
-            @Override public Optional<NotificationChannel> activeChannel() {
-                return channel;
-            }
-        };
-    }
-
-    private static NotificationChannel configuredChannel() {
-        return NotificationChannel.builder()
-                .id(NotificationChannel.SINGLETON_ID).slackWebhookUrl(WEBHOOK_URL).enabled(true).build();
+            NotifyWriteBack writeBack, NotifyRepository notifyRepository) {
+        return new NotifyScheduler(claimer, slackNotifier, writeBack, notifyRepository, settings(), CLOCK);
     }
 
     private static NotifyClaimer claimerYielding(NotifyClaim... claims) {
@@ -237,7 +256,7 @@ class NotifySchedulerTest {
     private static NotifyClaimer claimerNeverCalled() {
         return new NotifyClaimer(null, null, null, null) {
             @Override public Optional<NotifyClaim> claimOne() {
-                throw new AssertionError("채널 gate가 닫혀 있으면 claim을 시도하면 안 된다");
+                throw new AssertionError("loop가 기동되지 않는 시나리오에서 claim을 시도하면 안 된다");
             }
         };
     }

@@ -13,6 +13,12 @@
 > orchestrator 리포에 동기화**하면 상대 링크가 그 체크아웃에서 해석된다. 근거 문서 없이도
 > 이 명세만으로 구현 가능하도록 핵심 결정은 본문에 내재화했다.
 
+> **구현 노트(pipeline-orchestrator, 2026-07-09, 오너 결정)**: §2.2/§6의 admin 채널 관리
+> (notification_channel 테이블·REST·마스킹·SSRF·테스트 전송)는 구현하지 않는다 — webhook은
+> env var(`PIPELINE_NOTIFY_SLACK_WEBHOOK_URL`)로 주입하고 enable/disable은 재시작으로 반영한다.
+> 롤아웃 컷오프는 §5(ADR) 대안인 활성 컷오프 술어(`pipeline.notify.enabled-after`)를 채택.
+> §7의 두 age 쿼리는 소비 표면(actuator/admin)이 생길 때 재도입.
+
 ## 0. 범위와 원칙 (작게 시작)
 
 - **sink = Slack 하나**(V1 단일 논리 sink). Slack Incoming Webhook URL로 POST.

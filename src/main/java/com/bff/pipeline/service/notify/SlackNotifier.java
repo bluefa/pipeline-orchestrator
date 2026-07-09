@@ -16,7 +16,7 @@ import org.springframework.web.client.RestClientException;
  * 인터페이스 추상화 없이 구체 클래스다(YAGNI — 다중 sink가 필요해지면 그때 추출한다). HTTP 호출 상한은
  * {@code notifyRestClient} 빈의 connect/read 타임아웃({@code pipeline.notify.call-timeout})이 소유하므로
  * 별도 스레드풀이 없다. 비2xx/타임아웃/IO 실패는 {@code RestClientException}으로 던져지고, 호출자
- * (NotifyScheduler·admin test 엔드포인트)가 잡아 backoff 또는 probe 결과로 처리한다.
+ * ({@code NotifyScheduler})가 잡아 backoff로 처리한다.
  *
  * 메시지 형식(간단한 텍스트 + attachment): DONE → :white_check_mark:/good, FAILED → :x:/danger
  * (+failed_task/error_code 필드), CANCELLED → :no_entry:/warning. pipeline_id는 항상 본문에 포함한다 —
@@ -25,8 +25,6 @@ import org.springframework.web.client.RestClientException;
  */
 @Component
 public class SlackNotifier {
-
-    private static final String TEST_MESSAGE = ":bell: PII 파이프라인 알림 채널 테스트 메시지";
 
     private final RestClient notifyRestClient;
 
@@ -37,11 +35,6 @@ public class SlackNotifier {
     /** 종단 알림 전달. 실패(비2xx/타임아웃/IO)면 예외 → 호출자(NotifyScheduler)가 잡아 backoff 기록. */
     public void deliver(String webhookUrl, NotifyPayload payload) {
         post(webhookUrl, toSlackMessage(payload));
-    }
-
-    /** admin 테스트 전송 — 실제 pipeline 없이 고정 메시지. */
-    public void deliverTest(String webhookUrl) {
-        post(webhookUrl, Map.of("text", TEST_MESSAGE));
     }
 
     private void post(String webhookUrl, Object message) {

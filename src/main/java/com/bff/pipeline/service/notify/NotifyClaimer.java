@@ -19,8 +19,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * notify claim 트랜잭션 — 알림 가능한 종단·미알림 pipeline 하나를 SKIP LOCKED로 잡아 notify 전용 fencing
- * token과 lease({@code notify_claimed_by/until})를 찍는다(ADR-022 §2). payload는 행이 로드된 같은 claim
- * 트랜잭션 안에서 이미 커밋된 pipeline/task 행만 읽어 구성한다 — 도메인 상태는 어떤 것도 바꾸지 않는다.
+ * token과 lease({@code notify_claimed_by/until})를 찍는다(ADR-022 §2). claim 술어에는 설정의 도입 시점
+ * 컷오프({@code settings.enabledAfter()}, ADR-022 §5 대안)를 넘긴다 — 그 이전에 종단된 레거시 행은 알림
+ * 범위 밖이다. payload는 행이 로드된 같은 claim 트랜잭션 안에서 이미 커밋된 pipeline/task 행만 읽어
+ * 구성한다 — 도메인 상태는 어떤 것도 바꾸지 않는다.
  *
  * 실행과의 격리(중요): notify는 {@code notify_claimed_by/until}만 쓰고 실행의 {@code claimed_by/until}은
  * 건드리지 않는다. 실행의 admission soft-cap은 {@code countByClaimedUntilAfter}로 활성 lease를 상태 무관하게
@@ -53,7 +55,7 @@ public class NotifyClaimer {
     @Transactional
     public Optional<NotifyClaim> claimOne() {
         Instant now = clock.instant();
-        return notifyRepository.findNextNotifiable(now, settings.maxAttempts())
+        return notifyRepository.findNextNotifiable(now, settings.maxAttempts(), settings.enabledAfter())
                 .map(pipeline -> {
                     String token = UUID.randomUUID().toString();
                     pipeline.setNotifyClaimedBy(token);

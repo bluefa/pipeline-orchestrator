@@ -9,7 +9,6 @@ import java.util.Optional;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
-import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.query.Param;
@@ -17,14 +16,19 @@ import org.springframework.data.repository.query.Param;
 /**
  * ADR-022 종단 상태 알림의 claim·지표 질의 계층이다. 실행 claim({@link PipelineRepository})과 같은
  * {@link Pipeline} 행을 보되 술어가 다른 별도 work-kind다 — 종단 3상태(DONE/FAILED/CANCELLED)이면서
- * 미알림({@code notified_at is null})이고, give-up 임계({@code notify_attempts < maxAttempts}) 아래이며,
- * backoff 게이트({@code notify_next_at})와 notify lease({@code notify_claimed_until}) 게이트가 열린 행만 집는다.
+ * 미알림({@code notified_at is null})이고, 도입 컷오프({@code last_activity_at >= enabledAfter}) 이후이며,
+ * give-up 임계({@code notify_attempts < maxAttempts}) 아래이고, backoff 게이트({@code notify_next_at})와
+ * notify lease({@code notify_claimed_until}) 게이트가 열린 행만 집는다.
  *
  * claim은 {@code PipelineRepository}의 claim 패턴을 그대로 따른다 — {@code PESSIMISTIC_WRITE} +
  * lock-timeout {@code -2} 힌트는 MySQL 8에서 {@code FOR UPDATE SKIP LOCKED}로 렌더링되고 H2에서는 무시된다.
  * write-back 트랜잭션의 행 잠금은 기존 {@link PipelineRepository#findByIdForUpdate}를 재사용하므로 여기에
  * 중복 정의하지 않는다. {@code :now}는 주입된 앱 Clock 시각이다(DB now()와 섞지 않는다 — lease 만료·재시도
  * due 판정이 한 시계 기준이어야 한다).
+ *
+ * spec 편차(구현 명세 §7): 두 age 지표 쿼리(oldestUnnotifiedAt/oldestDeliveryPending)는 두지 않는다 —
+ * 소비 표면(admin health/actuator)이 오너 결정(2026-07-09)으로 제거돼 dead code가 되므로, actuator를
+ * 도입할 때 재도입한다. give-up 경보의 정규 소스인 {@link #countGivenUp}은 스케줄러 폴링이 소비하므로 남긴다.
  */
 public interface NotifyRepository extends JpaRepository<Pipeline, Long> {
 
@@ -32,14 +36,18 @@ public interface NotifyRepository extends JpaRepository<Pipeline, Long> {
      * claim 트랜잭션의 진입 질의 — 알림 가능한 종단·미알림 행 하나를 SKIP LOCKED로 잠가 가져온다(없으면 empty).
      * JPQL엔 LIMIT 문법이 없어 개수 제한을 {@link Limit}로 넘기고 그 결과(최대 1건)를 단건으로 좁힌다.
      */
-    default Optional<Pipeline> findNextNotifiable(Instant now, int maxAttempts) {
-        return lockNotifiable(now, maxAttempts, Limit.of(1)).stream().findFirst();
+    default Optional<Pipeline> findNextNotifiable(Instant now, int maxAttempts, Instant enabledAfter) {
+        return lockNotifiable(now, maxAttempts, enabledAfter, Limit.of(1)).stream().findFirst();
     }
 
     /**
      * 알림 가능 행 잠금 질의. {@code notifyAttempts < :maxAttempts}가 give-up 행의 재클레임을 막는 1차
-     * 안전장치다(far-future {@code notify_next_at} 값에 의존하지 않는다). 정렬은 {@code notify_next_at} 오름차순
-     * (NULL 선두 — 신규 종단이 먼저) + {@code id} 오름차순의 결정적 tie-break다.
+     * 안전장치다(far-future {@code notify_next_at} 값에 의존하지 않는다).
+     * {@code lastActivityAt >= :enabledAfter}는 알림 도입 시점 컷오프다(ADR-022 §5 대안: 활성 컷오프 술어) —
+     * 종단 행은 terminalize 후 다시 쓰이지 않아 lastActivityAt이 곧 종단 시각이므로(ADR-021 불변식), 도입
+     * 전에 종단된 레거시 행을 backfill 마이그레이션 없이 알림 범위 밖으로 뺀다(소급 발화 폭주 방지 —
+     * 이 술어가 상시 유지돼야 하는 이유). 정렬은 {@code notify_next_at} 오름차순(NULL 선두 — 신규 종단이
+     * 먼저) + {@code id} 오름차순의 결정적 tie-break다.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
@@ -48,40 +56,13 @@ public interface NotifyRepository extends JpaRepository<Pipeline, Long> {
             + "com.bff.pipeline.enums.PipelineStatus.FAILED, "
             + "com.bff.pipeline.enums.PipelineStatus.CANCELLED) "
             + "and p.notifiedAt is null "
+            + "and p.lastActivityAt >= :enabledAfter "
             + "and p.notifyAttempts < :maxAttempts "
             + "and (p.notifyNextAt is null or p.notifyNextAt <= :now) "
             + "and (p.notifyClaimedUntil is null or p.notifyClaimedUntil < :now) "
             + "order by p.notifyNextAt asc, p.id asc")
-    List<Pipeline> lockNotifiable(@Param("now") Instant now, @Param("maxAttempts") int maxAttempts, Limit limit);
-
-    /**
-     * 지표 1: terminal_notification_backlog_age — 비활성 채널 backlog까지 포함한 총 미알림 age의 기준 시각.
-     * min(lastActivityAt)을 종단 시각으로 쓰는 건, 종단 행은 terminalize 후 다시 쓰이지 않아(ADR-021 불변식)
-     * lastActivityAt == 종단 시각이 되기 때문이다(그때만 유효). give-up 행({@code notifyAttempts >= maxAttempts})은
-     * notifiedAt이 영원히 null이라 age를 무한 오염하므로 제외한다(ADR-022 §4) — give-up은 별도로
-     * {@link #countGivenUp}으로 감시한다.
-     */
-    @Query("select min(p.lastActivityAt) from Pipeline p "
-            + "where p.status in (com.bff.pipeline.enums.PipelineStatus.DONE, "
-            + "com.bff.pipeline.enums.PipelineStatus.FAILED, "
-            + "com.bff.pipeline.enums.PipelineStatus.CANCELLED) "
-            + "and p.notifiedAt is null "
-            + "and p.notifyAttempts < :maxAttempts")
-    Optional<Instant> oldestUnnotifiedAt(@Param("maxAttempts") int maxAttempts);
-
-    /**
-     * 지표 2: notify_delivery_pending_age — "전달 정체" age의 기준 시각. backlog과 달리 due 행만 본다
-     * (미도래 backoff 행 제외) — 건강한 재시도 대기를 전달 막힘으로 오인하지 않게 한다. 이 쿼리를 V1부터 쓰고,
-     * 경보는 활성 채널일 때만 평가한다(비활성 시 suppress; ADR-022 §4).
-     */
-    @Query("select min(p.lastActivityAt) from Pipeline p "
-            + "where p.status in (com.bff.pipeline.enums.PipelineStatus.DONE, "
-            + "com.bff.pipeline.enums.PipelineStatus.FAILED, "
-            + "com.bff.pipeline.enums.PipelineStatus.CANCELLED) "
-            + "and p.notifiedAt is null "
-            + "and p.notifyAttempts < :maxAttempts "
-            + "and (p.notifyNextAt is null or p.notifyNextAt <= :now)")
-    Optional<Instant> oldestDeliveryPending(@Param("maxAttempts") int maxAttempts, @Param("now") Instant now);
+    List<Pipeline> lockNotifiable(@Param("now") Instant now, @Param("maxAttempts") int maxAttempts,
+            @Param("enabledAfter") Instant enabledAfter, Limit limit);
 
     /**
      * give-up 행 수 — 사람 개입 필요 신호(ADR-022 §4 필수 경보의 정규 소스). maxAttempts 도달 후에도
@@ -94,21 +75,4 @@ public interface NotifyRepository extends JpaRepository<Pipeline, Long> {
             + "and p.notifiedAt is null "
             + "and p.notifyAttempts >= :maxAttempts")
     long countGivenUp(@Param("maxAttempts") int maxAttempts);
-
-    /**
-     * 롤아웃 컷오프 backfill(ADR-022 §5) — 알림 도입 전에 이미 종단이던 미알림 행 전체에
-     * {@code notified_at = :enabledAt}을 찍어 알림 범위 밖으로 뺀다. 여기서 backfill된 값은 "전달됨" ack가
-     * 아니라 "알림 범위 밖(도입 전)" 마커다. 채널 행이 존재하기 전엔 notifier가 절대 발화하지 못하므로
-     * (스케줄러의 채널 gate) 최초 채널 설정이 곧 도입 시점이고, 그 upsert 트랜잭션
-     * ({@code NotificationChannelService.upsert})이 이 update를 1회 호출한다 — 배포 런북의 수기 SQL 대신
-     * 코드로 강제하는 이유는 AGENTS.md 규칙 3(수기 SQL/마이그레이션 금지)이다. 술어가 미알림 종단 행만
-     * 대상으로 하므로 멱등이다. 반환값은 영향 행 수(운영 감사 로그용).
-     */
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("update Pipeline p set p.notifiedAt = :enabledAt "
-            + "where p.status in (com.bff.pipeline.enums.PipelineStatus.DONE, "
-            + "com.bff.pipeline.enums.PipelineStatus.FAILED, "
-            + "com.bff.pipeline.enums.PipelineStatus.CANCELLED) "
-            + "and p.notifiedAt is null")
-    int markLegacyTerminalRowsOutOfScope(@Param("enabledAt") Instant enabledAt);
 }

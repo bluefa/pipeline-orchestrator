@@ -1,7 +1,6 @@
 package com.bff.pipeline.service.notify;
 
 import com.bff.pipeline.config.NotifySettings;
-import com.bff.pipeline.entity.NotificationChannel;
 import com.bff.pipeline.model.NotifyClaim;
 import com.bff.pipeline.repository.NotifyRepository;
 import jakarta.annotation.PostConstruct;
@@ -23,9 +22,14 @@ import org.springframework.stereotype.Component;
  * 파이프라인당 1회·저빈도라 충분하고, Slack 호출 상한은 call-timeout이 소유한다). 실행 스케줄러와 스레드·
  * 회계를 공유하지 않는다(격리 — 느린 sink가 파이프라인 실행을 굶기지 않는다).
  *
- * 채널 gate: 매 sweep마다 활성 채널을 새로 읽어(캐시 없음 — 반영 지연 상한 = 1 sweep) 미설정/비활성이면
- * claim 자체를 하지 않고 idle한다 — attempts를 소진하지 않아 backlog가 보존되고 채널 (재)활성화 시 소급
- * 발화한다. 전달은 트랜잭션 밖에서 일어나고, 성공은 {@code NotifyWriteBack.onSuccess}, 실패
+ * 채널 gate = {@code start()}의 {@code settings.enabled()} 가드다(오너 결정 2026-07-09 — 채널은 admin
+ * 관리 표면 없이 환경변수로 주입된다). 설정은 부팅 시 고정이므로 enable/disable 반영은 재시작이다 —
+ * ADR-022 §4의 "반영 지연 상한 = 1 스캔"은 env 방식에서 "재시작 시 반영"으로 바뀐다. disabled면 loop가
+ * 아예 돌지 않아 claim이 없고 attempts를 소진하지 않아 backlog가 보존되며, enable 재기동 시 소급 발화한다.
+ * 전달 webhook은 {@code settings.slackWebhookUrl()}로 바로 넘긴다 — 유효성(enabled=true면 non-blank)은
+ * {@code NotifySettings}의 부팅 fail-fast가 보장하므로 sweep마다 다시 검사하지 않는다.
+ *
+ * 전달은 트랜잭션 밖에서 일어나고, 성공은 {@code NotifyWriteBack.onSuccess}, 실패
  * (RuntimeException)는 {@code onFailure}(backoff/give-up)로 기록한 뒤 그 반환값(증가된 attempts)을 실어
  * WARN 구조화 로그를 남긴다 — 구현 명세 §7의 MUST 필드(attempt 포함)를 채우기 위해 write-back이 로그보다
  * 먼저다(fencing no-op면 attempt=stale-no-op).
@@ -48,7 +52,6 @@ public class NotifyScheduler {
     private final NotifyClaimer notifyClaimer;
     private final SlackNotifier slackNotifier;
     private final NotifyWriteBack notifyWriteBack;
-    private final NotificationChannelService channels;
     private final NotifyRepository notifyRepository;
     private final NotifySettings settings;
     private final Clock clock;
@@ -62,12 +65,10 @@ public class NotifyScheduler {
     private Instant nextGiveUpAlertPollAt;
 
     public NotifyScheduler(NotifyClaimer notifyClaimer, SlackNotifier slackNotifier, NotifyWriteBack notifyWriteBack,
-            NotificationChannelService channels, NotifyRepository notifyRepository, NotifySettings settings,
-            Clock clock) {
+            NotifyRepository notifyRepository, NotifySettings settings, Clock clock) {
         this.notifyClaimer = notifyClaimer;
         this.slackNotifier = slackNotifier;
         this.notifyWriteBack = notifyWriteBack;
-        this.channels = channels;
         this.notifyRepository = notifyRepository;
         this.settings = settings;
         this.clock = clock;
@@ -105,8 +106,10 @@ public class NotifyScheduler {
     }
 
     /**
-     * 활성 채널이 있으면 한 건 claim→전달→기록한다. 반환값은 "일감이 있었나"다 — 채널 gate가 닫혔거나
-     * claim할 행이 없으면 false(idle backoff 대상). 전달 실패는 backoff 기록(onFailure) 후 그 반환값을 실은
+     * 한 건 claim→전달→기록한다. 반환값은 "일감이 있었나"다 — claim할 행이 없으면 false(idle backoff 대상).
+     * 채널 gate는 여기가 아니라 {@code start()}의 enabled 가드다(disabled면 loop 자체가 안 올라 이 메서드에
+     * 도달하지 않는다). webhook은 {@code settings.slackWebhookUrl()}을 그대로 쓴다 — 부팅 fail-fast가
+     * 유효성을 보장한다. 전달 실패는 backoff 기록(onFailure) 후 그 반환값을 실은
      * WARN 구조화 로그(구현 명세 §7 MUST 필드: pipeline·status·attempt·sink·resp_class = 예외 클래스)로
      * 흡수한다 — attempt 값을 알기 위해 write-back이 로그보다 먼저이고, 실패가 sweep을 죽이지 않는다.
      * catch의 범위는 전달 호출뿐이다 — attempts++는 "실제로 호출했으나 실패"로 한정되므로(ADR-022 §2),
@@ -115,17 +118,13 @@ public class NotifyScheduler {
      * loop-survival WARN으로 전파된다.
      */
     boolean deliverOne() {
-        Optional<NotificationChannel> activeChannel = channels.activeChannel();
-        if (activeChannel.isEmpty()) {
-            return false;   // 미설정/비활성 → claim 없이 idle (backlog age 지표가 드러낸다)
-        }
         Optional<NotifyClaim> claim = notifyClaimer.claimOne();
         if (claim.isEmpty()) {
             return false;
         }
         NotifyClaim claimed = claim.get();
         try {
-            slackNotifier.deliver(activeChannel.get().getSlackWebhookUrl(), claimed.payload());
+            slackNotifier.deliver(settings.slackWebhookUrl(), claimed.payload());
         } catch (RuntimeException deliveryFailed) {   // harness-allow: targeted-catch — sink 경계: 모든 전달 실패를 backoff/give-up으로 수렴, 에스컬레이션은 give-up 경보(spec §4.4/§5)
             OptionalInt attempts = notifyWriteBack.onFailure(claimed.pipelineId(), claimed.token());
             log.warn("notify delivery failed pipeline={} status={} attempt={} sink=slack resp_class={}",

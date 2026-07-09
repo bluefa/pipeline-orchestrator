@@ -5,12 +5,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.config.NotifySettings;
 import java.time.Duration;
+import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
 /**
  * {@link NotifySettings} 부팅-시 fail-fast 검증(ADR-022 구현 명세 §3). 특히 {@code leaseDuration > callTimeout}
  * 하드 제약과 {@code backoffMax >= backoffBase}, 양수 Duration/시도 상한/jitter 경계를 어기면 문제 키 이름과
- * 함께 즉시 실패해야 한다.
+ * 함께 즉시 실패해야 한다. 채널이 env 주입으로 바뀐 뒤(오너 결정 2026-07-09)의 조건부 필수도 검증한다 —
+ * {@code enabled = true}면 webhook(non-blank)과 도입 컷오프({@code enabledAfter})가 필수이고, 꺼진 배포는
+ * 둘 다 생략할 수 있다.
  */
 class NotifySettingsTest {
 
@@ -20,12 +23,34 @@ class NotifySettingsTest {
                 .pollInterval(Duration.ofSeconds(2)).maxIdleSleep(Duration.ofSeconds(10))
                 .backoffBase(Duration.ofSeconds(5)).backoffMax(Duration.ofMinutes(10)).jitterRatio(0.2)
                 .leaseDuration(Duration.ofMinutes(1)).callTimeout(Duration.ofSeconds(10))
-                .maxAttempts(8).schedulerInitialDelay(Duration.ofSeconds(10));
+                .maxAttempts(8).schedulerInitialDelay(Duration.ofSeconds(10))
+                .slackWebhookUrl("https://hooks.slack.com/services/T0001/B0002/token")
+                .enabledAfter(Instant.parse("2026-07-09T00:00:00Z"));
     }
 
     @Test
     void aValidConfigurationConstructs() {
         assertThatCode(() -> valid().build()).doesNotThrowAnyException();
+    }
+
+    @Test
+    void anEnabledNotifierWithABlankWebhookFailsFastWithItsKey() {
+        assertThatThrownBy(() -> valid().slackWebhookUrl(" ").build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("pipeline.notify.slack-webhook-url");
+    }
+
+    @Test
+    void anEnabledNotifierWithoutAnAdoptionCutoffFailsFastWithItsKey() {
+        assertThatThrownBy(() -> valid().enabledAfter(null).build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("pipeline.notify.enabled-after");
+    }
+
+    @Test
+    void aDisabledNotifierMayOmitBothTheWebhookAndTheAdoptionCutoff() {
+        assertThatCode(() -> valid().enabled(false).slackWebhookUrl(null).enabledAfter(null).build())
+                .doesNotThrowAnyException();
     }
 
     @Test

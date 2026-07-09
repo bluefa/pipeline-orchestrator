@@ -111,16 +111,6 @@ class SlackNotifierTest {
                 .hasMessageContaining("non-2xx");
     }
 
-    @Test
-    void theTestDeliveryPostsTheFixedProbeMessage() throws Exception {
-        ScriptedRequestFactory slackEndpoint = new ScriptedRequestFactory(HttpStatus.OK);
-        SlackNotifier notifier = new SlackNotifier(restClientOver(slackEndpoint));
-
-        notifier.deliverTest(WEBHOOK_URL);
-
-        assertThat(slackEndpoint.lastRequest.getBodyAsString()).contains(":bell:");
-    }
-
     private static NotifyPayload donePayload() {
         return NotifyPayload.builder()
                 .pipelineId(1234L).type("INSTALL").terminalStatus("DONE").targetRef("tgt_9f3a")

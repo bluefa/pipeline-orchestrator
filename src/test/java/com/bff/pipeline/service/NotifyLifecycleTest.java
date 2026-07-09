@@ -7,7 +7,6 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.bff.pipeline.config.NotifySettings;
-import com.bff.pipeline.dto.ChannelUpsert;
 import com.bff.pipeline.dto.NotifyPayload;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
@@ -18,11 +17,9 @@ import com.bff.pipeline.enums.TaskDefinition;
 import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.model.NotifyClaim;
-import com.bff.pipeline.repository.NotificationChannelRepository;
 import com.bff.pipeline.repository.NotifyRepository;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
-import com.bff.pipeline.service.notify.NotificationChannelService;
 import com.bff.pipeline.service.notify.NotifyClaimer;
 import com.bff.pipeline.service.notify.NotifyWriteBack;
 import java.time.Duration;
@@ -46,19 +43,22 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * ADR-022 notify claim/write-back 생명주기 검증이다({@code PipelineSoftCapTest} 패턴 미러 — 래핑 트랜잭션을
  * 끄고 claim 트랜잭션과 write-back 트랜잭션이 실제로 분리 커밋되게 한다). claim 술어(종단·미알림·due·
- * lease 가용·give-up 배제), NULL notify_next_at 우선의 결정적 순서, FAILED payload의 실패 task 채움
- * (taskDefinition 우선, 레거시 행은 mechanism fallback), 토큰 fencing(성공·실패 양쪽 no-op — 실패 no-op은
- * empty 반환), 지수 backoff와 give-up(ERROR 로그 포함), 실행 admission 카운트와의 격리, at-least-once
- * (lease 만료 후 재claim = 중복 전달 수용), 두 age 지표 쿼리의 분리, 그리고 최초 채널 upsert의 롤아웃 컷오프
- * backfill(레거시 종단 행 소급 발화 방지, ADR-022 §5)을 검증한다.
+ * lease 가용·give-up 배제·도입 컷오프), NULL notify_next_at 우선의 결정적 순서, FAILED payload의 실패 task
+ * 채움(taskDefinition 우선, 레거시 행은 mechanism fallback), 토큰 fencing(성공·실패 양쪽 no-op — 실패
+ * no-op은 empty 반환), 지수 backoff와 give-up(ERROR 로그 포함), 실행 admission 카운트와의 격리,
+ * at-least-once(lease 만료 후 재claim = 중복 전달 수용), 그리고 활성 컷오프 술어(설정
+ * {@code enabledAfter}, ADR-022 §5 대안 — 도입 전 종단 행의 소급 발화 방지)를 검증한다. 기존 시나리오
+ * 행들의 lastActivityAt은 전부 컷오프({@code ENABLED_AFTER}) 이후라 컷오프의 영향을 받지 않는다.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({NotifyClaimer.class, NotifyWriteBack.class, NotificationChannelService.class, NotifyLifecycleTest.Wiring.class})
+@Import({NotifyClaimer.class, NotifyWriteBack.class, NotifyLifecycleTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class NotifyLifecycleTest {
 
     private static final Instant START = Instant.parse("2026-07-09T00:00:00Z");
+    /** 알림 도입 시점 컷오프 — 기본 savePipeline 행(lastActivityAt = START-1분)이 전부 이후가 되는 고정값. */
+    private static final Instant ENABLED_AFTER = START.minus(Duration.ofDays(1));
     private static final int MAX_ATTEMPTS = 3;
     private static final Duration LEASE = Duration.ofMinutes(1);
     private static final Duration BACKOFF_BASE = Duration.ofSeconds(5);
@@ -66,18 +66,15 @@ class NotifyLifecycleTest {
 
     @Autowired private NotifyClaimer claimer;
     @Autowired private NotifyWriteBack writeBack;
-    @Autowired private NotificationChannelService channelService;
     @Autowired private NotifyRepository notifyRepository;
     @Autowired private PipelineRepository pipelineRepository;
     @Autowired private TaskRepository taskRepository;
-    @Autowired private NotificationChannelRepository notificationChannelRepository;
     @Autowired private MutableClock clock;
 
     @AfterEach
     void clean() {
         taskRepository.deleteAll();
         pipelineRepository.deleteAll();
-        notificationChannelRepository.deleteAll();
         clock.set(START);
     }
 
@@ -310,47 +307,26 @@ class NotifyLifecycleTest {
     }
 
     @Test
-    void backlogAgeAndDeliveryPendingAgeAreMeasuredSeparately() {
-        savePipeline("nt-metric-due", PipelineStatus.DONE,
-                builder -> builder.lastActivityAt(START.minusSeconds(100)));
-        savePipeline("nt-metric-waiting", PipelineStatus.DONE,
-                builder -> builder.lastActivityAt(START.minusSeconds(200)).notifyNextAt(START.plusSeconds(30)));
-        savePipeline("nt-metric-given-up", PipelineStatus.DONE,
-                builder -> builder.lastActivityAt(START.minusSeconds(1000)).notifyAttempts(MAX_ATTEMPTS));
+    void aTerminalRowThatPredatesTheAdoptionCutoffIsNeverClaimed() {
+        // 도입(enabledAfter) 전에 종단된 레거시 행 — 종단·미알림·due지만 알림 범위 밖이다(ADR-022 §5 대안)
+        savePipeline("nt-legacy-done", PipelineStatus.DONE,
+                builder -> builder.lastActivityAt(ENABLED_AFTER.minusSeconds(1)));
+        savePipeline("nt-legacy-failed", PipelineStatus.FAILED,
+                builder -> builder.lastActivityAt(ENABLED_AFTER.minus(Duration.ofDays(30))));
 
-        // 총 backlog age: give-up은 제외하되 미도래 backoff 행은 포함한다
-        assertThat(notifyRepository.oldestUnnotifiedAt(MAX_ATTEMPTS)).contains(START.minusSeconds(200));
-        // 전달 정체 age: due 행만 — 건강한 재시도 대기(미도래 backoff)를 정체로 오인하지 않는다
-        assertThat(notifyRepository.oldestDeliveryPending(MAX_ATTEMPTS, START)).contains(START.minusSeconds(100));
-        assertThat(notifyRepository.countGivenUp(MAX_ATTEMPTS)).isEqualTo(1);
+        assertThat(claimer.claimOne()).isEmpty();   // 레거시 종단 행의 소급 발화(폭주)가 없다
     }
 
     @Test
-    void theFirstChannelUpsertBackfillsLegacyTerminalRowsOutOfNotifyScope() {
-        Pipeline legacyDone = savePipeline("nt-legacy-done", PipelineStatus.DONE);
-        Pipeline legacyFailed = savePipeline("nt-legacy-failed", PipelineStatus.FAILED);
-        Pipeline running = savePipeline("nt-legacy-running", PipelineStatus.RUNNING);
+    void aTerminalRowAtOrAfterTheAdoptionCutoffIsClaimed() {
+        // 경계 포함(>=) — 정확히 컷오프 시각에 종단된 행부터 알림 대상이다
+        Pipeline atCutoff = savePipeline("nt-at-cutoff", PipelineStatus.DONE,
+                builder -> builder.lastActivityAt(ENABLED_AFTER));
+        Pipeline afterCutoff = savePipeline("nt-after-cutoff", PipelineStatus.DONE,
+                builder -> builder.lastActivityAt(ENABLED_AFTER.plusSeconds(1)));
 
-        channelService.upsert(new ChannelUpsert("#infra-alerts", true, WEBHOOK_URL));   // 최초 채널 설정 = 도입 시점
-
-        // backfill된 notified_at은 "전달됨"이 아니라 "알림 범위 밖(도입 전)" 마커다(ADR-022 §5)
-        assertThat(reload(legacyDone).getNotifiedAt()).isEqualTo(START);
-        assertThat(reload(legacyFailed).getNotifiedAt()).isEqualTo(START);
-        assertThat(reload(running).getNotifiedAt()).isNull();      // 비종단 행은 건드리지 않는다
-        assertThat(claimer.claimOne()).isEmpty();                  // 레거시 종단 행의 소급 발화(폭주)가 없다
-    }
-
-    @Test
-    void aSubsequentUpsertNeverBackfillsPostAdoptionBacklog() {
-        channelService.upsert(new ChannelUpsert("#infra-alerts", true, WEBHOOK_URL));   // 도입(최초 upsert)
-        Pipeline postAdoption = savePipeline("nt-post-adoption", PipelineStatus.DONE);  // 도입 후 종단
-
-        channelService.upsert(new ChannelUpsert("#infra-alerts", false, null));   // 비활성화
-        channelService.upsert(new ChannelUpsert("#infra-alerts", true, null));    // 재활성화
-
-        // 도입 후 비활성 기간의 backlog는 보존돼 소급 발화한다(ADR-022 §4의 의도된 동작)
-        assertThat(reload(postAdoption).getNotifiedAt()).isNull();
-        assertThat(claimer.claimOne().orElseThrow().pipelineId()).isEqualTo(postAdoption.getId());
+        assertThat(claimer.claimOne().orElseThrow().pipelineId()).isEqualTo(atCutoff.getId());
+        assertThat(claimer.claimOne().orElseThrow().pipelineId()).isEqualTo(afterCutoff.getId());
     }
 
     private Pipeline savePipeline(String target, PipelineStatus status) {
@@ -422,6 +398,8 @@ class NotifyLifecycleTest {
                     .callTimeout(Duration.ofSeconds(10))
                     .maxAttempts(MAX_ATTEMPTS)
                     .schedulerInitialDelay(Duration.ofSeconds(10))
+                    .slackWebhookUrl(WEBHOOK_URL)
+                    .enabledAfter(ENABLED_AFTER)   // START 이전 고정값 — 기존 시나리오 행은 전부 컷오프 이후
                     .build();
         }
     }

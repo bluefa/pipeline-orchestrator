@@ -52,8 +52,20 @@ pipeline:
 
   # ADR-022 종단 상태 알림(notify). 실행 워커풀과 격리된 단일 스레드 loop의 케이던스·backoff·lease.
   # Hard constraint: lease-duration > call-timeout (NotifySettings가 fail-fast로 강제).
+  # 전달 채널은 env로 주입한다(오너 결정 2026-07-09 — admin 채널 관리 없음). 기본은 꺼짐이며, 켜는
+  # 배포는 env 3종(PIPELINE_NOTIFY_ENABLED=true, PIPELINE_NOTIFY_SLACK_WEBHOOK_URL, enabled-after)을
+  # 함께 제공해야 한다 — enabled=true인데 webhook/enabled-after가 없으면 NotifySettings가 시작에 실패한다.
   notify:
-    enabled: true
+    enabled: ${PIPELINE_NOTIFY_ENABLED:false}
+    # Slack Incoming Webhook URL — secret이므로 env로만 주입하고 로그에 찍지 않는다.
+    slack-webhook-url: ${PIPELINE_NOTIFY_SLACK_WEBHOOK_URL:}
+    # enabled-after: 알림 도입 시점 컷오프(ISO-8601 Instant, 예: 2026-07-09T00:00:00Z).
+    # PIPELINE_NOTIFY_ENABLED=true 시 필수 — claim 술어가 last_activity_at >= enabled-after를 요구해
+    # 도입 전에 종단된 레거시 행의 소급 발화 폭주를 막는다(ADR-022 §5 대안: 활성 컷오프 술어).
+    # 키를 주석으로 두는 이유: 빈 문자열 기본값(${...:})은 Instant 바인딩을 깨고, 1970-01-01 같은
+    # sentinel 기본값은 컷오프를 무력화해 레거시 종단 전부를 발화시킨다 — enabled=true 배포가
+    # env(PIPELINE_NOTIFY_ENABLEDAFTER)나 yml 오버라이드로 실제 도입 시각을 명시 제공해야 한다.
+    # enabled-after: 2026-07-09T00:00:00Z
     poll-interval: PT2S            # 일감 있을 때 loop 케이던스
     max-idle-sleep: PT10S          # 빈 sweep backoff 상한
     backoff-base: PT5S             # 전달 실패 backoff 기준(지수)

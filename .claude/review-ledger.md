@@ -48,6 +48,7 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 | An `interface` must earn its place: a real external boundary (e.g. `InfraManagerClient`, prod + test fake) OR genuine N-impl polymorphism (e.g. `TaskType`: Terraform/Condition). A single-impl interface a concrete class or static util would serve is flagged | owner; spring-java21 §10 | agent (interface-justification) |
 | Business failures are values (`ErrorCode`); only external/infra failures are exceptions | owner; spring-java21 §5.7; exception-strategy.md | agent |
 | Extensibility seams are documented, not pre-built (YAGNI) | owner; extensibility.md | agent |
+| Configuration lives in env vars (repo precedent: infra-manager) — an admin-managed settings surface (DB table + REST + UI) is built only on explicit owner request, even when a synced spec prescribes it; gate that scope with the owner before implementing | owner (2026-07-09, ADR-022 notify: spec §6 admin channel management replaced by `PIPELINE_NOTIFY_SLACK_WEBHOOK_URL`) | process + agent |
 | Derive "done" from the ADR (`docs/acceptance-criteria.md`); don't ask for sign-off | owner | process |
 | Respond to the owner in Korean | owner | process |
 | Prefer `Stream`/`IntStream.range` (enumerate) over a `for` loop where it reads cleanly | owner | agent |
@@ -192,3 +193,13 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
   idiom). Process lesson: the codex/opus/harness triple found disjoint real issues (rollout & vocabulary
   & 3xx from codex, admin UX & test gaps from opus, boundary guards from the harness) — keep running all
   three on concurrency-heavy features.
+- R11 (ADR-022 notify simplification, owner decision 2026-07-09): after R10 reached merge-ready, the owner
+  cut the admin surface — **webhook comes from an env var, not an admin-managed table**. Deleted the entire
+  §6 admin group (~10 main files: `notification_channel` entity/repo/service/controller, 4 DTOs, 2
+  exceptions, SSRF/masking/test-send/health); the durable core (state-derived claim/lease, backoff/give-up,
+  PII payload) stays. Rollout cutoff moved from first-channel-creation backfill to the ADR §5 **alternative
+  predicate** `last_activity_at >= pipeline.notify.enabled-after` (required when enabled — fail-fast).
+  The R10 column-length-guard occurrence site (`NotificationChannelService`) was deleted with the surface,
+  but the promoted pattern stands (R8 remains live). Lesson: a synced spec's surface area (admin UI,
+  management REST) is not implicit owner intent — gate that scope BEFORE building; env-var config is the
+  repo default (infra-manager precedent). Deviations recorded in the orchestrator copies of the ADR/spec.
