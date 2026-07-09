@@ -38,8 +38,8 @@
 
 ```
 NotifyScheduler (단일 데몬 loop, 실행 스케줄러와 별개)
-   └─ 채널 미설정/비활성이면 idle (아무 것도 claim 안 함)
-   └─ 있으면:
+   └─ enabled=false(또는 webhook/컷오프 미제공 → 부팅 fail-fast)면 loop 미기동 (2026-07-09 개정 — 부팅 가드)
+   └─ 켜져 있으면:
         tx1  NotifyClaimer.claimOne()        — 종단·미알림 행 1개 SKIP LOCKED claim (notify 전용 lease)
         ──   SlackNotifier.deliver(payload)  — 트랜잭션 밖, RestClient read-timeout 으로 bounded
         tx2  NotifyWriteBack.record(...)      — 성공: notified_at 스탬프 / 실패: backoff / 소진: give-up
@@ -288,7 +288,8 @@ public class NotifyClaimer {
     @Transactional
     public Optional<NotifyClaim> claimOne() {
         Instant now = clock.instant();
-        return repo.findNextNotifiable(now, settings.maxAttempts()).map(p -> {
+        // 2026-07-09 개정: 도입 컷오프(enabledAfter)를 술어 인자로 전달한다(ADR-022 §5 채택안).
+        return repo.findNextNotifiable(now, settings.maxAttempts(), settings.enabledAfter()).map(p -> {
             String token = UUID.randomUUID().toString();
             p.setNotifyClaimedBy(token);
             p.setNotifyClaimedUntil(now.plus(settings.leaseDuration()));
@@ -716,9 +717,10 @@ public record TestResult(
 2. `NotifySettings` + yml 키 + `PipelineConfig` 등록 → 잘못된 값에 fail-fast 되는지 확인.
 3. `NotificationChannel` 엔티티 + `NotificationChannelService`(activeChannel/upsert/mask) + 컨트롤러.
    (⛔ 미구현 — 2026-07-09 오너 결정, 채널은 env var. §0 구현 노트 참조.)
-4. `NotifyRepository`(claim/guard/oldest) + `NotifyClaimer`(tx1) + `NotifyWriteBack`(tx2).
+4. `NotifyRepository`(claim/guard/countGivenUp — age 쿼리 2종은 소비 표면 도입 시, §7 ⛔ 참조)
+   + `NotifyClaimer`(tx1) + `NotifyWriteBack`(tx2).
 5. `SlackNotifier`(RestClient, 타임아웃) + payload 빌더(PII 허용 필드만).
-6. `NotifyScheduler`(단일 loop, 채널 가드).
+6. `NotifyScheduler`(단일 loop, 부팅 enabled 가드 — 2026-07-09 개정, §4.5 ⛔ 참조).
 7. **(별도 repo `pii-agent-demo`)** Frontend admin 카드 + Next 프록시 route — 백엔드(1~6) 빌드와 독립.
    (⛔ 미구현 — 2026-07-09 오너 결정, admin 채널 표면 없음. §0 구현 노트 참조.)
 8. 테스트(§11).

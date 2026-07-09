@@ -94,6 +94,7 @@ SELECT id FROM pipeline               -- :now 는 주입된 앱 Clock 시각(DB 
  WHERE status IN ('DONE','FAILED','CANCELLED')
    AND notified_at IS NULL
    AND notify_attempts < :maxAttempts    -- give-up 행 재클레임 금지(안전장치; far-future 값에만 의존 X)
+   AND last_activity_at >= :enabled_at   -- 도입 컷오프(§5 채택안) — 도입 전 종단 행은 알림 범위 밖
    AND (notify_next_at IS NULL OR notify_next_at <= :now)
    AND (notify_claimed_until IS NULL OR notify_claimed_until < :now)
  ORDER BY notify_next_at ASC, id ASC   -- NULL 선두(신규 종단), id로 deterministic tie-break
