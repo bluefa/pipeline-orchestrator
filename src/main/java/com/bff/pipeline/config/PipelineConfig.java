@@ -1,5 +1,6 @@
 package com.bff.pipeline.config;
 
+import com.bff.pipeline.service.notify.SlackNotifier;
 import java.time.Clock;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -18,8 +19,8 @@ import org.springframework.web.client.RestClient;
  * drain 사이클에 쓰고, {@code infraManagerCallPool}은 호출별 타임아웃 데코레이터({@code TimeBoundedInfraManagerClient})가
  * delegate 호출을 격리 실행하는 데 쓴다. 둘 다 크기는 {@code workerPerPod}이고 컨텍스트 종료 시 shutdown된다.
  * {@code notifyRestClient}는 ADR-022 Slack webhook 전달 전용 HTTP 클라이언트다 — Boot는
- * {@code RestClient.Builder}만 자동구성하므로 {@code callTimeout}을 connect/read 타임아웃으로 건 빈을 직접
- * 만든다(호출 상한을 HTTP 클라이언트가 소유해 별도 스레드풀이 필요 없다).
+ * {@code RestClient.Builder}만 자동구성하므로 {@code SlackNotifier.CALL_TIMEOUT}을 connect/read
+ * 타임아웃으로 건 빈을 직접 만든다(호출 상한을 HTTP 클라이언트가 소유해 별도 스레드풀이 필요 없다).
  */
 @Configuration
 @EnableConfigurationProperties({PipelineSettings.class, ExecutionSettings.class, NotifySettings.class})
@@ -41,9 +42,9 @@ public class PipelineConfig {
     }
 
     @Bean
-    public RestClient notifyRestClient(NotifySettings settings) {
+    public RestClient notifyRestClient() {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        int callTimeoutMillis = (int) settings.callTimeout().toMillis();
+        int callTimeoutMillis = (int) SlackNotifier.CALL_TIMEOUT.toMillis();
         requestFactory.setConnectTimeout(callTimeoutMillis);
         requestFactory.setReadTimeout(callTimeoutMillis);
         return RestClient.builder().requestFactory(requestFactory).build();

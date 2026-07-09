@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
  * (c) 직렬화 결과에 raw 연결 식별자(host/port/credential/DB명) 패턴이 없다. toTargetRef 밖의 경로로
  *     민감 값이 새면 이 테스트가 실패한다.
  * (d) FAILED가 아닌 payload는 failed_task/error_code가 null이다.
- * buildPayload가 sequence가 가장 앞선 FAILED task에서 값을 채우는 동작 자체는 NotifyLifecycleTest가 검증한다.
+ * buildPayload가 sequence가 가장 앞선 FAILED task에서 값을 채우는 동작 자체는 TerminalNotifierTest가 검증한다.
  */
 class NotifyPayloadPiiTest {
 
@@ -88,7 +88,7 @@ class NotifyPayloadPiiTest {
         assertThat(json.get("errorCode").isNull()).isTrue();
     }
 
-    /** NotifyClaimer.buildPayload가 만드는 것과 같은 꼴의 FAILED payload. 값은 전부 허용 목록 안의 것이다. */
+    /** TerminalNotifier.buildPayload가 만드는 것과 같은 꼴의 FAILED payload. 값은 전부 허용 목록 안의 것이다. */
     private static NotifyPayload failedPayload() {
         return NotifyPayload.builder()
                 .pipelineId(1234L)

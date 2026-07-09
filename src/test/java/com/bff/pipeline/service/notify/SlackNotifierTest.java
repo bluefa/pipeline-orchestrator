@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.dto.NotifyPayload;
+import java.io.IOException;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +14,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.ClientHttpRequest;
 import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.mock.http.client.MockClientHttpRequest;
 import org.springframework.mock.http.client.MockClientHttpResponse;
 import org.springframework.web.client.RestClient;
@@ -93,12 +95,13 @@ class SlackNotifierTest {
     }
 
     @Test
-    void aNonTwoHundredResponseRaisesARestClientException() {
+    void aNonTwoHundredResponseRaisesARestClientExceptionWithTheStatusCode() {
         SlackNotifier notifier = new SlackNotifier(
                 restClientOver(new ScriptedRequestFactory(HttpStatus.INTERNAL_SERVER_ERROR)));
 
         assertThatThrownBy(() -> notifier.deliver(WEBHOOK_URL, donePayload()))
-                .isInstanceOf(RestClientException.class);
+                .isInstanceOf(RestClientException.class)
+                .hasMessageContaining("http 500");
     }
 
     @Test
@@ -109,7 +112,23 @@ class SlackNotifierTest {
 
         assertThatThrownBy(() -> notifier.deliver(WEBHOOK_URL, donePayload()))
                 .isInstanceOf(RestClientException.class)
-                .hasMessageContaining("non-2xx");
+                .hasMessageContaining("http 301");
+    }
+
+    @Test
+    void aDeliveryFailureNeverExposesTheWebhookUrl() {
+        // 연결 실패/타임아웃에서 Spring이 만드는 원본 예외는 메시지에 요청 URL 전체를 담는다.
+        // webhook 주소는 비밀값이라, deliver가 던지는 예외에는 메시지에도 원인 체인에도 주소가 남으면 안 된다.
+        // 이 차단이 깨지면 TerminalNotifier의 실패 WARN 로그마다 비밀이 찍힌다.
+        SlackNotifier notifier = new SlackNotifier(restClientOver(new BrokenConnectionFactory()));
+
+        assertThatThrownBy(() -> notifier.deliver(WEBHOOK_URL, donePayload()))
+                .isInstanceOf(RestClientException.class)
+                .hasNoCause()
+                .hasMessageContaining("ResourceAccessException")
+                .satisfies(thrown -> assertThat(thrown.getMessage())
+                        .doesNotContain("hooks.slack.com")
+                        .doesNotContain("token"));
     }
 
     private static NotifyPayload donePayload() {
@@ -145,6 +164,23 @@ class SlackNotifierTest {
                 .filter(field -> title.equals(field.get("title")))
                 .map(field -> (String) field.get("value"))
                 .findFirst().orElseThrow();
+    }
+
+    /**
+     * 요청 실행 시점에 IO 실패를 일으키는 가짜 요청 팩토리. Spring은 이 IOException을
+     * 요청 URL 전체가 담긴 메시지의 ResourceAccessException으로 감싸므로,
+     * 비밀값 차단 테스트가 실제 유출 경로 그대로를 재현할 수 있다.
+     */
+    static final class BrokenConnectionFactory implements ClientHttpRequestFactory {
+        @Override
+        public ClientHttpRequest createRequest(URI uri, HttpMethod httpMethod) {
+            return new MockClientHttpRequest(httpMethod, uri) {
+                @Override
+                protected ClientHttpResponse executeInternal() throws IOException {
+                    throw new IOException("simulated connect timeout");
+                }
+            };
+        }
     }
 
     /** 항상 지정된 상태 코드를 돌려주는 가짜 요청 팩토리. 마지막 요청을 붙잡아 두어 URI와 본문을 단언할 수 있게 한다. */

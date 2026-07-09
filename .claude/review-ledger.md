@@ -204,3 +204,30 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
   but the promoted pattern stands (R8 remains live). Lesson: a synced spec's surface area (admin UI,
   management REST) is not implicit owner intent — gate that scope BEFORE building; env-var config is the
   repo default (infra-manager precedent). Deviations recorded in the orchestrator copies of the ADR/spec.
+- R12 (ADR-022 single-transaction redesign, owner decision 2026-07-10): second owner simplification pass
+  ("still too much code for a simple notification"). Delivery concurrency rewritten from
+  claim-lease/fencing/two-tx to a **single transaction holding the row lock across the Slack call**
+  (lock → build payload → HTTP → record → commit). The lease/fencing machinery exists for ADR-021's
+  premise (calls too long to hold a lock); notify's call is bounded (CALL_TIMEOUT 10s), one thread per
+  pod, and nothing else locks terminal rows — so the row lock itself replaces lease + fencing, and the
+  stale-worker state class disappears structurally. Deleted: `NotifyClaimer`/`NotifyWriteBack`/
+  `NotifyScheduler`/`NotifyClaim`/`NotifyRepository` (→ `TerminalNotifier` + 2 queries folded into
+  `PipelineRepository`), lease columns (5→3), exponential backoff+jitter (→ linear attempts × 1min),
+  far-future give-up sentinel, idle geometric backoff (→ fixed 10s sweep with drain loop), 9 of 12
+  config keys (→ code constants; env keys = enabled/webhook/enabled-after). Owner-set values:
+  MAX_ATTEMPTS=3, give-up backlog re-alert poller KEPT (5min ERROR). Revert triggers documented in
+  ADR-022 §2 (multi-sink, long timeouts, batch updates on terminal rows → reintroduce two-tx split).
+  Harness note for reviewers: the delivery-failure catch INSIDE the transaction lambda is intentional
+  (failure record must commit, not roll back) — catch scope is still the delivery call only.
+  Post-redesign review (codex xhigh 94 merge-ready / opus 75 request-changes / recurring-review PASS):
+  opus found a real P0 that predated the redesign — the failure WARN passed the raw throwable to SLF4J,
+  and Spring's `ResourceAccessException`/`RestClientResponseException` messages embed the full request
+  URL, i.e. the webhook secret, so every Slack timeout logged the secret. Fix: `SlackNotifier.deliver`
+  is now a **secret-redaction boundary** — it catches everything from `post()` and rethrows a fresh
+  `RestClientException` carrying only a response classification (`http NNN` or exception class names),
+  no message copy, no cause chain; `TerminalNotifier` narrows its catch to `RestClientException` (other
+  exceptions escalate as bugs instead of burning attempts) and logs only the sanitized message.
+  Regression tests: `aDeliveryFailureNeverExposesTheWebhookUrl` (real ResourceAccessException vector via
+  a broken ClientHttpRequestFactory) + `aNonDeliveryExceptionEscalatesWithoutBurningAnAttempt`.
+  Pattern lesson (watch-list candidate): **any log that passes a raw exception from an HTTP client call
+  made to a secret-bearing URL is a leak vector** — redact at the client boundary, not at each log site.

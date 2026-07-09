@@ -2,23 +2,27 @@ package com.bff.pipeline.service.notify;
 
 import com.bff.pipeline.dto.NotifyPayload;
 import com.bff.pipeline.enums.PipelineStatus;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 /**
  * 끝난 파이프라인의 알림을 Slack Incoming Webhook으로 전송하는 클래스다.
  * V1에서 전송처는 Slack 하나뿐이라 인터페이스 없이 구체 클래스로 둔다 —
  * 전송처가 늘어나면 그때 인터페이스를 뽑는다.
- * HTTP 호출 시간은 {@code notifyRestClient} 빈의 connect/read 타임아웃
- * ({@code pipeline.notify.call-timeout})이 제한하므로 별도 스레드풀을 두지 않는다.
+ * HTTP 호출 시간은 {@code notifyRestClient} 빈의 connect/read 타임아웃({@link #CALL_TIMEOUT})이
+ * 제한하므로 별도 스레드풀을 두지 않는다. 이 상한은 전송을 DB 트랜잭션 안에서 하는
+ * {@code TerminalNotifier} 설계의 전제이기도 하다 — 행 잠금을 쥐는 시간이 이 값을 넘지 못한다.
  * 2xx가 아닌 응답, 타임아웃, IO 실패는 {@code RestClientException}으로 던진다.
- * 호출자({@code NotifyScheduler})가 이를 잡아 간격을 늘려 가며 재시도한다.
+ * 호출자({@code TerminalNotifier})가 이를 잡아 간격을 늘려 가며 재시도한다.
  *
  * 메시지 형식은 간단한 텍스트 + attachment다.
  * DONE은 :white_check_mark: 이모지와 good 색, FAILED는 :x:와 danger 색(실패 단계와 에러 코드 필드 추가),
@@ -31,15 +35,47 @@ import org.springframework.web.client.RestClientException;
 @Component
 public class SlackNotifier {
 
+    /** Slack HTTP 호출의 connect/read 제한 시간. {@code notifyRestClient} 빈(PipelineConfig)이 이 값으로 만들어진다. */
+    public static final Duration CALL_TIMEOUT = Duration.ofSeconds(10);
+
     private final RestClient notifyRestClient;
 
     public SlackNotifier(@Qualifier("notifyRestClient") RestClient notifyRestClient) {
         this.notifyRestClient = notifyRestClient;
     }
 
-    /** 알림 한 건을 전송한다. 실패(비2xx 응답/타임아웃/IO)하면 예외를 던지고, 호출자(NotifyScheduler)가 잡아 재시도 정보를 기록한다. */
+    /**
+     * 알림 한 건을 전송한다. 실패(비2xx 응답/타임아웃/IO)하면 {@link RestClientException}을 던지고,
+     * 호출자(TerminalNotifier)가 잡아 재시도 정보를 기록한다.
+     *
+     * 던지는 예외는 여기서 새로 만든 것만 나간다 — Spring이 만드는 원본 예외는 메시지에 요청 URL
+     * 전체(= webhook 주소, 비밀값)를 담기 때문에, 원본을 그대로 흘리면 호출자의 실패 로그에 비밀이
+     * 찍힌다. 그래서 원본에서 응답 분류(HTTP 상태 코드 또는 예외 종류)만 뽑아 새 예외에 싣고,
+     * 원본은 원인(cause)으로도 잇지 않는다. 메시지 조립({@code toSlackMessage})은 이 차단 밖에서
+     * 한다 — 조립 예외는 전달 실패가 아니라 버그라서 그대로 전파해 드러나게 둔다.
+     */
     public void deliver(String webhookUrl, NotifyPayload payload) {
-        post(webhookUrl, toSlackMessage(payload));
+        Map<String, Object> message = toSlackMessage(payload);
+        try {
+            post(webhookUrl, message);
+        } catch (RuntimeException deliveryFailure) {   // harness-allow: targeted-catch — 비밀값 차단 경계: post가 던지는 모든 예외는 메시지/원인에 webhook 주소를 담을 수 있어, 여기서 분류만 남기고 끊는다.
+            throw new RestClientException("slack delivery failed: " + classify(deliveryFailure));
+        }
+    }
+
+    /**
+     * 실패 예외에서 로그에 실어도 안전한 응답 분류만 뽑는다. HTTP 응답이 있었으면 상태 코드,
+     * 없었으면(타임아웃, 연결 실패 등) 예외 종류 이름이다. 예외 메시지는 어떤 경우에도 옮기지
+     * 않는다 — webhook 주소가 들어 있을 수 있다.
+     */
+    private static String classify(RuntimeException deliveryFailure) {
+        if (deliveryFailure instanceof RestClientResponseException httpError) {
+            return "http " + httpError.getStatusCode().value();
+        }
+        Throwable rootCause = NestedExceptionUtils.getMostSpecificCause(deliveryFailure);
+        return rootCause == deliveryFailure
+                ? deliveryFailure.getClass().getSimpleName()
+                : deliveryFailure.getClass().getSimpleName() + "/" + rootCause.getClass().getSimpleName();
     }
 
     private void post(String webhookUrl, Object message) {
@@ -50,13 +86,13 @@ public class SlackNotifier {
                 // 성공으로 인정하는 응답은 2xx뿐이다. RestClient 기본 동작은 4xx/5xx만 예외로 만들기 때문에,
                 // 그대로 두면 3xx가 성공으로 통과한다 — 그러면 notified_at이 잘못 찍혀 알림이 조용히 사라진다.
                 // 그래서 2xx도 에러도 아닌 나머지 상태를 여기서 명시적으로 실패로 판정한다.
-                // 4xx/5xx는 기본 RestClientResponseException 경로를 그대로 둬서 로그의 resp_class 구분을 살린다.
+                // 4xx/5xx는 기본 예외 경로를 그대로 둔다. 어느 쪽이든 상태 코드가 deliver의 응답 분류에 실린다.
                 .onStatus(status -> !status.is2xxSuccessful() && !status.isError(),
                         (request, response) -> {
-                            throw new RestClientException(
-                                    "slack webhook answered non-2xx: " + response.getStatusCode());
+                            throw new RestClientResponseException("slack webhook answered non-2xx",
+                                    response.getStatusCode(), response.getStatusText(), null, null, null);
                         })
-                .toBodilessEntity();   // 2xx가 아니면 RestClientException이 난다
+                .toBodilessEntity();   // 2xx가 아니면 예외가 난다
     }
 
     /** payload를 Slack 메시지 Map으로 바꾼다. package-private인 이유: 테스트가 형식(이모지/색/필드)을 직접 단언한다. */

@@ -30,17 +30,8 @@ import org.springframework.boot.test.context.SpringBootTest;
         "pipeline.execution.backoff-max=PT5S",
         "pipeline.execution.jitter-ratio=0.2",
         "pipeline.execution.scheduler-initial-delay=PT1H",   // 이 테스트에선 스케줄러가 돌 필요 없음
-        // ADR-022 notify 설정(NotifySettings fail-fast)도 같은 이유로 full 컨텍스트용 유효값을 채운다.
-        "pipeline.notify.enabled=false",                      // 이 테스트에선 notify loop가 돌 필요 없음
-        "pipeline.notify.poll-interval=PT2S",
-        "pipeline.notify.max-idle-sleep=PT10S",
-        "pipeline.notify.backoff-base=PT5S",
-        "pipeline.notify.backoff-max=PT10M",
-        "pipeline.notify.jitter-ratio=0.2",
-        "pipeline.notify.lease-duration=PT1M",
-        "pipeline.notify.call-timeout=PT10S",
-        "pipeline.notify.max-attempts=8",
-        "pipeline.notify.scheduler-initial-delay=PT1H"
+        // ADR-022 종단 알림은 꺼 둔다 — 꺼진 배포는 webhook 주소와 도입 시각을 생략할 수 있고 알림 루프도 돌지 않는다.
+        "pipeline.notify.enabled=false"
 })
 class FeignDelegateWiringTest {
 
