@@ -35,7 +35,8 @@
 >   (컬럼 5→3). 전송 중임은 행 잠금이 나타내고, 실행 admission 카운트 오염 문제는 원천 소멸.
 > - §4.1 `NotifyRepository` → 삭제하고 **기존 `PipelineRepository`에 질의 2개**
 >   (`findNextNotifiable`/`lockNotifiable` + `countGivenUp`) 통합. 술어에서 lease 게이트 제거.
-> - §3 설정 → **env 3키만**(`enabled`/`slack-webhook-url`/`enabled-after`). 나머지 동작 값은
+> - §3 설정 → **env 키만**(`enabled`/`slack-webhook-url`/`enabled-after`, 2026-07-10 오너 요청으로
+>   `environment`/`detail-url-base` 추가 — 총 5키). 나머지 동작 값은
 >   `TerminalNotifier`/`SlackNotifier` 코드 상수: `MAX_ATTEMPTS=3`(오너 지정, 기존 8),
 >   재시도 간격 = 시도 횟수 × 1분(선형 — 지수+jitter 제거), sweep 주기 10초(고정 — idle 기하
 >   backoff 제거), give-up 재경보 폴링 5분(유지 — 오너 지정), `CALL_TIMEOUT` 10초.
@@ -375,6 +376,14 @@ public class NotifyClaimer {
 > 경합할 일도 없다.
 
 ### 4.3 `NotifyPayload` + `SlackNotifier` (외부 호출)
+
+> ⛔ **일부 대체됨(2026-07-10 2차, 오너 요청 — 알림 내용 확장)**: 아래 코드의 payload는
+> 7필드/`schemaVersion "1"` 기준이다. 현행은 **10필드/`"2"`** — `cloudProvider`(nullable enum 이름)·
+> `environment`(설정의 배포 환경 태그)·`detailUrl`(콘솔 상세 링크, 설정 base + pipeline id만으로
+> 조립하는 유일 허용 링크)이 추가됐다. Slack 메시지도 머리글에 `[stg]`/`[prd]` 태그와
+> "상세 보기" 링크가 붙고, 필드에 `cloud_provider`가 추가되며 `target_ref`의 표시 라벨은
+> `target_source`다(payload 필드명은 유지). 정본은 개정된 ADR-022 §4와 코드
+> (`NotifyPayload`/`SlackNotifier.toSlackMessage`/`TerminalNotifier.buildPayload`)다.
 
 **PII 최소화 — 허용 필드만**(ADR-022 §4). 그 외 민감 상세는 싣지 않는다.
 

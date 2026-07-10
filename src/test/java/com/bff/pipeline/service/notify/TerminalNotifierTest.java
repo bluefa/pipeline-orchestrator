@@ -12,6 +12,7 @@ import com.bff.pipeline.config.NotifySettings;
 import com.bff.pipeline.dto.NotifyPayload;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
+import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
@@ -65,7 +66,10 @@ class TerminalNotifierTest {
     /** 알림 도입 시각. 기본 savePipeline 행(lastActivityAt = START-1분)이 전부 이 값 이후가 되도록 잡은 고정값이다. */
     private static final Instant ENABLED_AFTER = START.minus(Duration.ofDays(1));
     private static final String WEBHOOK_URL = "https://hooks.slack.com/services/T0001/B0002/token";
-    private static final NotifySettings SETTINGS = new NotifySettings(true, WEBHOOK_URL, ENABLED_AFTER);
+    private static final String ENVIRONMENT = "stg";
+    private static final String DETAIL_URL_BASE = "http://localhost:3001/integration/admin/pipelines";
+    private static final NotifySettings SETTINGS =
+            new NotifySettings(true, WEBHOOK_URL, ENABLED_AFTER, ENVIRONMENT, DETAIL_URL_BASE);
 
     @Autowired private PipelineRepository pipelineRepository;
     @Autowired private TaskRepository taskRepository;
@@ -229,7 +233,8 @@ class TerminalNotifierTest {
 
     @Test
     void aFailedPipelinePayloadNamesTheEarliestFailedStepAndADonePayloadCarriesNeither() {
-        Pipeline failed = savePipeline("nt-failed-steps", PipelineStatus.FAILED);
+        Pipeline failed = savePipeline("nt-failed-steps", PipelineStatus.FAILED,
+                builder -> builder.cloudProvider(CloudProvider.AWS));
         saveTask(failed.getId(), 0, TaskDefinition.AWS_SERVICE_APPLY_V1, TaskStatus.DONE, null);
         saveTask(failed.getId(), 1, TaskDefinition.AWS_SERVICE_APPLY_V1, TaskStatus.FAILED, ErrorCode.JOB_FAILED);
         saveTask(failed.getId(), 2, TaskDefinition.NETWORK_READY_V1, TaskStatus.FAILED, ErrorCode.CHECK_ERROR);
@@ -244,9 +249,14 @@ class TerminalNotifierTest {
         assertThat(failedPayload.failedTask()).isEqualTo(TaskDefinition.AWS_SERVICE_APPLY_V1.name());
         assertThat(failedPayload.errorCode()).isEqualTo(ErrorCode.JOB_FAILED.name());
         assertThat(failedPayload.terminalStatus()).isEqualTo(PipelineStatus.FAILED.name());
+        assertThat(failedPayload.cloudProvider()).isEqualTo(CloudProvider.AWS.name());
+        assertThat(failedPayload.environment()).isEqualTo(ENVIRONMENT);   // 설정의 배포 환경 이름이 그대로 실린다
+        // 상세 링크는 설정된 base에 파이프라인 id만 붙인다 — 다른 값이 끼면 안 된다
+        assertThat(failedPayload.detailUrl()).isEqualTo(DETAIL_URL_BASE + "/" + failed.getId());
         NotifyPayload donePayload = slack.deliveredPayloads.getLast();
         assertThat(donePayload.failedTask()).isNull();   // FAILED가 아니면 실패 단계와 에러 코드를 싣지 않는다
         assertThat(donePayload.errorCode()).isNull();
+        assertThat(donePayload.cloudProvider()).isNull();   // CSP 미지정 행은 null — 필드 없이 나간다
     }
 
     @Test
@@ -294,7 +304,7 @@ class TerminalNotifierTest {
     @Test
     void aDisabledSwitchMakesStartANoOpThatSchedulesNothing() {
         TerminalNotifier notifier = new TerminalNotifier(null, null, null,
-                new NotifySettings(false, null, null), null, clock);
+                new NotifySettings(false, null, null, null, null), null, clock);
 
         // 이미 종료된 executor에 예약하면 RejectedExecutionException이 난다. 꺼져 있으면 enabled 확인이
         // 예약 전에 조용히 돌아와야 하므로 stop() 뒤의 start()가 아무 예외도 내지 않아야 한다.

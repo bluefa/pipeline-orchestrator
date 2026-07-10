@@ -25,12 +25,14 @@ import org.springframework.web.client.RestClientResponseException;
  * 호출자({@code TerminalNotifier})가 이를 잡아 간격을 늘려 가며 재시도한다.
  *
  * 메시지 형식은 간단한 텍스트 + attachment다.
+ * 머리글에는 배포 환경 이름([stg]/[prd])과 파이프라인 상세 화면으로 가는 "상세 보기" 링크가 붙고,
  * DONE은 :white_check_mark: 이모지와 good 색, FAILED는 :x:와 danger 색(실패 단계와 에러 코드 필드 추가),
  * CANCELLED는 :no_entry:와 warning 색이다.
  * pipeline_id는 항상 본문에 넣는다 — 최소 한 번은 전달한다는 방침이라 드물게 같은 알림이
  * 두 번 갈 수 있는데, 그때 사람이 중복임을 알아보는 열쇠가 pipeline_id다.
- * target_ref에는 아무것도 드러내지 않는 참조 값만 싣는다.
- * raw host·계정·DB 이름은 금지다 — 이 규칙은 payload를 만드는 단계에서 강제된다.
+ * target_source에는 아무것도 드러내지 않는 참조 값만, cloud_provider에는 CSP 이름만 싣는다.
+ * raw host·계정·DB 이름은 금지고, 링크는 상세 화면 링크(base + id) 하나만 허용된다 —
+ * 이 규칙은 payload를 만드는 단계에서 강제된다.
  */
 @Component
 public class SlackNotifier {
@@ -101,7 +103,9 @@ public class SlackNotifier {
         List<Map<String, Object>> fields = new ArrayList<>();
         addFieldUnlessNull(fields, "type", payload.type(), true);
         addFieldUnlessNull(fields, "status", payload.terminalStatus(), true);
-        addFieldUnlessNull(fields, "target_ref", payload.targetRef(), false);
+        addFieldUnlessNull(fields, "cloud_provider", payload.cloudProvider(), true);
+        // 라벨은 운영자 용어인 target_source를 쓴다. 값은 payload.targetRef(대상의 안전한 참조 값)와 같다.
+        addFieldUnlessNull(fields, "target_source", payload.targetRef(), true);
         addFieldUnlessNull(fields, "failed_task", payload.failedTask(), true);
         addFieldUnlessNull(fields, "error_code", payload.errorCode(), true);
         return Map.of(
@@ -109,11 +113,17 @@ public class SlackNotifier {
                 "attachments", List.of(Map.of("color", style.color(), "fields", fields)));
     }
 
-    /** 예: ":white_check_mark: *Pipeline DONE* — INSTALL (id 1234)". type을 알 수 없는 옛 데이터면(null) 그 구간을 뺀다. */
+    /**
+     * 예: ":white_check_mark: *[prd] Pipeline DONE* — INSTALL (id 1234) · 상세 보기 링크".
+     * 상세 링크는 Slack 링크 문법(꺾쇠 괄호로 주소와 라벨을 묶는 형식)으로 붙인다.
+     * type을 알 수 없는 옛 데이터면(null) 그 구간을 빼고, environment/detailUrl이 없으면 그 구간도 뺀다.
+     */
     private static String headline(MessageStyle style, NotifyPayload payload) {
+        String environmentSegment = payload.environment() == null ? "" : "[" + payload.environment() + "] ";
         String typeSegment = payload.type() == null ? "" : " — " + payload.type();
-        return style.emoji() + " *Pipeline " + payload.terminalStatus() + "*" + typeSegment
-                + " (id " + payload.pipelineId() + ")";
+        String detailSegment = payload.detailUrl() == null ? "" : " · <" + payload.detailUrl() + "|상세 보기 →>";
+        return style.emoji() + " *" + environmentSegment + "Pipeline " + payload.terminalStatus() + "*"
+                + typeSegment + " (id " + payload.pipelineId() + ")" + detailSegment;
     }
 
     private static void addFieldUnlessNull(List<Map<String, Object>> fields, String title, String value,

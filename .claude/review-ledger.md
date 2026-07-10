@@ -231,3 +231,11 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
   a broken ClientHttpRequestFactory) + `aNonDeliveryExceptionEscalatesWithoutBurningAnAttempt`.
   Pattern lesson (watch-list candidate): **any log that passes a raw exception from an HTTP client call
   made to a secret-bearing URL is a leak vector** — redact at the client boundary, not at each log site.
+- R13 (notify payload extension, owner request 2026-07-10): payload 7 → 10 fields (`cloud_provider`,
+  `environment`, `detail_url`; schema_version 1 → 2), Slack headline gains `[env]` tag + detail link,
+  `target_ref` display label renamed to `target_source` (payload field name unchanged). ADR §4 link rule
+  amended: blanket "no url field" → exactly one allowed link (`detail_url` = configured console base +
+  pipeline_id, assembled only in `TerminalNotifier.toDetailUrl`). Settings env keys 3 → 5 (`environment`
+  default local, `detail-url-base` default localhost console — stg/prd must override via env).
+  PII test reworked: 10-field allowlist, raw-identifier scan excludes `detail_url` (a console URL
+  legitimately contains "://"/"host"), URL-assembly shape pinned in TerminalNotifierTest instead.

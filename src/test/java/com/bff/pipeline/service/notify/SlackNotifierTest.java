@@ -29,30 +29,36 @@ import org.springframework.web.client.RestClientException;
 class SlackNotifierTest {
 
     private static final String WEBHOOK_URL = "https://hooks.slack.com/services/T0001/B0002/token";
+    private static final String DETAIL_URL = "http://localhost:3001/integration/admin/pipelines/1234";
 
     @Test
-    void aDoneMessageCarriesCheckmarkGoodColorAndThePipelineId() {
+    void aDoneMessageCarriesCheckmarkGoodColorEnvironmentAndADetailLink() {
         Map<String, Object> message = SlackNotifier.toSlackMessage(donePayload());
 
         assertThat((String) message.get("text"))
-                .contains(":white_check_mark:", "*Pipeline DONE*", "INSTALL", "(id 1234)");
+                .contains(":white_check_mark:", "*[prd] Pipeline DONE*", "INSTALL", "(id 1234)")
+                .contains("<" + DETAIL_URL + "|상세 보기 →>");
         assertThat(color(message)).isEqualTo("good");
-        assertThat(fieldTitles(message)).containsExactly("type", "status", "target_ref");
-        assertThat(fieldValue(message, "target_ref")).isEqualTo("tgt_9f3a");
+        assertThat(fieldTitles(message)).containsExactly("type", "status", "cloud_provider", "target_source");
+        assertThat(fieldValue(message, "target_source")).isEqualTo("483");
+        assertThat(fieldValue(message, "cloud_provider")).isEqualTo("GCP");
     }
 
     @Test
     void aFailedMessageCarriesFailureFieldsAndDangerColor() {
         NotifyPayload payload = NotifyPayload.builder()
-                .pipelineId(77L).type("DELETE").terminalStatus("FAILED").targetRef("tgt_9f3a")
+                .pipelineId(77L).type("DELETE").terminalStatus("FAILED").targetRef("483")
+                .cloudProvider("AWS").environment("prd")
                 .failedTask("AWS_SERVICE_DESTROY_V1").errorCode("CHECK_ERROR")
+                .detailUrl("http://localhost:3001/integration/admin/pipelines/77")
                 .schemaVersion(NotifyPayload.SCHEMA_VERSION).build();
 
         Map<String, Object> message = SlackNotifier.toSlackMessage(payload);
 
-        assertThat((String) message.get("text")).contains(":x:", "*Pipeline FAILED*", "(id 77)");
+        assertThat((String) message.get("text")).contains(":x:", "*[prd] Pipeline FAILED*", "(id 77)");
         assertThat(color(message)).isEqualTo("danger");
-        assertThat(fieldTitles(message)).containsExactly("type", "status", "target_ref", "failed_task", "error_code");
+        assertThat(fieldTitles(message)).containsExactly(
+                "type", "status", "cloud_provider", "target_source", "failed_task", "error_code");
         assertThat(fieldValue(message, "failed_task")).isEqualTo("AWS_SERVICE_DESTROY_V1");
         assertThat(fieldValue(message, "error_code")).isEqualTo("CHECK_ERROR");
     }
@@ -60,26 +66,30 @@ class SlackNotifierTest {
     @Test
     void aCancelledMessageCarriesNoEntryAndWarningColor() {
         NotifyPayload payload = NotifyPayload.builder()
-                .pipelineId(9L).type("CUSTOM").terminalStatus("CANCELLED").targetRef("tgt_1")
+                .pipelineId(9L).type("CUSTOM").terminalStatus("CANCELLED").targetRef("61")
+                .environment("stg").detailUrl("http://localhost:3001/integration/admin/pipelines/9")
                 .schemaVersion(NotifyPayload.SCHEMA_VERSION).build();
 
         Map<String, Object> message = SlackNotifier.toSlackMessage(payload);
 
-        assertThat((String) message.get("text")).contains(":no_entry:", "*Pipeline CANCELLED*", "(id 9)");
+        assertThat((String) message.get("text")).contains(":no_entry:", "*[stg] Pipeline CANCELLED*", "(id 9)");
         assertThat(color(message)).isEqualTo("warning");
         assertThat(fieldTitles(message)).doesNotContain("failed_task", "error_code");
     }
 
     @Test
-    void aDegradedNullTypeIsOmittedInsteadOfPrintedAsNull() {
+    void degradedOrMissingOptionalValuesAreOmittedInsteadOfPrintedAsNull() {
+        // type을 해석 못 하는 옛 행 + 환경/링크/CSP가 없는 payload — 빠진 값은 그 구간째 사라져야 한다.
         NotifyPayload payload = NotifyPayload.builder()
-                .pipelineId(5L).type(null).terminalStatus("DONE").targetRef("tgt_1")
+                .pipelineId(5L).type(null).terminalStatus("DONE").targetRef("61")
                 .schemaVersion(NotifyPayload.SCHEMA_VERSION).build();
 
         Map<String, Object> message = SlackNotifier.toSlackMessage(payload);
 
-        assertThat((String) message.get("text")).doesNotContain("null").contains("(id 5)");
-        assertThat(fieldTitles(message)).doesNotContain("type");
+        assertThat((String) message.get("text"))
+                .doesNotContain("null").contains("(id 5)")
+                .doesNotContain("[").doesNotContain("상세 보기");
+        assertThat(fieldTitles(message)).doesNotContain("type", "cloud_provider");
     }
 
     @Test
@@ -91,7 +101,7 @@ class SlackNotifierTest {
 
         assertThat(slackEndpoint.lastRequest.getURI()).isEqualTo(URI.create(WEBHOOK_URL));
         assertThat(slackEndpoint.lastRequest.getBodyAsString())
-                .contains(":white_check_mark:", "\"attachments\"", "\"target_ref\"");
+                .contains(":white_check_mark:", "\"attachments\"", "\"target_source\"");
     }
 
     @Test
@@ -133,7 +143,8 @@ class SlackNotifierTest {
 
     private static NotifyPayload donePayload() {
         return NotifyPayload.builder()
-                .pipelineId(1234L).type("INSTALL").terminalStatus("DONE").targetRef("tgt_9f3a")
+                .pipelineId(1234L).type("INSTALL").terminalStatus("DONE").targetRef("483")
+                .cloudProvider("GCP").environment("prd").detailUrl(DETAIL_URL)
                 .schemaVersion(NotifyPayload.SCHEMA_VERSION).build();
     }
 

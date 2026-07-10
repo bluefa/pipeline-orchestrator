@@ -191,6 +191,8 @@ public class TerminalNotifier {
      * 허용된 필드만 실은 payload를 만든다.
      * type은 생성할 때 한 번 쓰고 다시 안 바꾸는 값이라, 지금의 enum이 해석하지 못하는 옛 값은 null로
      * 읽힌다 — null 확인 없이 {@code .name()}을 부르면 NPE가 나므로 확인이 필수다.
+     * cloudProvider도 같은 이유(미해석 옛 값 또는 미지정)로 null일 수 있어 같은 확인을 거친다.
+     * environment(배포 환경 이름)와 detailUrl(상세 화면 링크)은 설정에서 채운다.
      * FAILED 파이프라인이면 순서(sequence)가 가장 앞선 FAILED task에서 failedTask와 errorCode를 채우고,
      * 아니면 둘 다 null이다.
      *
@@ -207,10 +209,23 @@ public class TerminalNotifier {
                 .type(pipeline.getType() == null ? null : pipeline.getType().name())
                 .terminalStatus(pipeline.getStatus().name())
                 .targetRef(toTargetRef(pipeline))
+                .cloudProvider(pipeline.getCloudProvider() == null ? null : pipeline.getCloudProvider().name())
+                .environment(settings.environment())
                 .failedTask(failedTask.map(TerminalNotifier::toFailedTaskKey).orElse(null))
                 .errorCode(failedTask.map(Task::getErrorCode).map(ErrorCode::name).orElse(null))
+                .detailUrl(toDetailUrl(pipeline.getId()))
                 .schemaVersion(NotifyPayload.SCHEMA_VERSION)
                 .build();
+    }
+
+    /**
+     * 파이프라인 상세 화면 링크를 만든다. 설정된 base 주소에 파이프라인 id만 붙인다 —
+     * 이 링크가 payload에서 유일하게 허용되는 URL이고, id 외의 값은 싣지 않는다.
+     */
+    private String toDetailUrl(long pipelineId) {
+        String base = settings.detailUrlBase();
+        String normalizedBase = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+        return normalizedBase + "/" + pipelineId;
     }
 
     /**
