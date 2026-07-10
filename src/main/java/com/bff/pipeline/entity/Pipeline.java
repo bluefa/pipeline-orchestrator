@@ -39,7 +39,10 @@ import lombok.Setter;
                 @Index(name = "idx_pipeline_claimed_until", columnList = "claimed_until"),
                 // Admin 조회 API(P2/P3/P7) 지원: 상태별 기간 집계·목록, target 이력 최신순.
                 @Index(name = "idx_pipeline_status_created", columnList = "status, created_at"),
-                @Index(name = "idx_pipeline_target_created", columnList = "target, created_at")
+                @Index(name = "idx_pipeline_target_created", columnList = "target, created_at"),
+                // ponytail: ~2,000행 규모엔 (notified_at, notify_next_at) 복합이면 충분. MySQL8은 부분(filtered)
+                // 인덱스가 없으므로 status 필터는 옵티마이저에 맡긴다. 대규모로 커지면 재검토.
+                @Index(name = "idx_pipeline_notify", columnList = "notified_at, notify_next_at")
         })
 @Getter
 @Setter
@@ -113,4 +116,22 @@ public class Pipeline {
     /** cooperative cancel(Case B) 플래그. claim을 쥔 워커가 안전지점에서 읽어 스스로 CANCELLED를 적용한다. */
     @Column(name = "cancel_requested", nullable = false)
     private boolean cancelRequested;
+
+    // ── ADR-022 종단 알림 메타데이터: 도메인 상태가 아니다. reconciler·실행 점유·상태 전이는 이 필드들을 읽지 않는다. ──
+
+    /** 알림 전달이 완료된(전송처가 성공으로 응답한) 시각. 값이 차면 이 행은 알림 대상에서 영구히 빠진다. */
+    @Column(name = "notified_at")
+    private Instant notifiedAt;
+
+    /** 전송 실패 후 다음 재시도 시각. 이 시각이 오기 전에는 다시 잡지 않는다. */
+    @Column(name = "notify_next_at")
+    private Instant notifyNextAt;
+
+    /**
+     * 알림 전송을 시도한 횟수. 재시도 간격 계산에 쓰고, 상한에 닿으면 자동 재시도를 멈춘다.
+     * 상한에 닿은 행을 다시 보내려면 사람이 이 값을 0으로 되돌리면 된다.
+     */
+    @Column(name = "notify_attempts", nullable = false)
+    @Builder.Default
+    private int notifyAttempts = 0;
 }

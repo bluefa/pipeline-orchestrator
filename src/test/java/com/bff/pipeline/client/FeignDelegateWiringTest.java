@@ -29,7 +29,9 @@ import org.springframework.boot.test.context.SpringBootTest;
         "pipeline.execution.backoff-base=PT0.2S",
         "pipeline.execution.backoff-max=PT5S",
         "pipeline.execution.jitter-ratio=0.2",
-        "pipeline.execution.scheduler-initial-delay=PT1H"   // 이 테스트에선 스케줄러가 돌 필요 없음
+        "pipeline.execution.scheduler-initial-delay=PT1H",   // 이 테스트에선 스케줄러가 돌 필요 없음
+        // ADR-022 종단 알림은 꺼 둔다 — 꺼진 배포는 webhook 주소와 도입 시각을 생략할 수 있고 알림 루프도 돌지 않는다.
+        "pipeline.notify.enabled=false"
 })
 class FeignDelegateWiringTest {
 

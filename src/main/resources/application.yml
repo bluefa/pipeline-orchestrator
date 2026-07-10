@@ -50,6 +50,33 @@ pipeline:
     jitter-ratio: 0.2
     scheduler-initial-delay: PT5S
 
+  # ADR-022 종단 상태 알림(notify). 실행 워커풀과 격리된 단일 스레드가 고정 주기로 돌며, 전송과
+  # 결과 기록을 행 잠금을 쥔 트랜잭션 하나로 처리한다(2026-07-10 개정 — lease 컬럼/키 없음).
+  # 호출 시간 상한은 Slack HTTP 타임아웃(SlackNotifier.CALL_TIMEOUT 상수)뿐이다.
+  # 전달 채널은 env로 주입한다(오너 결정 2026-07-09 — admin 채널 관리 없음). 기본은 꺼짐이며, 켜는
+  # 배포는 env(PIPELINE_NOTIFY_ENABLED=true, PIPELINE_NOTIFY_SLACK_WEBHOOK_URL, enabled-after,
+  # 그리고 stg/prd라면 environment·detail-url-base 오버라이드)를 함께 제공해야 한다 —
+  # enabled=true인데 필수 값이 비면 NotifySettings가 시작에 실패한다.
+  notify:
+    # 종단 알림(ADR-022) 설정. 다섯 값 모두 env로 주입한다. 폴링 주기·재시도 횟수 등 나머지 동작 값은
+    # TerminalNotifier의 상수다.
+    enabled: ${PIPELINE_NOTIFY_ENABLED:false}
+    # Slack Incoming Webhook URL — 비밀값이므로 env로만 주입하고 로그에 찍지 않는다.
+    slack-webhook-url: ${PIPELINE_NOTIFY_SLACK_WEBHOOK_URL:}
+    # enabled-after: 이 시각(ISO-8601 Instant, 예: 2026-07-09T00:00:00Z) 이후에 끝난 파이프라인만 알린다.
+    # enabled=true면 필수 — 없으면 알림을 처음 켜는 순간 과거에 끝난 파이프라인 전부가 Slack으로 쏟아진다.
+    # 키를 주석으로 두는 이유: 빈 문자열 기본값(${...:})은 Instant 바인딩을 깨고, 1970-01-01 같은
+    # 기본값은 이 안전장치를 무력화한다 — 켜는 배포가 env(PIPELINE_NOTIFY_ENABLEDAFTER)나
+    # yml 오버라이드로 실제 도입 시각을 직접 줘야 한다.
+    # enabled-after: 2026-07-09T00:00:00Z
+    # environment: 알림 메시지 머리에 붙는 배포 환경 이름(stg, prd 등). 여러 환경이 한 Slack 채널을
+    # 공유할 때 어느 환경의 알림인지 구분한다. 배포 환경이 env로 자기 이름을 준다.
+    environment: ${PIPELINE_NOTIFY_ENVIRONMENT:local}
+    # detail-url-base: 파이프라인 상세 화면 주소의 앞부분. 메시지의 "상세 보기" 링크는 여기에
+    # /{파이프라인id}만 붙여 만든다. 기본값은 로컬 개발용 — stg/prd 배포는 반드시 env로 실제 콘솔
+    # 주소를 줘야 한다(안 주면 알림의 링크가 localhost로 나간다).
+    detail-url-base: ${PIPELINE_NOTIFY_DETAIL_URL_BASE:http://localhost:3001/integration/admin/pipelines}
+
 # InfraManager 프로덕션 HTTP delegate. base-url·auth-token 은 필수 설정이다 — 도메인이 InfraManagerClient 를
 # 필수 주입받으므로 full 컨텍스트는 이 연동 없이는 못 뜬다(FeignConfig 참조). 값은 env 로 주입한다:
 #   INFRA_MANAGER_BASE_URL(없으면 @FeignClient url 해석 실패), INFRA_MANAGER_TOKEN(비면 인터셉터가 fail-fast).

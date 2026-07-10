@@ -37,6 +37,8 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 | **dto-builder** — a wide DTO (adjacent same-type or boolean components) is built with `@Builder`, never a positional `new` where a swapped argument still compiles | (1) ADR-021 retro #3 · (2) R6 post-PR#18 review — `PipelineQueryService` built `PipelineDetail`(19 args)/`TaskDetail`(18 args) positionally | agent | a positional `new` of a wide DTO |
 | **enum-column-widening-safe** — a persisted, extensible enum column is mapped VARCHAR (a `@Convert` `AttributeConverter` like `PipelineStatusConverter`, or `@JdbcTypeCode(SqlTypes.VARCHAR)`), never a bare `@Enumerated(EnumType.STRING)` that Hibernate renders as a native MySQL `enum(...)` — `ddl-auto=update` never ALTERs an existing enum column, so adding a value breaks insert on a live DB (`create-drop` tests never catch it) | (1) `Task.operation`/`TaskOperationConverter` write-safety · (2) LIN-28 (#24) converted every persisted enum; the LIN-30 codex review re-caught it on a stale base | rule (`@Enumerated(EnumType.STRING)`; tree is 100% converters → regression-only) + agent (converter read-strictness: `valueOf` for a state enum, `find→null` for a display-only value) | a native-enum-mapped persisted column |
 
+| **column-length-guard** — a String crossing a trust boundary (request DTO field, external API value) into a `@Column(length = N)` write is length-guarded before flush: typed 400 at the boundary, guard and `@Column` sharing one entity constant — never a raw `DataIntegrityViolationException` surfacing as a generic 500 | (1) R8 `TerraformResultRecorder` — external resultPath/jobId exceeding column length traps write-back · (2) R10 `NotificationChannelService.upsert` — webhook 512/label 128 unguarded (recurring-review FLAG; fixed with entity constants + typed 400) | agent (pattern 16) | an unguarded boundary String persisted into a bounded column |
+
 ## Watch-list (1 occurrence — recorded, promote on the next hit)
 
 | Preference / finding | Source | Promote-to |
@@ -46,8 +48,10 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 | An `interface` must earn its place: a real external boundary (e.g. `InfraManagerClient`, prod + test fake) OR genuine N-impl polymorphism (e.g. `TaskType`: Terraform/Condition). A single-impl interface a concrete class or static util would serve is flagged | owner; spring-java21 §10 | agent (interface-justification) |
 | Business failures are values (`ErrorCode`); only external/infra failures are exceptions | owner; spring-java21 §5.7; exception-strategy.md | agent |
 | Extensibility seams are documented, not pre-built (YAGNI) | owner; extensibility.md | agent |
+| Configuration lives in env vars (repo precedent: infra-manager) — an admin-managed settings surface (DB table + REST + UI) is built only on explicit owner request, even when a synced spec prescribes it; gate that scope with the owner before implementing | owner (2026-07-09, ADR-022 notify: spec §6 admin channel management replaced by `PIPELINE_NOTIFY_SLACK_WEBHOOK_URL`) | process + agent |
 | Derive "done" from the ADR (`docs/acceptance-criteria.md`); don't ask for sign-off | owner | process |
 | Respond to the owner in Korean | owner | process |
+| Javadoc explains FUNCTION in plain Korean — an ADR/section reference or compressed jargon (술어/파생/회계/lease/fencing untranslated) must never substitute for the explanation; spell terms out (lease→점유 시간, fencing token→점유 확인용 토큰), one trailing "자세한 배경은 ADR-N 참조" line at most; do NOT mirror the dense style of older files (exemplar: `NotifySettings` header, 2026-07-09 rewrite) | owner (2026-07-09: "알아먹기 힘들다… ADR의 뭐를 참조했다 이런것보다 그냥 기능을 설명해") | agent |
 | Prefer `Stream`/`IntStream.range` (enumerate) over a `for` loop where it reads cleanly | owner | agent |
 | Purposeful names; **no abbreviations** in ANY identifier (class, method, field, variable) — reveal the role: `ImClient`→`InfraManagerClient`, `im`→`infraManager`, `seq`→`sequence`, `ttl`→`timeToLive`, `cve`→`constraintViolation`, catch `e`→`exception`. Allowed: `id`, `main(args)` (owner stated 3×). Role-based collection names (`tasks`, `pipelines`, `settings`) are correct — reveal-the-role, not echo-the-type (ADR-021 retro #1 folded in here; owner keeps role names) | owner | agent (recurring-review pattern 6) |
 | Layered package convention: `entity / service / client / controller / dto / repository / utils` (entity also holds domain enums; dto holds transport values; app wiring at the root package) — no abbreviated package names like `im` | owner | rule (flag a new top-level pkg outside the set) |
@@ -189,6 +193,68 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
   recorded: admin queries MAY read `terraform_result` (design §4.5) — the write-only invariant is about
   the engine (claim/scheduling/transition), and the body column stays out of list/detail queries via the
   metadata projection (only the P11 single-row endpoint pays the MEDIUMTEXT I/O).
+- R10 (ADR-022 terminal-state notification, feat/adr-022-terminal-notification): three-reviewer cycle to
+  merge-ready — codex xhigh R1 82 → R2 88 → R3 **95 / merge-ready, findings 0**; opus R1 93 / R2 both
+  merge-ready; recurring-review PASS after fixes. Fixed along the way: **rollout replay unguarded** (ADR-022
+  §5 legacy cutoff now enforced IN CODE at first channel creation — hand-SQL is banned by AGENTS.md #3, and
+  a channel row is a precondition for any delivery, so first configuration == introduction moment);
+  **failed_task carried the mechanism** (`taskName` = TERRAFORM_JOB/CONDITION_CHECK) instead of the recipe
+  identity (`taskDefinition`, null-degraded rows fall back to mechanism); **give-up alert had no pollable
+  surface** (added `GET /admin/notification-channel/health` exposing `countGivenUp` + both ages — the
+  DB-derived canonical alert source); **delivery WARN lacked `attempt`** (`onFailure` returns the
+  post-increment count as `OptionalInt`, empty = fenced stale no-op); **column-length-guard promoted**
+  (2nd occurrence after R8 — see Promoted); **3xx-as-ack** (RestClient default only throws on 4xx/5xx; a
+  3xx would stamp `notified_at` and silently drop the notification — explicit `onStatus` for non-2xx
+  non-error, keeping the default 4xx/5xx path for `resp_class` fidelity); **concurrent first-upsert raw
+  500 → typed 409** (`saveAndFlush` + `ConstraintViolationException` discrimination, `PipelineCreator`
+  idiom). Process lesson: the codex/opus/harness triple found disjoint real issues (rollout & vocabulary
+  & 3xx from codex, admin UX & test gaps from opus, boundary guards from the harness) — keep running all
+  three on concurrency-heavy features.
+- R11 (ADR-022 notify simplification, owner decision 2026-07-09): after R10 reached merge-ready, the owner
+  cut the admin surface — **webhook comes from an env var, not an admin-managed table**. Deleted the entire
+  §6 admin group (~10 main files: `notification_channel` entity/repo/service/controller, 4 DTOs, 2
+  exceptions, SSRF/masking/test-send/health); the durable core (state-derived claim/lease, backoff/give-up,
+  PII payload) stays. Rollout cutoff moved from first-channel-creation backfill to the ADR §5 **alternative
+  predicate** `last_activity_at >= pipeline.notify.enabled-after` (required when enabled — fail-fast).
+  The R10 column-length-guard occurrence site (`NotificationChannelService`) was deleted with the surface,
+  but the promoted pattern stands (R8 remains live). Lesson: a synced spec's surface area (admin UI,
+  management REST) is not implicit owner intent — gate that scope BEFORE building; env-var config is the
+  repo default (infra-manager precedent). Deviations recorded in the orchestrator copies of the ADR/spec.
+- R12 (ADR-022 single-transaction redesign, owner decision 2026-07-10): second owner simplification pass
+  ("still too much code for a simple notification"). Delivery concurrency rewritten from
+  claim-lease/fencing/two-tx to a **single transaction holding the row lock across the Slack call**
+  (lock → build payload → HTTP → record → commit). The lease/fencing machinery exists for ADR-021's
+  premise (calls too long to hold a lock); notify's call is bounded (CALL_TIMEOUT 10s), one thread per
+  pod, and nothing else locks terminal rows — so the row lock itself replaces lease + fencing, and the
+  stale-worker state class disappears structurally. Deleted: `NotifyClaimer`/`NotifyWriteBack`/
+  `NotifyScheduler`/`NotifyClaim`/`NotifyRepository` (→ `TerminalNotifier` + 2 queries folded into
+  `PipelineRepository`), lease columns (5→3), exponential backoff+jitter (→ linear attempts × 1min),
+  far-future give-up sentinel, idle geometric backoff (→ fixed 10s sweep with drain loop), 9 of 12
+  config keys (→ code constants; env keys = enabled/webhook/enabled-after). Owner-set values:
+  MAX_ATTEMPTS=3, give-up backlog re-alert poller KEPT (5min ERROR). Revert triggers documented in
+  ADR-022 §2 (multi-sink, long timeouts, batch updates on terminal rows → reintroduce two-tx split).
+  Harness note for reviewers: the delivery-failure catch INSIDE the transaction lambda is intentional
+  (failure record must commit, not roll back) — catch scope is still the delivery call only.
+  Post-redesign review (codex xhigh 94 merge-ready / opus 75 request-changes / recurring-review PASS):
+  opus found a real P0 that predated the redesign — the failure WARN passed the raw throwable to SLF4J,
+  and Spring's `ResourceAccessException`/`RestClientResponseException` messages embed the full request
+  URL, i.e. the webhook secret, so every Slack timeout logged the secret. Fix: `SlackNotifier.deliver`
+  is now a **secret-redaction boundary** — it catches everything from `post()` and rethrows a fresh
+  `RestClientException` carrying only a response classification (`http NNN` or exception class names),
+  no message copy, no cause chain; `TerminalNotifier` narrows its catch to `RestClientException` (other
+  exceptions escalate as bugs instead of burning attempts) and logs only the sanitized message.
+  Regression tests: `aDeliveryFailureNeverExposesTheWebhookUrl` (real ResourceAccessException vector via
+  a broken ClientHttpRequestFactory) + `aNonDeliveryExceptionEscalatesWithoutBurningAnAttempt`.
+  Pattern lesson (watch-list candidate): **any log that passes a raw exception from an HTTP client call
+  made to a secret-bearing URL is a leak vector** — redact at the client boundary, not at each log site.
+- R13 (notify payload extension, owner request 2026-07-10): payload 7 → 10 fields (`cloud_provider`,
+  `environment`, `detail_url`; schema_version 1 → 2), Slack headline gains `[env]` tag + detail link,
+  `target_ref` display label renamed to `target_source` (payload field name unchanged). ADR §4 link rule
+  amended: blanket "no url field" → exactly one allowed link (`detail_url` = configured console base +
+  pipeline_id, assembled only in `TerminalNotifier.toDetailUrl`). Settings env keys 3 → 5 (`environment`
+  default local, `detail-url-base` default localhost console — stg/prd must override via env).
+  PII test reworked: 10-field allowlist, raw-identifier scan excludes `detail_url` (a console URL
+  legitimately contains "://"/"host"), URL-assembly shape pinned in TerminalNotifierTest instead.
 - R10 (last raw response capture, feat/terraform-job-state-observation): full-body capture of the
   terraform status response (`terraform_job_state.last_response`, TEXT) and the condition-check response
   (`task_attempt.response`), via a delegating `@JsonCreator(mode=DELEGATING)` that binds the whole body to
