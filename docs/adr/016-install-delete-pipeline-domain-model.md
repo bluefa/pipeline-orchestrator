@@ -107,9 +107,11 @@ operator's request, validated against the `TaskDefinition` catalog (no persisted
 
 ### 3. Observation is separate from state
 
-Three **observation tables** — `task_attempt` (per-retry-attempt outcome), `task_check`
-(per-attempt poll summary), and `terraform_result` (per-job Terraform log, recorded when a
-`TERRAFORM_JOB` attempt reaches its verdict) — carry what an operator needs to first-diagnose a failure: the raw external
+Four **observation tables** — `task_attempt` (per-retry-attempt outcome), `task_check`
+(per-attempt poll summary), `terraform_result` (per-job Terraform log, recorded when a
+`TERRAFORM_JOB` attempt reaches its verdict), and `terraform_job_state` (per-job in-progress
+state, upserted on every status poll so an operator sees which jobs are still running vs. done
+before the attempt terminates) — carry what an operator needs to first-diagnose a failure: the raw external
 `response` per attempt (a TF dispatch, or a condition's check payload), the final outcome, whether the condition's terminal poll was not-met (`CONDITION_NOT_MET`) or a check error (`CHECK_ERROR`/`CALL_TIMEOUT`), with the per-cause split in `task_check`, poll counts, the last external response. They also hold the **result the completion
 `check(target, task, attempt)` reads** to decide a task is done — the reconciler reads only the *latest*
 attempt row, and only for that; claim, scheduling, and pipeline transitions never read them.
@@ -264,17 +266,19 @@ completion `check` — nothing else; `task_check` and `terraform_result` are wri
   **is** one attempt (`call_count = 1`), so a row is inserted per poll (bounded by `maxFailCount`)
   and its count columns are degenerate (0/1, mirroring the attempt's outcome); the row is kept for
   **one schema and one completion-check code path across both kinds**, carrying the poll's typed
-  outcome (`last_external_status`) while the raw payload stays in `task_attempt.response`. The
+  outcome (`last_external_status`) while the **full check response body** (every field, preserved
+  verbatim as compact JSON, truncated to the `task_attempt.response` `TEXT` limit so a large body
+  cannot break the write-back tx) stays in `task_attempt.response`, overwritten each poll (its last value). The
   not-met-vs-error breakdown for a condition is therefore a **cross-row diagnostic aggregate**
   (summing the per-poll rows), distinct from the completion `check`, which reads only the latest
   `task_attempt` row and never `task_check` (invariant #1).
 
-- `terraform_result(id, task_id, attempt_number, job_id, succeeded, result_path, result,
+- `terraform_result(id, task_id, attempt_number, job_id, succeeded, result,
   truncated, created_at)` — the post-completion (postCheck) observation: when a `TERRAFORM_JOB`
   attempt reaches its verdict, one row is written per job observed finished in that turn,
   carrying the Terraform log (`result`; tail-first truncated past 16 MB with `truncated` set —
-  failure causes cluster at the end of a log). A job whose log fetch fails leaves a pointer row
-  (`result = NULL`) with `result_path` as the trail to the full text. Unlike the other two
+  failure causes cluster at the end of a log). A job whose log fetch fails leaves a row with
+  `result = NULL`. Unlike the other two
   tables, it is written in the **run phase — outside the guarded tx2** (each `save` self-commits
   before the write-back's `claimed_by` guard runs), so a stale straggler whose tx2 later no-ops
   may still have written a diagnostic row; that is harmless, and the
@@ -282,25 +286,44 @@ completion `check` — nothing else; `task_check` and `terraform_result` are wri
   re-run (crash / lease-expiry reclaim) idempotent. Write-only like `task_check`: the engine never reads it
   (design: [terraform-client-and-postcheck-design.md](../terraform-client-and-postcheck-design.md) §4.4).
 
+- `terraform_job_state(id, task_id, attempt_number, job_id, last_state, last_fail_reason,
+  last_error, last_response, poll_count, last_polled_at)` — the in-progress (poll-time) observation: while a
+  `TERRAFORM_JOB` attempt polls its jobs, each observed job's row is UPSERTed in place every poll,
+  carrying the raw un-normalized `terraformState` (`last_state`), the status response's failure
+  reason when a job is FAILED (`last_fail_reason`), the poll call's own error when the status
+  call itself fails (`last_error`), and the **full status response body** of the last good poll
+  (`last_response`, `TEXT` — every field the typed status DTO drops, preserved verbatim as compact
+  JSON; a poll-call failure keeps the prior body). Like `terraform_result` it is written in the **run phase —
+  outside the guarded tx2** and keyed `(task_id, attempt_number, job_id)`
+  (`uq_terraform_job_state`), so re-poll (crash / lease-expiry reclaim) upserts the same row
+  idempotently; `poll_count` is a best-effort counter (a re-run may over-count) while the state
+  upsert itself is idempotent. Write-only like `task_check`: the engine never reads it. It exposes
+  operational visibility that `terraform_result` (terminal-only, log body) cannot — which jobs are
+  still running vs. finished, and per-job failure cause, before the attempt terminates.
+
 Relationships: `pipeline 1:N task 1:N task_attempt 1:0..1 task_check`;
 `task_attempt 1:0..N terraform_result` (one row per finished job of that attempt, keyed
-`(task_id, attempt_number, job_id)`).
+`(task_id, attempt_number, job_id)`); `task_attempt 1:0..N terraform_job_state` (one row per
+polled job of that attempt, keyed `(task_id, attempt_number, job_id)`, upserted each poll).
 
 **Observation invariants**
 
 1. The reconciler reads **only the latest `task_attempt` row**, and only to evaluate task
-   completion (`check(target, task, attempt)`); it **never reads `task_check` or
-   `terraform_result`** (both are write-only diagnostics). Claim, scheduling, and pipeline
-   transitions depend only on `pipeline`/`task`.
+   completion (`check(target, task, attempt)`); it **never reads `task_check`,
+   `terraform_result`, or `terraform_job_state`** (all three are write-only diagnostics). Claim,
+   scheduling, and pipeline transitions depend only on `pipeline`/`task`.
 2. `task_check` is **at most one row per attempt** (0..1): a `TERRAFORM_JOB` attempt UPDATEs it in
    place across polls (and writes none if it completes on its first `check`); a `CONDITION_CHECK`
    inserts one per poll, bounded by `maxFailCount`. `terraform_result` is one row per
-   `(attempt, job)`, deduplicated by its unique key. No RLE, no pruner.
+   `(attempt, job)`, deduplicated by its unique key. `terraform_job_state` is likewise one row per
+   `(attempt, job)`, but UPSERTed in place on every poll (its `poll_count` is a best-effort counter;
+   the state itself is idempotent under re-poll). No RLE, no pruner.
 3. Losing an observation row never corrupts state: for a `TERRAFORM_JOB` a missing latest result
    makes `check` fall through to the per-task `executionTimeout`, which re-dispatches a fresh run
    (idempotent); a `CONDITION_CHECK` has no async result to lose — a lost poll is reclaimed on lease
    expiry (Decision 5, ADR-021) and re-polled. A lost `terraform_result` row is a lost diagnostic
-   (the log), never lost state. The cost of loss is by kind — a TF re-dispatch (delay + harmless duplicate jobs) or a condition's delayed re-poll — never incorrectness.
+   (the log), and a lost or over-counted `terraform_job_state` row is a lost/approximate diagnostic
+   (the live state), never lost state. The cost of loss is by kind — a TF re-dispatch (delay + harmless duplicate jobs) or a condition's delayed re-poll — never incorrectness.
 
 **Enums** — the four core enums list their full canonical value set below; `TaskOperation` is a
 large closed set enumerated in code (`TaskOperation.java`), described rather than listed here.

@@ -21,6 +21,7 @@ import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.repository.TerraformJobStateRepository;
 import com.bff.pipeline.repository.TerraformResultRepository;
 import com.bff.pipeline.service.execution.PipelineClaimer;
 import com.bff.pipeline.service.execution.PipelineWorker;
@@ -35,6 +36,7 @@ import com.bff.pipeline.service.task.ObservationRecorder;
 import com.bff.pipeline.service.task.TaskCanceller;
 import com.bff.pipeline.service.task.TaskStateMachine;
 import com.bff.pipeline.service.task.TaskTypeRegistry;
+import com.bff.pipeline.service.task.terraform.TerraformJobStateRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformResultRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
 import java.time.Instant;
@@ -51,13 +53,13 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * terraform result 노출 경로를 검증한다(설계 §4.5). P5 확장 — task 상세의 attempt 항목에 job별 result
  * 메타(본문 없음, hasBody 존재 표시)가 인라인되는지 — 와 P11 본문 전용 lazy 조회 — 유니크 키 (task, attempt,
- * job) 행 하나의 본문/포인터 상태와 소유권 검증·404 계약 — 를 함께 본다. 실행은 실제 claim-pull wiring으로
+ * job) 행 하나의 본문 유무 상태와 소유권 검증·404 계약 — 를 함께 본다. 실행은 실제 claim-pull wiring으로
  * 구동하고 관측은 Admin read path({@link PipelineQueryService})로만 한다.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
-        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class,
+        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, TerraformJobStateRecorder.class,
         ConditionCheckTask.class, ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class,
         PipelineInserter.class, RecipeCatalog.class, PipelineQueryService.class, PipelineExecutionTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -73,6 +75,7 @@ class TerraformResultQueryTest {
     @Autowired private TaskAttemptRepository taskAttemptRepository;
     @Autowired private TaskCheckRepository taskCheckRepository;
     @Autowired private TerraformResultRepository terraformResultRepository;
+    @Autowired private TerraformJobStateRepository terraformJobStateRepository;
     @Autowired private MutableClock clock;
     @Autowired private FakeInfraManagerClient infraManagerClient;
 
@@ -80,7 +83,7 @@ class TerraformResultQueryTest {
     void reset() {
         clock.set(START);
         infraManagerClient.onDispatch(() -> "[\"job-1\"]");
-        infraManagerClient.onPoll(TerraformPoll::running);
+        infraManagerClient.onPoll(() -> TerraformPoll.running("RUNNING"));
         infraManagerClient.onCheck(() -> false);
         infraManagerClient.onResult(() -> "terraform: ok");
     }
@@ -89,6 +92,7 @@ class TerraformResultQueryTest {
     void clean() {
         taskCheckRepository.deleteAll();
         terraformResultRepository.deleteAll();
+        terraformJobStateRepository.deleteAll();
         taskAttemptRepository.deleteAll();
         taskRepository.deleteAll();
         pipelineRepository.deleteAll();
@@ -115,7 +119,6 @@ class TerraformResultQueryTest {
         TerraformResultDetail body = queryService.terraformResult(pipeline.getId(), taskId, 1, "job-2");
         assertThat(body.succeeded()).isFalse();
         assertThat(body.truncated()).isFalse();
-        assertThat(body.resultPath()).isEqualTo("s3://bucket/job-2.log");
         assertThat(body.content()).isEqualTo("terraform: apply failed");
     }
 
@@ -125,7 +128,7 @@ class TerraformResultQueryTest {
         Pipeline pipeline = createWithOneFailedOfTwoJobs("trq-pointer");
         long taskId = firstTask(pipeline).getId();
 
-        // 조회 실패 job도 행은 남는다 — hasBody = false인 포인터 행(원본 추적은 resultPath)
+        // 조회 실패 job도 행은 남는다 — hasBody = false인 본문 없는 행
         TaskAttemptView attempt = queryService.taskDetail(pipeline.getId(), taskId).attempts().getFirst();
         assertThat(attempt.terraformResults())
                 .extracting(TerraformResultSummary::jobId, TerraformResultSummary::hasBody)
@@ -134,7 +137,6 @@ class TerraformResultQueryTest {
         // 본문 엔드포인트는 행 부재(404)가 아니라 content = null인 200으로 답한다
         TerraformResultDetail body = queryService.terraformResult(pipeline.getId(), taskId, 1, "job-2");
         assertThat(body.content()).isNull();
-        assertThat(body.resultPath()).isEqualTo("s3://bucket/job-2.log");
     }
 
     @Test
@@ -169,8 +171,8 @@ class TerraformResultQueryTest {
         Pipeline pipeline = creator.create(target, PipelineType.DELETE);
         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
         infraManagerClient.onPollByJob(jobId -> "job-2".equals(jobId)
-                ? TerraformPoll.failure("s3://bucket/job-2.log")
-                : TerraformPoll.success());
+                ? TerraformPoll.failure("FAILED", null)
+                : TerraformPoll.success("COMPLETED"));
         pipelineWorker.pollOnce();   // dispatch → IN_PROGRESS (attempt 1)
         pipelineWorker.pollOnce();   // poll → 전원 terminal, job-2 실패 → JOB_FAILED + result 기록
         return pipeline;
