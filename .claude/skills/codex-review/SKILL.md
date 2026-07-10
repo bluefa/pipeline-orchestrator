@@ -1,6 +1,6 @@
 ---
 name: codex-review
-description: Cross-review the current branch with OpenAI Codex CLI (gpt-5.5, reasoning xhigh) as an independent second model. Use for pre-PR sign-off and major-decision validation, especially on concurrency, transactions, and the ADR-016 invariants — where a single-model loop has blind spots. Run several rounds until no P0/P1 remains.
+description: Cross-review the current branch with OpenAI Codex CLI (gpt-5.6-sol, reasoning xhigh) as an independent second model. Use for pre-PR sign-off and major-decision validation, especially on concurrency, transactions, and the ADR-016 invariants — where a single-model loop has blind spots. Run several rounds until no P0/P1 remains.
 ---
 
 # Codex Review
@@ -13,7 +13,7 @@ merge-ready (no P0/P1).
 
 1. **Full access**: pass `--dangerously-bypass-approvals-and-sandbox` so Codex can read the whole repo
    (`.claude/**`, untracked files, the diff) for skill-aware review.
-2. **Pinned model**: always `-c model="gpt-5.5" -c model_reasoning_effort="xhigh"` on the CLI — do not
+2. **Pinned model**: always `-c model="gpt-5.6-sol" -c model_reasoning_effort="xhigh"` on the CLI — do not
    rely on `~/.codex/config.toml` defaults.
 3. **Foreground/background Bash with `timeout: 600000`** and `</dev/null` (Codex blocks on stdin
    otherwise). Pipe the verdict back to the user verbatim with a 1–3 line summary on top.
@@ -24,7 +24,7 @@ merge-ready (no P0/P1).
 ```bash
 codex exec \
   --dangerously-bypass-approvals-and-sandbox \
-  -c model="gpt-5.5" \
+  -c model="gpt-5.6-sol" \
   -c model_reasoning_effort="xhigh" \
   "$(cat <<'PROMPT'
 <the review prompt — see below>
