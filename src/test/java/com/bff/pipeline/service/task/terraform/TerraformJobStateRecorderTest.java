@@ -7,6 +7,7 @@ import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.entity.TerraformJobState;
+import com.bff.pipeline.model.TerraformJobRef;
 import com.bff.pipeline.repository.TerraformJobStateRepository;
 import java.time.Clock;
 import java.time.Instant;
@@ -41,8 +42,8 @@ class TerraformJobStateRecorderTest {
 
     @Test
     void upsertsOneRowPerJobAndUpdatesStateInPlaceAcrossPolls() {
-        recorder().recordObserved(task(42L), attempt(1), "job-1", TerraformPoll.running("PLANNING"));
-        recorder().recordObserved(task(42L), attempt(1), "job-1", TerraformPoll.success("COMPLETED"));
+        recorder().recordObserved(ref("job-1"), TerraformPoll.running("PLANNING"));
+        recorder().recordObserved(ref("job-1"), TerraformPoll.success("COMPLETED"));
 
         assertThat(repository.findAll())
                 .extracting(TerraformJobState::getJobId, TerraformJobState::getLastState,
@@ -52,7 +53,7 @@ class TerraformJobStateRecorderTest {
 
     @Test
     void recordsTheFailureReasonWhenAJobIsObservedFailed() {
-        recorder().recordObserved(task(42L), attempt(1), "job-1",
+        recorder().recordObserved(ref("job-1"),
                 TerraformPoll.failure("FAILED", "Error: exit status 1"));
 
         assertThat(repository.findAll()).singleElement().satisfies(row -> {
@@ -64,8 +65,8 @@ class TerraformJobStateRecorderTest {
 
     @Test
     void recordsACallErrorKeepingThePriorObservedState() {
-        recorder().recordObserved(task(42L), attempt(1), "job-1", TerraformPoll.running("APPLYING"));
-        recorder().recordCallError(task(42L), attempt(1), "job-1", "infra-manager call failed: 503");
+        recorder().recordObserved(ref("job-1"), TerraformPoll.running("APPLYING"));
+        recorder().recordCallError(ref("job-1"), "infra-manager call failed: 503");
 
         assertThat(repository.findAll()).singleElement().satisfies(row -> {
             assertThat(row.getLastState()).isEqualTo("APPLYING");   // 상태 조회를 못 했으니 직전 관측 유지
@@ -76,8 +77,8 @@ class TerraformJobStateRecorderTest {
 
     @Test
     void clearsThePriorCallErrorOnASubsequentGoodPoll() {
-        recorder().recordCallError(task(42L), attempt(1), "job-1", "infra-manager call failed: 503");
-        recorder().recordObserved(task(42L), attempt(1), "job-1", TerraformPoll.success("COMPLETED"));
+        recorder().recordCallError(ref("job-1"), "infra-manager call failed: 503");
+        recorder().recordObserved(ref("job-1"), TerraformPoll.success("COMPLETED"));
 
         assertThat(repository.findAll()).singleElement().satisfies(row -> {
             assertThat(row.getLastState()).isEqualTo("COMPLETED");
@@ -87,9 +88,9 @@ class TerraformJobStateRecorderTest {
 
     @Test
     void recordsTheResponseBodyAndKeepsItAcrossACallError() {
-        recorder().recordObserved(task(42L), attempt(1), "job-1",
+        recorder().recordObserved(ref("job-1"),
                 TerraformPoll.running("APPLYING").withResponse("{\"terraformState\":\"APPLYING\",\"id\":7}"));
-        recorder().recordCallError(task(42L), attempt(1), "job-1", "infra-manager call failed: 503");
+        recorder().recordCallError(ref("job-1"), "infra-manager call failed: 503");
 
         assertThat(repository.findAll()).singleElement().satisfies(row -> {
             // 원문은 마지막 정상 폴 것을 유지한다 — 호출 실패 turn은 body를 못 받으므로 직전 원문을 보존한다.
@@ -100,7 +101,7 @@ class TerraformJobStateRecorderTest {
 
     @Test
     void clampsOverlongExternalTextToColumnLengths() {
-        recorder().recordObserved(task(42L), attempt(1), "job-1",
+        recorder().recordObserved(ref("job-1"),
                 TerraformPoll.failure("F".repeat(40), "r".repeat(600)));
 
         assertThat(repository.findAll()).singleElement().satisfies(row -> {
@@ -115,8 +116,8 @@ class TerraformJobStateRecorderTest {
         // 결손으로 강등하므로 예외가 판정 경로로 새지 않고, 형제 job의 행은 그대로 남는다(상태 무관여 계약).
         String overlongJobId = "j".repeat(65);
 
-        recorder().recordObserved(task(42L), attempt(1), overlongJobId, TerraformPoll.success("COMPLETED"));
-        recorder().recordObserved(task(42L), attempt(1), "job-2", TerraformPoll.success("COMPLETED"));
+        recorder().recordObserved(ref(overlongJobId), TerraformPoll.success("COMPLETED"));
+        recorder().recordObserved(ref("job-2"), TerraformPoll.success("COMPLETED"));
 
         assertThat(repository.findAll())
                 .extracting(TerraformJobState::getJobId)
@@ -125,6 +126,11 @@ class TerraformJobStateRecorderTest {
 
     private TerraformJobStateRecorder recorder() {
         return new TerraformJobStateRecorder(repository, Clock.fixed(NOW, ZoneOffset.UTC));
+    }
+
+    /** 이 테스트의 모든 관찰은 task 42 / attempt 1 안에서 일어나므로 job id만 달리해 키를 만든다. */
+    private TerraformJobRef ref(String jobId) {
+        return new TerraformJobRef(task(42L), attempt(1), jobId);
     }
 
     private Task task(long id) {

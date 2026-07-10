@@ -5,6 +5,7 @@ import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.entity.TerraformResult;
+import com.bff.pipeline.model.TerraformJobRef;
 import com.bff.pipeline.exception.CallFailedException;
 import com.bff.pipeline.exception.CallInterruptedException;
 import com.bff.pipeline.exception.CallTimeoutException;
@@ -51,31 +52,30 @@ public class TerraformResultRecorder {
     /** 종결 turn에 finished로 관측된 job들의 result를 job별 독립으로 기록한다. 실패는 관찰 결손일 뿐이다. */
     public void recordFinishedJobs(Task task, TaskAttempt attempt, Map<String, TerraformPoll> finishedPolls) {
         for (Map.Entry<String, TerraformPoll> finished : finishedPolls.entrySet()) {
+            TerraformJobRef job = new TerraformJobRef(task, attempt, finished.getKey());
             try {
-                record(task, attempt, finished.getKey(), finished.getValue());
+                record(job, finished.getValue());
             } catch (CallInterruptedException interrupted) {
                 throw interrupted;   // 인터럽트 의미 보존 — 다음 폴 turn의 재실행이 자기치유한다(클래스 javadoc)
             } catch (RuntimeException failure) {
                 // harness-allow: targeted-catch — 관찰 전용 계약의 경계다(인터럽트는 위에서 재전파, 원인은 error 로그).
                 // 어떤 기록 실패도 태스크 판정을 바꾸지 않는다. 판정을 막으면 write-back이 불발돼
                 // lease 회수 → 재크래시 루프에 갇히므로, 여기서 관찰 결손으로 강등하고 소리 내어 남긴다.
-                log.error("task {} attempt {} job {}: terraform result recording failed — observation lost",
-                        task.getId(), attempt.getAttemptNumber(), finished.getKey(), failure);
+                log.error("{}: terraform result recording failed — observation lost", job, failure);
             }
         }
     }
 
-    private void record(Task task, TaskAttempt attempt, String jobId, TerraformPoll poll) {
-        int attemptNumber = attempt.getAttemptNumber();
-        if (repository.existsByTaskIdAndAttemptNumberAndJobId(task.getId(), attemptNumber, jobId)) {
+    private void record(TerraformJobRef job, TerraformPoll poll) {
+        if (repository.existsByTaskIdAndAttemptNumberAndJobId(job.taskId(), job.attemptNumber(), job.jobId())) {
             return;
         }
-        String body = fetchBody(task, jobId);
+        String body = fetchBody(job);
         boolean truncated = body != null && body.length() > MAX_RESULT_CHARS;
         TerraformResult row = TerraformResult.builder()
-                .taskId(task.getId())
-                .attemptNumber(attemptNumber)
-                .jobId(jobId)
+                .taskId(job.taskId())
+                .attemptNumber(job.attemptNumber())
+                .jobId(job.jobId())
                 .succeeded(poll.succeeded())
                 .result(truncated ? body.substring(body.length() - MAX_RESULT_CHARS) : body)
                 .truncated(truncated)
@@ -89,8 +89,7 @@ public class TerraformResultRecorder {
             if (!isAttemptJobDuplicate(violation)) {
                 throw violation;
             }
-            log.debug("task {} attempt {} job {}: terraform result already recorded concurrently",
-                    task.getId(), attemptNumber, jobId);
+            log.debug("{}: terraform result already recorded concurrently", job);
         }
     }
 
@@ -109,12 +108,11 @@ public class TerraformResultRecorder {
     }
 
     /** 본문 조회는 best-effort — 호출 실패는 본문 없는 행으로 강등한다(null 반환). CallInterrupted는 전파. */
-    private String fetchBody(Task task, String jobId) {
+    private String fetchBody(TerraformJobRef job) {
         try {
-            return infraManagerClient.terraformJobResult(jobId, task.getOperation());
+            return infraManagerClient.terraformJobResult(job.jobId(), job.task().getOperation());
         } catch (CallFailedException | CallTimeoutException fetchFailure) {
-            log.warn("task {} job {}: terraform result fetch failed, keeping a body-less row: {}",
-                    task.getId(), jobId, fetchFailure.getMessage());
+            log.warn("{}: terraform result fetch failed, keeping a body-less row: {}", job, fetchFailure.getMessage());
             return null;
         }
     }

@@ -10,6 +10,7 @@ import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.TaskProgress;
+import com.bff.pipeline.model.TerraformJobRef;
 import com.bff.pipeline.model.TaskType;
 import com.bff.pipeline.utils.TaskSettingsResolver;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -172,15 +173,16 @@ public class TerraformTask implements TaskType {
      * 관측을 유지하며 다음 attempt의 재dispatch로 신선도가 해소된다). 관찰 기록은 판정을 바꾸지 않는다.
      */
     private TerraformPoll pollAndObserve(Task task, TaskAttempt attempt, String jobId) {
+        TerraformJobRef job = new TerraformJobRef(task, attempt, jobId);
         try {
             TerraformPoll poll = infraManagerClient.terraformJobStatus(jobId, task.getOperation());
             if (poll == null) {
                 throw new CallFailedException("InfraManager returned no status for job " + jobId);
             }
-            jobStateRecorder.recordObserved(task, attempt, jobId, poll);
+            jobStateRecorder.recordObserved(job, poll);
             return poll;
         } catch (CallFailedException | CallTimeoutException callError) {
-            jobStateRecorder.recordCallError(task, attempt, jobId, callError.getMessage());
+            jobStateRecorder.recordCallError(job, callError.getMessage());
             throw callError;
         }
     }
