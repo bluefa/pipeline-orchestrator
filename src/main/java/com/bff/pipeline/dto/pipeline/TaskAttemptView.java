@@ -14,8 +14,9 @@ import lombok.Builder;
  * 해당 task type만의 사적 계약이므로 이 API는 파싱하지 않고 원문 그대로 노출한다. check는 없으면 null이다.
  * failureDetail은 errorCode를 보충하는 실패 원인 텍스트(예외 메시지 등)로, 실패 종결이 아니면 null이다.
  * terraformResults는 이 attempt에서 종결로 관측·기록된 job별 result 메타다(설계 §4.5) — 본문은 싣지 않으며,
- * TERRAFORM_JOB이 아니거나 기록이 없으면 빈 목록이다. 와이어 필드는 snake_case로 직렬화한다.
- * 인접 동형 인자가 많아 위치 기반 생성 대신 {@code @Builder}로 만든다.
+ * TERRAFORM_JOB이 아니거나 기록이 없으면 빈 목록이다. jobStates는 이 attempt에서 폴로 관측된 job별 진행-시점
+ * 상태다(원시 terraformState·실패 사유·폴 호출 오류) — 종결 전에도 채워지며, 마찬가지로 없으면 빈 목록이다.
+ * 와이어 필드는 snake_case로 직렬화한다. 인접 동형 인자가 많아 위치 기반 생성 대신 {@code @Builder}로 만든다.
  */
 @Builder
 public record TaskAttemptView(
@@ -27,10 +28,11 @@ public record TaskAttemptView(
         @JsonProperty("started_at") Instant startedAt,
         @JsonProperty("finished_at") Instant finishedAt,
         @JsonProperty("check") TaskCheckView check,
-        @JsonProperty("terraform_results") List<TerraformResultSummary> terraformResults) {
+        @JsonProperty("terraform_results") List<TerraformResultSummary> terraformResults,
+        @JsonProperty("job_states") List<TerraformJobStateSummary> jobStates) {
 
     public static TaskAttemptView from(TaskAttempt attempt, TaskCheck check,
-            List<TerraformResultSummary> terraformResults) {
+            List<TerraformResultSummary> terraformResults, List<TerraformJobStateSummary> jobStates) {
         return TaskAttemptView.builder()
                 .attemptNumber(attempt.getAttemptNumber())
                 .status(attempt.getStatus())
@@ -41,6 +43,7 @@ public record TaskAttemptView(
                 .finishedAt(attempt.getFinishedAt())
                 .check(check == null ? null : TaskCheckView.from(check))
                 .terraformResults(terraformResults)
+                .jobStates(jobStates)
                 .build();
     }
 }

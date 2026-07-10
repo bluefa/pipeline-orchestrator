@@ -14,6 +14,7 @@ import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.repository.TerraformJobStateRepository;
 import com.bff.pipeline.service.execution.PipelineClaimer;
 import com.bff.pipeline.service.execution.PipelineWorker;
 import com.bff.pipeline.service.execution.StepReporter;
@@ -26,6 +27,7 @@ import com.bff.pipeline.service.task.ObservationRecorder;
 import com.bff.pipeline.service.task.TaskCanceller;
 import com.bff.pipeline.service.task.TaskStateMachine;
 import com.bff.pipeline.service.task.TaskTypeRegistry;
+import com.bff.pipeline.service.task.terraform.TerraformJobStateRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformResultRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
 import java.time.Duration;
@@ -50,7 +52,7 @@ import org.springframework.transaction.annotation.Transactional;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
-        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, ConditionCheckTask.class,
+        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, TerraformJobStateRecorder.class, ConditionCheckTask.class,
         ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class, PipelineInserter.class,
         RecipeCatalog.class, PipelineExecutionTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -64,6 +66,7 @@ class ObservationTest {
     @Autowired private PipelineRepository pipelineRepository;
     @Autowired private TaskAttemptRepository taskAttemptRepository;
     @Autowired private TaskCheckRepository taskCheckRepository;
+    @Autowired private TerraformJobStateRepository terraformJobStateRepository;
     @Autowired private MutableClock clock;
     @Autowired private FakeInfraManagerClient infraManagerClient;
 
@@ -71,13 +74,14 @@ class ObservationTest {
     void reset() {
         clock.set(START);
         infraManagerClient.onDispatch(() -> "[\"job-1\"]");
-        infraManagerClient.onPoll(TerraformPoll::running);
+        infraManagerClient.onPoll(() -> TerraformPoll.running("RUNNING"));
         infraManagerClient.onCheck(() -> false);
     }
 
     @AfterEach
     void clean() {
         taskCheckRepository.deleteAll();
+        terraformJobStateRepository.deleteAll();
         taskAttemptRepository.deleteAll();
         taskRepository.deleteAll();
         pipelineRepository.deleteAll();
@@ -86,7 +90,7 @@ class ObservationTest {
     @Test
     void aHappyTerraformTaskRecordsOneDoneAttemptWithItsResponse() {
         Pipeline pipeline = creator.create("obs-happy", PipelineType.DELETE);
-        infraManagerClient.onPoll(TerraformPoll::success);
+        infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
         pipelineWorker.pollOnce();
         pipelineWorker.pollOnce();
 
@@ -102,7 +106,7 @@ class ObservationTest {
     @Test
     void aRetryingTaskRecordsOneAttemptRowPerAttemptWithIncreasingAttemptNo() {
         Pipeline pipeline = creator.create("obs-retry", PipelineType.DELETE);
-        infraManagerClient.onPoll(TerraformPoll::failure);
+        infraManagerClient.onPoll(() -> TerraformPoll.failure("FAILED", null));
 
         runUntilTerminal(pipeline);
 
@@ -117,7 +121,7 @@ class ObservationTest {
     @Test
     void aTerraformPolledRunningUpdatesOneCheckRowInPlace() {
         Pipeline pipeline = creator.create("obs-tf-running", PipelineType.DELETE);
-        infraManagerClient.onPoll(TerraformPoll::running);
+        infraManagerClient.onPoll(() -> TerraformPoll.running("RUNNING"));
         pipelineWorker.pollOnce();                  // dispatch terraform → IN_PROGRESS (attempt 1)
         for (int i = 0; i < 3; i++) {
             pipelineWorker.pollOnce();              // poll terraform → RUNNING, updated in place
@@ -145,7 +149,8 @@ class ObservationTest {
         assertThat(attempts).allSatisfy(attempt -> {
             assertThat(attempt.getStatus()).isEqualTo(TaskStatus.FAILED);
             assertThat(attempt.getErrorCode()).isEqualTo(ErrorCode.CONDITION_NOT_MET);
-            assertThat(attempt.getResponse()).isEqualTo("{\"met\":false}");   // raw check payload recorded
+            // 타입 DTO가 버리는 detail 필드까지 원문 그대로 task_attempt.response에 실린다(full-body 관측)
+            assertThat(attempt.getResponse()).isEqualTo("{\"met\":false,\"detail\":\"probe\"}");
             assertThat(taskCheckRepository.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
                 assertThat(check.getCallCount()).isEqualTo(1);
                 assertThat(check.getNotMetCount()).isEqualTo(1);
@@ -167,7 +172,8 @@ class ObservationTest {
         TaskAttempt attempt = taskAttemptRepository.findByTaskIdAndAttemptNumber(conditionTaskId, 1).orElseThrow();
         assertThat(attempt.getStatus()).isEqualTo(TaskStatus.DONE);
         assertThat(attempt.getErrorCode()).isNull();
-        assertThat(attempt.getResponse()).isEqualTo("{\"met\":true}");   // raw check payload recorded on the met poll
+        // met 폴의 원문도 여분 필드 포함 full-body 그대로 기록된다
+        assertThat(attempt.getResponse()).isEqualTo("{\"met\":true,\"detail\":\"probe\"}");
         assertThat(taskCheckRepository.findByTaskAttemptId(attempt.getId())).hasValueSatisfying(check -> {
             assertThat(check.getCallCount()).isEqualTo(1);
             assertThat(check.getLastExternalStatus()).isEqualTo("MET");
@@ -178,7 +184,7 @@ class ObservationTest {
 
     private Pipeline createInstallAtConditionInProgress() {
         Pipeline pipeline = creator.create("obs-cond", PipelineType.INSTALL);
-        infraManagerClient.onPoll(TerraformPoll::success);
+        infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
         pipelineWorker.pollOnce();   // dispatch plan terraform
         pipelineWorker.pollOnce();   // poll plan → DONE + promote apply READY
         pipelineWorker.pollOnce();   // dispatch apply terraform

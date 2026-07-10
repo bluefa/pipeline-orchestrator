@@ -13,6 +13,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.bff.pipeline.client.condition.NetworkReadyBinding;
 import com.bff.pipeline.client.terraform.TerraformBindingCatalog;
+import com.bff.pipeline.dto.ConditionPoll;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
@@ -53,7 +54,7 @@ class InfraManagerFeignIntegrationTest {
         InfraManagerFeignClient client = feignClient(wireMock.baseUrl(), 500);
         InfraManagerOperationRegistry registry = new InfraManagerOperationRegistry(
                 TerraformBindingCatalog.rows(client),
-                List.of(new NetworkReadyBinding(client, objectMapper)));
+                List.of(new NetworkReadyBinding(client)));
         adapter = new InfraManagerFeignAdapter(client, registry, objectMapper);
     }
 
@@ -68,10 +69,13 @@ class InfraManagerFeignIntegrationTest {
         wireMock.stubFor(get(urlPathEqualTo("/infra/terraform-jobs/apply/job-7"))
                 .willReturn(aResponse().withHeader("Content-Type", "application/json")
                         .withBody("{\"id\":7,\"terraformState\":\"COMPLETED\",\"type\":\"APPLY\","
-                                + "\"resultPath\":\"gs://results/7\",\"cloudAuthIdentity\":\"x\"}")));
+                                + "\"cloudAuthIdentity\":\"x\"}")));
 
+        // 판정은 COMPLETED→성공이고, 응답 원문(response)은 타입 DTO가 버리는 id/type/cloudAuthIdentity까지 그대로 보존한다.
         assertThat(adapter.terraformJobStatus("job-7", TaskOperation.AWS_SERVICE_TF_APPLY))
-                .isEqualTo(TerraformPoll.success("gs://results/7"));
+                .isEqualTo(TerraformPoll.success("COMPLETED")
+                        .withResponse("{\"id\":7,\"terraformState\":\"COMPLETED\",\"type\":\"APPLY\","
+                                + "\"cloudAuthIdentity\":\"x\"}"));
     }
 
     @Test
@@ -102,7 +106,7 @@ class InfraManagerFeignIntegrationTest {
                         .withBody("{\"terraformState\":\"DESTROYED\"}")));
 
         assertThat(adapter.terraformJobStatus("job-9", TaskOperation.GCP_BDC_TF_DESTROY))
-                .isEqualTo(TerraformPoll.success());
+                .isEqualTo(TerraformPoll.success("DESTROYED").withResponse("{\"terraformState\":\"DESTROYED\"}"));
     }
 
     @Test
@@ -124,6 +128,30 @@ class InfraManagerFeignIntegrationTest {
 
         assertThat(adapter.terraformJobResult("job-7", TaskOperation.AWS_SERVICE_TF_PLAN))
                 .isEqualTo("Plan: 3 to add, 0 to change, 0 to destroy.");
+    }
+
+    @Test
+    void capturesTheFullConditionResponseBodyEndToEnd() {
+        wireMock.stubFor(get(urlPathEqualTo("/infra/network/ready")).withQueryParam("target", equalTo("target-a"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json")
+                        .withBody("{\"met\":true,\"detail\":\"vpc-ready\"}")));
+
+        ConditionPoll poll = adapter.checkCondition("target-a", TaskOperation.NETWORK_READY);
+
+        assertThat(poll.met()).isTrue();
+        // 원문(response)은 타입 DTO가 안 읽는 detail 필드까지 보존한다 — 그 폴의 task_attempt.response로 기록된다.
+        assertThat(poll.response()).isEqualTo("{\"met\":true,\"detail\":\"vpc-ready\"}");
+    }
+
+    @Test
+    void aNonBooleanConditionFieldBecomesACallFailure() {
+        // 잘못된 타입의 met은 관대한 강제 변환으로 NOT_MET이 되면 안 된다 — 쓸 수 없는 응답이므로 CallFailed로 닫힌다.
+        wireMock.stubFor(get(urlPathEqualTo("/infra/network/ready")).withQueryParam("target", equalTo("target-a"))
+                .willReturn(aResponse().withHeader("Content-Type", "application/json")
+                        .withBody("{\"met\":\"not-a-boolean\"}")));
+
+        assertThatThrownBy(() -> adapter.checkCondition("target-a", TaskOperation.NETWORK_READY))
+                .isInstanceOf(CallFailedException.class);
     }
 
     @Test
@@ -174,7 +202,7 @@ class InfraManagerFeignIntegrationTest {
                         .withBody("{\"terraformState\":\"CREATING\"}")));
 
         assertThat(adapter.terraformJobStatus("job-7", TaskOperation.AWS_SERVICE_TF_APPLY))
-                .isEqualTo(TerraformPoll.running());
+                .isEqualTo(TerraformPoll.running("CREATING").withResponse("{\"terraformState\":\"CREATING\"}"));
     }
 
     private InfraManagerFeignClient feignClient(String baseUrl, int readTimeoutMillis) {

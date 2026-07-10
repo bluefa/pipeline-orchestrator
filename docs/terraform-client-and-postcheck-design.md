@@ -1,5 +1,11 @@
 # Terraform 클라이언트 인터페이스 재검토 + postCheck ADR 확장 (설계 노트)
 
+> **개정 (2026-07, 오너 결정):** `resultPath`/`result_path`는 "어디에도 쓸 수 없는 정보"로 판정돼 **전면 제거**됐다.
+> 아래 본문의 status 응답 `resultPath` 재료, `TerraformJobStatusResponse`/`TerraformPoll`의 resultPath 필드,
+> `terraform_result.result_path` 컬럼·DTO·P5 필드 목록, "원본 전문은 result_path로 안내" 서술은 모두 **폐기**다
+> (이 노트는 당시 설계 기록으로 남긴다). 현행 정본은 ADR-016 §3과 코드다. terraform 완료 로그는 오직
+> `/result`(String → `terraform_result.result` → `content`)에서만 얻으며, 실패 사유는 `failReason`이 담는다.
+
 - Status: ACCEPTED-IN-PART (2026-07-02 owner 답변 반영 — §5. 설계 2 채택, postCheck는 확장 A 확정. 코드 무변경)
 - 입력: 확정된 InfraManager Terraform 실 API 명세 (AWS 3패밀리 / GCP 2 / Azure 1 / IDC 1,
   dispatch·job 조회·result 조회)

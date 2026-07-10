@@ -18,6 +18,7 @@ import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
+import com.bff.pipeline.repository.TerraformJobStateRepository;
 import com.bff.pipeline.repository.TerraformResultRepository;
 import com.bff.pipeline.entity.TerraformResult;
 import com.bff.pipeline.repository.TaskRepository;
@@ -34,6 +35,7 @@ import com.bff.pipeline.service.task.ObservationRecorder;
 import com.bff.pipeline.service.task.TaskCanceller;
 import com.bff.pipeline.service.task.TaskStateMachine;
 import com.bff.pipeline.service.task.TaskTypeRegistry;
+import com.bff.pipeline.service.task.terraform.TerraformJobStateRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformResultRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
 import java.time.Duration;
@@ -65,7 +67,7 @@ import com.bff.pipeline.exception.CallFailedException;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
-        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, ConditionCheckTask.class,
+        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, TerraformJobStateRecorder.class, ConditionCheckTask.class,
         ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class, PipelineInserter.class,
         PipelineControl.class, RecipeCatalog.class, PipelineExecutionTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -82,6 +84,7 @@ class PipelineExecutionTest {
     @Autowired private PipelineRepository pipelineRepository;
     @Autowired private TaskAttemptRepository taskAttemptRepository;
     @Autowired private TerraformResultRepository terraformResultRepository;
+    @Autowired private TerraformJobStateRepository terraformJobStateRepository;
     @Autowired private MutableClock clock;
     @Autowired private FakeInfraManagerClient infraManagerClient;
     @Autowired private JdbcTemplate jdbcTemplate;
@@ -90,7 +93,7 @@ class PipelineExecutionTest {
     void reset() {
         clock.set(START);
         infraManagerClient.onDispatch(() -> "[\"job-1\"]");
-        infraManagerClient.onPoll(TerraformPoll::running);
+        infraManagerClient.onPoll(() -> TerraformPoll.running("RUNNING"));
         infraManagerClient.onCheck(() -> false);
         infraManagerClient.onResult(() -> "terraform: ok");
     }
@@ -98,6 +101,7 @@ class PipelineExecutionTest {
     @AfterEach
     void clean() {
         terraformResultRepository.deleteAll();
+        terraformJobStateRepository.deleteAll();
         taskAttemptRepository.deleteAll();
         taskRepository.deleteAll();
         pipelineRepository.deleteAll();
@@ -109,7 +113,7 @@ class PipelineExecutionTest {
     void terraformHappyPathReachesDoneAndRecordsTheResponse() {
         // AWS delete recipe = destroy 3단계(BDC service level → BDC common → 서비스), 단계마다 dispatch + poll.
         Pipeline pipeline = creator.create("e-happy", PipelineType.DELETE);
-        infraManagerClient.onPoll(TerraformPoll::success);
+        infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
 
         pipelineWorker.pollOnce();   // dispatch (BDC service level destroy) → IN_PROGRESS
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
@@ -130,7 +134,7 @@ class PipelineExecutionTest {
     @Test
     void recordsATerraformResultRowPerJobOnTheConcludingTurn() {
         Pipeline pipeline = creator.create("e-postcheck", PipelineType.DELETE);
-        infraManagerClient.onPoll(() -> TerraformPoll.success("gs://results/1"));
+        infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
         infraManagerClient.onResult(() -> "Destroy complete! Resources: 3 destroyed.");
 
         pipelineWorker.pollOnce();   // dispatch
@@ -141,7 +145,6 @@ class PipelineExecutionTest {
             assertThat(row.getAttemptNumber()).isEqualTo(1);
             assertThat(row.getJobId()).isEqualTo("job-1");
             assertThat(row.isSucceeded()).isTrue();
-            assertThat(row.getResultPath()).isEqualTo("gs://results/1");
             assertThat(row.getResult()).isEqualTo("Destroy complete! Resources: 3 destroyed.");
             assertThat(row.isTruncated()).isFalse();
         });
@@ -153,8 +156,8 @@ class PipelineExecutionTest {
         Pipeline pipeline = creator.create("e-wait", PipelineType.DELETE);
         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
         Map<String, TerraformPoll> polls = new HashMap<>();
-        polls.put("job-1", TerraformPoll.failure());
-        polls.put("job-2", TerraformPoll.running());
+        polls.put("job-1", TerraformPoll.failure("FAILED", null));
+        polls.put("job-2", TerraformPoll.running("RUNNING"));
         infraManagerClient.onPollByJob(polls::get);
 
         pipelineWorker.pollOnce();   // dispatch (attempt 1)
@@ -163,7 +166,7 @@ class PipelineExecutionTest {
         assertThat(task(pipeline, 0).getFailCount()).isZero();
         assertThat(terraformResultRepository.findAll()).isEmpty();   // 종결 turn 전에는 기록도 없다
 
-        polls.put("job-2", TerraformPoll.success());
+        polls.put("job-2", TerraformPoll.success("COMPLETED"));
         clock.advance(Duration.ofMinutes(11));   // polling_interval(PT10M) 경과 후 다음 폴 — executionTimeout(PT50M) 이내
         pipelineWorker.pollOnce();   // 전원 terminal → JOB_FAILED(재시도 가능) + 두 job 모두 관찰 기록
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
@@ -179,8 +182,8 @@ class PipelineExecutionTest {
         Pipeline pipeline = creator.create("e-deadline", PipelineType.DELETE);
         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
         Map<String, TerraformPoll> polls = new HashMap<>();
-        polls.put("job-1", TerraformPoll.failure());
-        polls.put("job-2", TerraformPoll.running());   // 데드라인까지 안 끝난다
+        polls.put("job-1", TerraformPoll.failure("FAILED", null));
+        polls.put("job-2", TerraformPoll.running("RUNNING"));   // 데드라인까지 안 끝난다
         infraManagerClient.onPollByJob(polls::get);
 
         pipelineWorker.pollOnce();   // dispatch (attempt 1)
@@ -198,7 +201,7 @@ class PipelineExecutionTest {
     void installPromotesTheSuccessorInTheSameReportAndFinishes() {
         // AWS install recipe = 서비스 plan·apply → 네트워크 준비 확인 → BDC common plan·apply → BDC service level plan·apply.
         Pipeline pipeline = creator.create("e-install", PipelineType.INSTALL);
-        infraManagerClient.onPoll(TerraformPoll::success);
+        infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
         infraManagerClient.onCheck(() -> true);
         for (int sequence = 1; sequence <= 6; sequence++) {
             assertThat(task(pipeline, sequence).getStatus()).isEqualTo(TaskStatus.BLOCKED);
@@ -229,7 +232,7 @@ class PipelineExecutionTest {
     @Test
     void conditionNotMetRetriesThenFailsAtMaxWithConditionNotMet() {
         Pipeline pipeline = creator.create("e-cond-fail", PipelineType.INSTALL);
-        infraManagerClient.onPoll(TerraformPoll::success);
+        infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
         infraManagerClient.onCheck(() -> false);   // condition never met → each poll is a failed poll
 
         runUntilTerminal(pipeline);
@@ -246,7 +249,7 @@ class PipelineExecutionTest {
     @Test
     void terraformFailureRetriesThenFailsAtMaxAndCascadeCancels() {
         Pipeline pipeline = creator.create("e-fail", PipelineType.INSTALL);
-        infraManagerClient.onPoll(TerraformPoll::failure);
+        infraManagerClient.onPoll(() -> TerraformPoll.failure("FAILED", null));
 
         runUntilTerminal(pipeline);
 
@@ -357,7 +360,7 @@ class PipelineExecutionTest {
     void nJobsCompleteOnlyWhenAllSucceed() {
         Pipeline pipeline = creator.create("e-n", PipelineType.DELETE);
         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\",\"job-3\"]");
-        infraManagerClient.onPoll(TerraformPoll::success);
+        infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
 
         pipelineWorker.pollOnce();
         pipelineWorker.pollOnce();

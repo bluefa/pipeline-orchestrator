@@ -24,6 +24,7 @@ import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.repository.TerraformJobStateRepository;
 import com.bff.pipeline.repository.TerraformResultRepository;
 import com.bff.pipeline.service.execution.PipelineClaimer;
 import com.bff.pipeline.service.execution.PipelineWorker;
@@ -39,6 +40,7 @@ import com.bff.pipeline.service.task.ObservationRecorder;
 import com.bff.pipeline.service.task.TaskCanceller;
 import com.bff.pipeline.service.task.TaskStateMachine;
 import com.bff.pipeline.service.task.TaskTypeRegistry;
+import com.bff.pipeline.service.task.terraform.TerraformJobStateRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformResultRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
 import java.time.Duration;
@@ -70,7 +72,7 @@ import org.springframework.transaction.annotation.Transactional;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
-        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class,
+        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, TerraformJobStateRecorder.class,
         ConditionCheckTask.class, ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class,
         PipelineInserter.class, PipelineControl.class, RecipeCatalog.class, PipelineQueryService.class,
         TargetSourcePipelineController.class, PipelineIntegrationTest.Wiring.class})
@@ -91,13 +93,14 @@ class PipelineIntegrationTest {
     @Autowired private TaskAttemptRepository taskAttemptRepository;
     @Autowired private TaskCheckRepository taskCheckRepository;
     @Autowired private TerraformResultRepository terraformResultRepository;
+    @Autowired private TerraformJobStateRepository terraformJobStateRepository;
 
     @BeforeEach
     void reset() {
         clock.set(START);
         infraManagerClient.onCloudProvider(CloudProvider.AWS);
         infraManagerClient.onDispatch(() -> "[\"job-1\"]");
-        infraManagerClient.onPoll(TerraformPoll::running);
+        infraManagerClient.onPoll(() -> TerraformPoll.running("RUNNING"));
         infraManagerClient.onCheck(() -> false);
         infraManagerClient.onResult(() -> "terraform: ok");
     }
@@ -107,6 +110,7 @@ class PipelineIntegrationTest {
         // 자식 테이블부터 지운다(task_check→task_attempt, terraform_result→task) — 비-tx 공유 H2에 잔여물을 남기지 않는다
         taskCheckRepository.deleteAll();
         terraformResultRepository.deleteAll();
+        terraformJobStateRepository.deleteAll();
         taskAttemptRepository.deleteAll();
         taskRepository.deleteAll();
         pipelineRepository.deleteAll();
@@ -221,7 +225,7 @@ class PipelineIntegrationTest {
      */
     @Test
     void aFixedCatalogRecipe_stillCreatesAsInstallUnderTheStartDelay_andRunsToDone() {
-        infraManagerClient.onPoll(TerraformPoll::success);
+        infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
         infraManagerClient.onCheck(() -> true);
 
         PipelineDetail created = controller.create("integ-fixed", new CreatePipelineRequest(PipelineType.INSTALL));

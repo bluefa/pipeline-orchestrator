@@ -17,8 +17,6 @@ public interface TerraformResultMetadata {
 
     boolean getTruncated();
 
-    String getResultPath();
-
     boolean getHasBody();
 
     Instant getCreatedAt();

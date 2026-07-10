@@ -85,7 +85,7 @@ class TimeBoundedInfraManagerClientTest {
     private static InfraManagerClient delegate(Supplier<String> dispatch) {
         return new InfraManagerClient() {
             @Override public String runTerraform(String target, TaskOperation operation) { return dispatch.get(); }
-            @Override public TerraformPoll terraformJobStatus(String jobId, TaskOperation operation) { return TerraformPoll.running(); }
+            @Override public TerraformPoll terraformJobStatus(String jobId, TaskOperation operation) { return TerraformPoll.running("RUNNING"); }
             @Override public String terraformJobResult(String jobId, TaskOperation operation) { return "terraform: ok"; }
             @Override public ConditionPoll checkCondition(String target, TaskOperation operation) { return new ConditionPoll(false, "{}"); }
             @Override public CloudProvider cloudProvider(String target) { return CloudProvider.AWS; }

@@ -36,7 +36,7 @@ public record TaskExecutionSpec(
                 + "재시도한다.";
         String resultStorage = "판정이 내려지는 turn에 종결된 job마다 result API로 terraform log를 조회해 "
                 + "terraform_result 테이블에 job당 1행으로 저장한다. 저장 상한을 넘는 본문은 앞부분을 절단하고 "
-                + "truncated로 표시하며, 조회에 실패한 job은 본문 없이 result_path만 남긴다. 이 저장은 관찰 전용이라 "
+                + "truncated로 표시하며, 조회에 실패한 job은 본문 없이 행만 남긴다. 이 저장은 관찰 전용이라 "
                 + "태스크 판정에는 영향을 주지 않는다.";
         return new TaskExecutionSpec(dispatchApi, statusApi, resultApi, successPolicy, resultStorage);
     }
