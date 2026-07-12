@@ -42,7 +42,7 @@ class TaskDefinitionTest {
         for (TaskDefinition definition : terraformDefinitions()) {
             TerraformJobType expectedJobType = jobTypeOf(definition.operation());
             assertThat(definition.spec().successPolicy()).as("%s", definition)
-                    .contains(expectedJobType.successState());
+                    .contains(String.join("/", expectedJobType.successStates()));
         }
     }
 
