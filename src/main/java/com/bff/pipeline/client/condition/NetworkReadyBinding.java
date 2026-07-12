@@ -5,17 +5,15 @@ import com.bff.pipeline.client.InfraManagerFeignClient;
 import com.bff.pipeline.dto.ConditionPoll;
 import com.bff.pipeline.dto.NetworkReadyResponse;
 import com.bff.pipeline.enums.TaskOperation;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /** NETWORK_READY operation의 InfraManager API 바인딩. */
 @Component
+@RequiredArgsConstructor
 public class NetworkReadyBinding implements ConditionOperationBinding {
 
     private final InfraManagerFeignClient feign;
-
-    public NetworkReadyBinding(InfraManagerFeignClient feign) {
-        this.feign = feign;
-    }
 
     @Override
     public TaskOperation operation() {

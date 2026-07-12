@@ -8,6 +8,7 @@ import com.bff.pipeline.repository.TaskRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -16,17 +17,12 @@ import org.springframework.stereotype.Component;
  * 함께 쓴다. 취소 로직을 한곳에 모아 두면 두 호출 지점이 DRY를 지키고, 태스크가 종료되기 전에 관찰이 반드시 먼저 닫힘을 보장한다.
  */
 @Component
+@RequiredArgsConstructor
 public class TaskCanceller {
 
     private final TaskRepository taskRepository;
     private final ObservationRecorder observationRecorder;
     private final Clock clock;
-
-    public TaskCanceller(TaskRepository taskRepository, ObservationRecorder observationRecorder, Clock clock) {
-        this.taskRepository = taskRepository;
-        this.observationRecorder = observationRecorder;
-        this.clock = clock;
-    }
 
     public void cancelNonTerminal(List<Task> chain) {
         Instant now = clock.instant();

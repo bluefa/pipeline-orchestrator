@@ -21,6 +21,7 @@ import com.bff.pipeline.model.PipelinePlan;
 import com.bff.pipeline.model.PipelinePlan.PlannedStep;
 import java.util.List;
 import java.util.Locale;
+import lombok.RequiredArgsConstructor;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -41,17 +42,12 @@ import com.bff.pipeline.exception.CallFailedException;
  * 감싸 전파한다.
  */
 @Service
+@RequiredArgsConstructor
 public class PipelineCreator {
 
     private final PipelineInserter pipelineInserter;
     private final RecipeCatalog recipeCatalog;
     private final InfraManagerClient infraManagerClient;
-
-    public PipelineCreator(PipelineInserter pipelineInserter, RecipeCatalog recipeCatalog, InfraManagerClient infraManagerClient) {
-        this.pipelineInserter = pipelineInserter;
-        this.recipeCatalog = recipeCatalog;
-        this.infraManagerClient = infraManagerClient;
-    }
 
     /** 카탈로그 recipe 실행(P10). (provider, type)으로 고정 recipe를 골라 실행한다. */
     public Pipeline create(String target, PipelineType type) {

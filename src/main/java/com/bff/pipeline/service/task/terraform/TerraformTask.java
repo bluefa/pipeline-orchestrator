@@ -22,6 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import com.bff.pipeline.exception.CallFailedException;
@@ -56,6 +57,7 @@ import com.bff.pipeline.exception.CallTimeoutException;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class TerraformTask implements TaskType {
 
     public static final String NAME = TaskOperation.Mechanism.TERRAFORM_JOB;
@@ -67,15 +69,6 @@ public class TerraformTask implements TaskType {
     private final TerraformJobStateRecorder jobStateRecorder;
     private final PipelineSettings pipelineSettings;
     private final Clock clock;
-
-    public TerraformTask(InfraManagerClient infraManagerClient, TerraformResultRecorder resultRecorder,
-            TerraformJobStateRecorder jobStateRecorder, PipelineSettings pipelineSettings, Clock clock) {
-        this.infraManagerClient = infraManagerClient;
-        this.resultRecorder = resultRecorder;
-        this.jobStateRecorder = jobStateRecorder;
-        this.pipelineSettings = pipelineSettings;
-        this.clock = clock;
-    }
 
     @Override
     public String taskName() {

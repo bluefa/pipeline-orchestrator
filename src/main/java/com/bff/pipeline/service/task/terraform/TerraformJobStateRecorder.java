@@ -7,6 +7,7 @@ import com.bff.pipeline.repository.TerraformJobStateRepository;
 import java.time.Clock;
 import java.util.Locale;
 import java.util.function.Consumer;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -24,15 +25,11 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class TerraformJobStateRecorder {
 
     private final TerraformJobStateRepository repository;
     private final Clock clock;
-
-    public TerraformJobStateRecorder(TerraformJobStateRepository repository, Clock clock) {
-        this.repository = repository;
-        this.clock = clock;
-    }
 
     /**
      * 정상 폴 1회의 job 상태를 upsert한다 — 원시 상태·실패 사유·응답 원문을 최신값으로 덮고, 이 폴엔 호출 오류가

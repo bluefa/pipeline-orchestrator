@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,6 +36,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 별도 claim 사이클을 거치지 않으니 트랜잭션 중간에 불변식이 깨지는 상태가 남지 않는다.
  */
 @Component
+@RequiredArgsConstructor
 public class StepReporter {
 
     private final PipelineRepository pipelineRepository;
@@ -42,15 +44,6 @@ public class StepReporter {
     private final TaskStateMachine taskStateMachine;
     private final TaskCanceller taskCanceller;
     private final Clock clock;
-
-    public StepReporter(PipelineRepository pipelineRepository, TaskRepository taskRepository, TaskStateMachine taskStateMachine,
-            TaskCanceller taskCanceller, Clock clock) {
-        this.pipelineRepository = pipelineRepository;
-        this.taskRepository = taskRepository;
-        this.taskStateMachine = taskStateMachine;
-        this.taskCanceller = taskCanceller;
-        this.clock = clock;
-    }
 
     /**
      * run 단계가 계산한 outcome을 현재 task에 적용하고 스텝을 마무리한다. outcome이 없는 사이클은 이 메서드가

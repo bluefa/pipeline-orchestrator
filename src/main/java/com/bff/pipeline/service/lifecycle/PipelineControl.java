@@ -8,6 +8,7 @@ import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import java.time.Clock;
 import java.time.Instant;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,20 +32,13 @@ import org.springframework.transaction.annotation.Transactional;
  * 트랜잭션과 live token을 공유하지 않는다. 따라서 terminal resurrection이 불가능하고, 별도 {@code status} 가드가 필요 없다.
  */
 @Service
+@RequiredArgsConstructor
 public class PipelineControl {
 
     private final PipelineRepository pipelineRepository;
     private final TaskRepository taskRepository;
     private final TaskCanceller taskCanceller;
     private final Clock clock;
-
-    public PipelineControl(PipelineRepository pipelineRepository, TaskRepository taskRepository, TaskCanceller taskCanceller,
-            Clock clock) {
-        this.pipelineRepository = pipelineRepository;
-        this.taskRepository = taskRepository;
-        this.taskCanceller = taskCanceller;
-        this.clock = clock;
-    }
 
     @Transactional
     public Pipeline cancel(Long pipelineId) {

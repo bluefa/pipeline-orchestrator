@@ -12,6 +12,7 @@ import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.StatisticsPeriod;
 import com.bff.pipeline.service.lifecycle.PipelineControl;
 import com.bff.pipeline.service.query.PipelineQueryService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -35,15 +36,11 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/pipelines")
+@RequiredArgsConstructor
 public class PipelineController {
 
     private final PipelineQueryService queryService;
     private final PipelineControl pipelineControl;
-
-    public PipelineController(PipelineQueryService queryService, PipelineControl pipelineControl) {
-        this.queryService = queryService;
-        this.pipelineControl = pipelineControl;
-    }
 
     @GetMapping("/statistics/live")
     public LivePipelineStatistics liveStatistics() {

@@ -13,6 +13,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.stream.IntStream;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,20 +33,13 @@ import org.springframework.transaction.annotation.Transactional;
  * Decision 4). {@code PENDING → RUNNING} 전이는 첫 claim 트랜잭션이 수행한다({@code PipelineClaimer}).
  */
 @Component
+@RequiredArgsConstructor
 public class PipelineInserter {
 
     private final PipelineRepository pipelineRepository;
     private final TaskRepository taskRepository;
     private final PipelineSettings pipelineSettings;
     private final Clock clock;
-
-    public PipelineInserter(PipelineRepository pipelineRepository, TaskRepository taskRepository,
-            PipelineSettings pipelineSettings, Clock clock) {
-        this.pipelineRepository = pipelineRepository;
-        this.taskRepository = taskRepository;
-        this.pipelineSettings = pipelineSettings;
-        this.clock = clock;
-    }
 
     @Transactional
     public Pipeline insert(PipelinePlan plan) {

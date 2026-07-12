@@ -14,6 +14,7 @@ import com.bff.pipeline.utils.TaskSettingsResolver;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -43,20 +44,13 @@ import org.springframework.stereotype.Component;
  * 비즈니스 결과는 결코 예외가 아니라 행에 기록되는 {@code ErrorCode} 값이다({@code docs/exception-strategy.md} 참조).
  */
 @Component
+@RequiredArgsConstructor
 public class TaskStateMachine {
 
     private final TaskRepository taskRepository;
     private final ObservationRecorder observationRecorder;
     private final PipelineSettings pipelineSettings;
     private final Clock clock;
-
-    public TaskStateMachine(TaskRepository taskRepository, ObservationRecorder observationRecorder,
-            PipelineSettings pipelineSettings, Clock clock) {
-        this.taskRepository = taskRepository;
-        this.observationRecorder = observationRecorder;
-        this.pipelineSettings = pipelineSettings;
-        this.clock = clock;
-    }
 
     public void applyOutcome(Task task, StepOutcome outcome) {
         if (outcome.dispatchPhase()) observationRecorder.beginAttempt(task);

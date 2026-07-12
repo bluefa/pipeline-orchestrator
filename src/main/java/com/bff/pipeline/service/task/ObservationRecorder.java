@@ -10,6 +10,7 @@ import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
 import java.time.Clock;
 import java.util.Optional;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -29,17 +30,12 @@ import org.springframework.stereotype.Component;
  * 원인 텍스트({@code failureDetail})를 함께 남기되, 외부 유래 텍스트이므로 컬럼 길이로 잘라 저장 실패를 막는다.
  */
 @Component
+@RequiredArgsConstructor
 public class ObservationRecorder {
 
     private final TaskAttemptRepository taskAttemptRepository;
     private final TaskCheckRepository taskCheckRepository;
     private final Clock clock;
-
-    public ObservationRecorder(TaskAttemptRepository taskAttemptRepository, TaskCheckRepository taskCheckRepository, Clock clock) {
-        this.taskAttemptRepository = taskAttemptRepository;
-        this.taskCheckRepository = taskCheckRepository;
-        this.clock = clock;
-    }
 
     public void beginAttempt(Task task) {
         taskAttemptRepository.save(TaskAttempt.builder()

@@ -13,6 +13,7 @@ import com.bff.pipeline.repository.TerraformResultRepository;
 import java.time.Clock;
 import java.util.Locale;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -33,6 +34,7 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class TerraformResultRecorder {
 
     /** utf8mb4 최악 4B/char ⇒ MEDIUMTEXT(16MB) 안전 상한. 초과분은 tail 우선 절단 — 실패 원인은 로그 끝에 몰린다. */
@@ -41,13 +43,6 @@ public class TerraformResultRecorder {
     private final InfraManagerClient infraManagerClient;
     private final TerraformResultRepository repository;
     private final Clock clock;
-
-    public TerraformResultRecorder(InfraManagerClient infraManagerClient, TerraformResultRepository repository,
-            Clock clock) {
-        this.infraManagerClient = infraManagerClient;
-        this.repository = repository;
-        this.clock = clock;
-    }
 
     /** 종결 turn에 finished로 관측된 job들의 result를 job별 독립으로 기록한다. 실패는 관찰 결손일 뿐이다. */
     public void recordFinishedJobs(Task task, TaskAttempt attempt, Map<String, TerraformPoll> finishedPolls) {
