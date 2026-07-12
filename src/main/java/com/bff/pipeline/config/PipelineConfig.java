@@ -1,6 +1,8 @@
 package com.bff.pipeline.config;
 
 import com.bff.pipeline.service.notify.SlackNotifier;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 import java.time.Clock;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -31,14 +33,17 @@ public class PipelineConfig {
         return Clock.systemUTC();
     }
 
+    // 두 풀은 스레드 활성 수를 지표(executor_*)로 내보낸다 — 워커 고착을 밖에서 볼 수 있는 유일한 창이다.
     @Bean(destroyMethod = "shutdown")
-    public ExecutorService pipelineWorkerPool(ExecutionSettings settings) {
-        return Executors.newFixedThreadPool(settings.workerPerPod());
+    public ExecutorService pipelineWorkerPool(ExecutionSettings settings, MeterRegistry meterRegistry) {
+        return ExecutorServiceMetrics.monitor(meterRegistry,
+                Executors.newFixedThreadPool(settings.workerPerPod()), "pipelineWorkerPool");
     }
 
     @Bean(destroyMethod = "shutdown")
-    public ExecutorService infraManagerCallPool(ExecutionSettings settings) {
-        return Executors.newFixedThreadPool(settings.workerPerPod());
+    public ExecutorService infraManagerCallPool(ExecutionSettings settings, MeterRegistry meterRegistry) {
+        return ExecutorServiceMetrics.monitor(meterRegistry,
+                Executors.newFixedThreadPool(settings.workerPerPod()), "infraManagerCallPool");
     }
 
     @Bean

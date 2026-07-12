@@ -2,10 +2,12 @@ package com.bff.pipeline.service.lifecycle;
 import com.bff.pipeline.service.task.TaskCanceller;
 
 import com.bff.pipeline.entity.Pipeline;
+import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.exception.MissingPipelineIdException;
 import com.bff.pipeline.exception.PipelineNotFoundException;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.metrics.PipelineMetrics;
 import java.time.Clock;
 import java.time.Instant;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +40,7 @@ public class PipelineControl {
     private final PipelineRepository pipelineRepository;
     private final TaskRepository taskRepository;
     private final TaskCanceller taskCanceller;
+    private final PipelineMetrics pipelineMetrics;
     private final Clock clock;
 
     @Transactional
@@ -49,12 +52,18 @@ public class PipelineControl {
             throw new PipelineNotFoundException(pipelineId);
         }
         Instant now = clock.instant();
-        if (pipelineRepository.cancelIfIdle(pipelineId, now) != 0) {                       // Case A
+        boolean cancelledWhileIdle = pipelineRepository.cancelIfIdle(pipelineId, now) != 0; // Case A
+        if (cancelledWhileIdle) {
             taskCanceller.cancelNonTerminal(taskRepository.findByPipelineIdOrderBySequenceAsc(pipelineId));
         } else {
             pipelineRepository.requestCancel(pipelineId, now);                             // Case B (live lease, 또는 이미 종료됨 → 0행 멱등)
         }
-        return pipelineRepository.findById(pipelineId)
+        Pipeline pipeline = pipelineRepository.findById(pipelineId)
                 .orElseThrow(() -> new PipelineNotFoundException(pipelineId));
+        if (cancelledWhileIdle) {
+            // Case A만 여기서 센다 — Case B의 종단 전이는 워커의 write-back(StepReporter)이 세는 지점이다.
+            pipelineMetrics.pipelineTerminalized(PipelineStatus.CANCELLED, pipeline.getType());
+        }
+        return pipeline;
     }
 }

@@ -9,6 +9,7 @@ import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.model.StepOutcome;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.metrics.PipelineMetrics;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -43,6 +44,7 @@ public class StepReporter {
     private final TaskRepository taskRepository;
     private final TaskStateMachine taskStateMachine;
     private final TaskCanceller taskCanceller;
+    private final PipelineMetrics pipelineMetrics;
     private final Clock clock;
 
     /**
@@ -95,10 +97,17 @@ public class StepReporter {
         releaseClaim(pipeline, chain);
     }
 
-    /** 행을 FOR UPDATE로 잠근 뒤 토큰이 일치할 때만 돌려준다(소유권 확인). 불일치하거나 없으면 empty라 전체가 no-op된다. */
+    /**
+     * 행을 FOR UPDATE로 잠근 뒤 토큰이 일치할 때만 돌려준다(소유권 확인). 불일치하거나 없으면 empty라
+     * 전체가 no-op된다. 행은 있는데 토큰이 어긋난 경우는 소유권이 넘어간 뒤 도착한 낡은 write-back이
+     * 버려지는 사건이므로 지표로 센다 — 늘고 있으면 점유 시간이 실제 작업 시간을 못 덮고 있다는 신호다.
+     */
     private Optional<Pipeline> claimedPipeline(long pipelineId, String claimToken) {
-        return pipelineRepository.findByIdForUpdate(pipelineId)
-                .filter(pipeline -> ownsClaim(pipeline, claimToken));
+        Optional<Pipeline> locked = pipelineRepository.findByIdForUpdate(pipelineId);
+        if (locked.isPresent() && !ownsClaim(locked.get(), claimToken)) {
+            pipelineMetrics.staleWriteBackDiscarded();
+        }
+        return locked.filter(pipeline -> ownsClaim(pipeline, claimToken));
     }
 
     /**
@@ -148,6 +157,7 @@ public class StepReporter {
         pipeline.setStatus(status);
         pipeline.setActiveTarget(null);
         pipeline.setLastActivityAt(now);
+        pipelineMetrics.pipelineTerminalized(status, pipeline.getType());
     }
 
     private void promoteBlockedSuccessor(Pipeline pipeline, List<Task> chain) {

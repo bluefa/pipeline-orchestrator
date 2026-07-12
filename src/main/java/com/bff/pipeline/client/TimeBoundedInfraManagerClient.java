@@ -7,6 +7,8 @@ import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.exception.CallInterruptedException;
 import com.bff.pipeline.exception.CallTimeoutException;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -36,15 +38,25 @@ import org.springframework.stereotype.Component;
 @Component
 public class TimeBoundedInfraManagerClient implements InfraManagerClient {
 
+    /** 호출 소요시간 Timer 이름. Prometheus에는 infra_manager_call_seconds로 노출된다. */
+    static final String INFRA_MANAGER_CALL = "infra.manager.call";
+    static final String OUTCOME_TAG = "outcome";
+    static final String OUTCOME_SUCCESS = "success";
+    static final String OUTCOME_TIMEOUT = "timeout";
+    static final String OUTCOME_FAILURE = "failure";
+
     private final InfraManagerClient delegate;
     private final ExecutorService infraManagerCallPool;
     private final ExecutionSettings executionSettings;
+    private final MeterRegistry meterRegistry;
 
     public TimeBoundedInfraManagerClient(@Qualifier("infraManagerDelegate") InfraManagerClient delegate,
-            @Qualifier("infraManagerCallPool") ExecutorService infraManagerCallPool, ExecutionSettings executionSettings) {
+            @Qualifier("infraManagerCallPool") ExecutorService infraManagerCallPool, ExecutionSettings executionSettings,
+            MeterRegistry meterRegistry) {
         this.delegate = delegate;
         this.infraManagerCallPool = infraManagerCallPool;
         this.executionSettings = executionSettings;
+        this.meterRegistry = meterRegistry;
     }
 
     @Override
@@ -72,20 +84,33 @@ public class TimeBoundedInfraManagerClient implements InfraManagerClient {
         return withTimeout(() -> delegate.cloudProvider(target));
     }
 
+    /**
+     * delegate 호출을 격리 풀에서 돌리고 마감을 강제하면서, 호출 한 건의 소요시간과 결말
+     * (success/timeout/failure)을 Timer로 남긴다. 셧다운 인터럽트는 호출의 성패가 아니므로 기록하지 않는다.
+     */
     private <T> T withTimeout(Supplier<T> call) {
+        Timer.Sample callTiming = Timer.start(meterRegistry);
         Future<T> future = infraManagerCallPool.submit(call::get);
         try {
-            return future.get(executionSettings.apiCallTimeout().toMillis(), TimeUnit.MILLISECONDS);
+            T result = future.get(executionSettings.apiCallTimeout().toMillis(), TimeUnit.MILLISECONDS);
+            callTiming.stop(callTimer(OUTCOME_SUCCESS));
+            return result;
         } catch (TimeoutException timeout) {
             future.cancel(true);
+            callTiming.stop(callTimer(OUTCOME_TIMEOUT));
             throw new CallTimeoutException();
         } catch (InterruptedException interrupted) {
             future.cancel(true);
             Thread.currentThread().interrupt();
             throw new CallInterruptedException();
         } catch (ExecutionException executionFailure) {
+            callTiming.stop(callTimer(OUTCOME_FAILURE));
             throw rethrow(executionFailure.getCause());
         }
+    }
+
+    private Timer callTimer(String outcome) {
+        return Timer.builder(INFRA_MANAGER_CALL).tag(OUTCOME_TAG, outcome).register(meterRegistry);
     }
 
     private RuntimeException rethrow(Throwable cause) {

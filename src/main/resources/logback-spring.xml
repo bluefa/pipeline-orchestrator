@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- gcp 프로필에서만 로그를 JSON 한 줄 형식으로 바꾼다. Cloud Logging은 구조화 로그의 severity
+     필드를 로그 레벨로 인식하므로, LogstashEncoder의 기본 필드명 level을 severity로 바꿔 준다 —
+     이 매핑이 있어야 "severity=ERROR" 로그 기반 경보가 동작한다. gcp가 아닌 프로필(로컬, 테스트)은
+     Boot 기본 콘솔 패턴을 그대로 쓴다. -->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <springProfile name="gcp">
+        <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <fieldNames>
+                    <level>severity</level>
+                </fieldNames>
+            </encoder>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="JSON"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="!gcp">
+        <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+</configuration>

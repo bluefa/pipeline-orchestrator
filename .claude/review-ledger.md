@@ -59,9 +59,24 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 | A global catch-all exception handler must **log the cause** (never return a generic body and drop the trace) | sonnet R5 | agent |
 | Duration-typed field suffix convention: omit for `Interval`/`Timeout`/`Sleep`/`Retry`; spell out when ambiguous (`backoffBase`/`backoffMax`) — **PENDING owner decision** before promotion | ADR-021 retro #15 | (undecided) |
 | VS Code Lombok `@NonNull` false warnings → `.vscode/settings.json` `"java.compile.nullAnalysis.mode":"disabled"` (editor-only, code-unrelated) | ADR-021 retro #16 | none (editor config) |
+| Observability: a point-in-time state-count gauge (e.g. "stuck count" = RUNNING+lease-expired) is scrape-lossy and misses never-claimed/backlogged cases — measure progress as an **age/lag gauge** (`max(now - next_due_at)` over claimable rows; ADR-022 §209's due-pipeline lag) | codex R1 (observability design 2026-07-12) | agent |
+| Log-severity vs alert-filter mismatch: engine loops that ABSORB RuntimeException at WARN (`PipelineScheduler`) never hit a severity=ERROR log alert — any "log-based ERROR alert" design must audit absorbed-exception log levels and add a logger-scoped WARN-rate metric or promote the level | codex R2 (observability design 2026-07-12) | agent |
 
 ## Changelog
 
+- **Observability design review (docs-only, artifact `observability-design.html`) → codex(gpt-5.6-sol xhigh) 3 rounds, merge-ready (2026-07-12).**
+  Design doc: metric catalog (actuator + 8 domain metrics), GCP transport (prometheus endpoint + Ops Agent/GMP,
+  Cloud Run = GMP sidecar + instance-based billing + min-instances ≥ 1), Grafana dashboard + 6 alert rules.
+  **R1** (P0 1, P1 8): Cloud Run request-based billing kills background scheduler/notify threads; `pipeline_stuck`
+  → `pipeline_due_lag_seconds`; `notify_backlog` → pending-age (due-only, give-up excluded) + `notify_giveup_count`
+  (>0 = immediate page, ADR-022 production gate); cap-100 is admission not workers (workers = 4/pod); added
+  `stale_writeback_total`; rate-based external-failure alerts with min-volume; terminal counter moved to
+  `StepReporter.terminalize` with AFTER_COMMIT contract. **R2** (P1 4): scheduler WARN absorption invisible to
+  ERROR log filter → logger-scoped WARN-rate metric; LogstashEncoder `level→severity` field mapping required;
+  `percentiles-histogram` config required for `_bucket` queries (GC alert switched to `_max`); management port
+  9090 split with per-deployment protection. **R3**: all confirmed, merge-ready. Owner decision folded in:
+  resource metrics stay collected (0 lines) but demoted to a collapsed Grafana row; only GC-pause and
+  Hikari-pending alert.
 - **terraform_job_state review (feat/terraform-job-state-observation) → codex 2 rounds, merge-ready.**
   Added a fourth write-only observation table `terraform_job_state` (per-job in-progress state, upserted every
   poll in the run phase, tx-free/best-effort like `terraform_result`) + `TaskAttemptView.job_states[]` inline +
