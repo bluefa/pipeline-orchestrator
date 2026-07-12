@@ -8,6 +8,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,17 +28,12 @@ import org.springframework.transaction.annotation.Transactional;
  * 유휴 신호로 읽지 않는다 — 폴링 케이던스는 스케줄러의 backoff가 맡는다.
  */
 @Component
+@RequiredArgsConstructor
 public class PipelineClaimer {
 
     private final PipelineRepository pipelineRepository;
     private final ExecutionSettings executionSettings;
     private final Clock clock;
-
-    public PipelineClaimer(PipelineRepository pipelineRepository, ExecutionSettings executionSettings, Clock clock) {
-        this.pipelineRepository = pipelineRepository;
-        this.executionSettings = executionSettings;
-        this.clock = clock;
-    }
 
     @Transactional
     public Optional<Claim> claimOneDue() {

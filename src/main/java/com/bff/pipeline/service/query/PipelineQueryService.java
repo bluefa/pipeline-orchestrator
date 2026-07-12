@@ -47,6 +47,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -68,6 +69,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 @Transactional(readOnly = true)
+@RequiredArgsConstructor
 public class PipelineQueryService {
 
     /** 목록 진행 N/M 집계값 — done = DONE 수, total = 전체 task 수. */
@@ -84,21 +86,6 @@ public class PipelineQueryService {
     private final ExecutionSettings executionSettings;
     private final PipelineSettings pipelineSettings;
     private final Clock clock;
-
-    public PipelineQueryService(PipelineRepository pipelines, TaskRepository tasks,
-            TaskAttemptRepository attempts, TaskCheckRepository checks, TerraformResultRepository terraformResults,
-            TerraformJobStateRepository terraformJobStates, ExecutionSettings executionSettings,
-            PipelineSettings pipelineSettings, Clock clock) {
-        this.pipelines = pipelines;
-        this.tasks = tasks;
-        this.attempts = attempts;
-        this.checks = checks;
-        this.terraformResults = terraformResults;
-        this.terraformJobStates = terraformJobStates;
-        this.executionSettings = executionSettings;
-        this.pipelineSettings = pipelineSettings;
-        this.clock = clock;
-    }
 
     public LivePipelineStatistics liveStatistics() {
         return LivePipelineStatistics.builder()

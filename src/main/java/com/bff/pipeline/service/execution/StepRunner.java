@@ -11,6 +11,7 @@ import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
 import java.util.Optional;
 import java.util.function.Supplier;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import com.bff.pipeline.exception.CallTimeoutException;
@@ -33,13 +34,10 @@ import com.bff.pipeline.exception.CallFailedException;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class StepRunner {
 
     private final TaskTypeRegistry taskTypeRegistry;
-
-    public StepRunner(TaskTypeRegistry taskTypeRegistry) {
-        this.taskTypeRegistry = taskTypeRegistry;
-    }
 
     public StepOutcome runStep(String target, Task task, TaskAttempt attempt) {
         return resolveConsistentType(task)

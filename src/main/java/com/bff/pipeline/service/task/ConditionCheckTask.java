@@ -9,6 +9,7 @@ import com.bff.pipeline.enums.TaskOperation;
 import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -20,15 +21,12 @@ import org.springframework.stereotype.Component;
  * recipe가 이를 참조하고 registry가 해석한다.
  */
 @Component
+@RequiredArgsConstructor
 public class ConditionCheckTask implements TaskType {
 
     public static final String NAME = TaskOperation.Mechanism.CONDITION_CHECK;
 
     private final InfraManagerClient infraManagerClient;
-
-    public ConditionCheckTask(InfraManagerClient infraManagerClient) {
-        this.infraManagerClient = infraManagerClient;
-    }
 
     @Override
     public String taskName() {

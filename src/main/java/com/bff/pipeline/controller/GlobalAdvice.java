@@ -5,6 +5,7 @@ import com.bff.pipeline.exception.OrchestrationErrorCode;
 import com.bff.pipeline.exception.OrchestrationException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Clock;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -27,13 +28,10 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
  */
 @Slf4j
 @RestControllerAdvice
+@RequiredArgsConstructor
 public class GlobalAdvice {
 
     private final Clock clock;
-
-    public GlobalAdvice(Clock clock) {
-        this.clock = clock;
-    }
 
     @ExceptionHandler(OrchestrationException.class)
     public ResponseEntity<ErrorResponse> onOrchestration(OrchestrationException exception, HttpServletRequest request) {

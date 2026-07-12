@@ -13,6 +13,7 @@ import com.bff.pipeline.service.task.ObservationRecorder;
 import java.util.List;
 import java.util.Optional;
 import lombok.Builder;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Component;
  * terraform slot을 소비하는 dispatch 단계인데 빈 slot이 없으면 외부 호출 대신 reschedule로 claim을 놓는다(Decision 7).
  */
 @Component
+@RequiredArgsConstructor
 public class PipelineWorker {
 
     @Builder
@@ -38,18 +40,6 @@ public class PipelineWorker {
     private final StepRunner stepRunner;
     private final StepReporter stepReporter;
     private final ExecutionSettings executionSettings;
-
-    public PipelineWorker(PipelineClaimer pipelineClaimer, PipelineRepository pipelineRepository, TaskRepository taskRepository,
-            ObservationRecorder observationRecorder, StepRunner stepRunner,
-            StepReporter stepReporter, ExecutionSettings executionSettings) {
-        this.pipelineClaimer = pipelineClaimer;
-        this.pipelineRepository = pipelineRepository;
-        this.taskRepository = taskRepository;
-        this.observationRecorder = observationRecorder;
-        this.stepRunner = stepRunner;
-        this.stepReporter = stepReporter;
-        this.executionSettings = executionSettings;
-    }
 
     /**
      * 테스트 seam: 한 건을 claim해 처리하고 그 pipeline id를 반환한다(잡을 게 없으면 empty). 프로덕션 경로는

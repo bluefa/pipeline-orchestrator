@@ -9,6 +9,7 @@ import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.exception.MissingPipelineTypeException;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
 import com.bff.pipeline.service.query.PipelineQueryService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -31,15 +32,11 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/target-sources/{targetSourceId}/pipelines")
+@RequiredArgsConstructor
 public class TargetSourcePipelineController {
 
     private final PipelineQueryService queryService;
     private final PipelineCreator pipelineCreator;
-
-    public TargetSourcePipelineController(PipelineQueryService queryService, PipelineCreator pipelineCreator) {
-        this.queryService = queryService;
-        this.pipelineCreator = pipelineCreator;
-    }
 
     @GetMapping
     public Page<PipelineSummary> history(@PathVariable String targetSourceId,
