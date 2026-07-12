@@ -5,8 +5,8 @@ import java.util.List;
 /**
  * InfraManager Terraform API의 job 타입이다 — 일부 엔드포인트의 {@code jobType} 쿼리 파라미터 값이자, 폴 정규화의
  * "기대 성공 상태" authority다. 성공을 뜻하는 terminal 상태가 타입마다 여러 개일 수 있다(owner 확정): PLAN은
- * {@code CREATED} 또는 {@code COMPLETED}, DESTROY는 {@code COMPLETED} 또는 {@code DESTROYED}, APPLY는
- * {@code COMPLETED}. {@code FAILED}는 타입 공통 실패 terminal이다.
+ * {@code CREATED}/{@code COMPLETED}/{@code COMPLETE}, DESTROY는 {@code COMPLETED}/{@code DESTROYED}/{@code COMPLETE},
+ * APPLY는 {@code COMPLETED}/{@code COMPLETE}. {@code FAILED}는 타입 공통 실패 terminal이다.
  *
  * TODO: {@code TerraformState}의 전체 값 목록이 확정되면(설계 §6) 이 String 상수들을 닫힌 enum으로 교체한다 —
  * 교체 지점은 여기와 {@link TerraformOperationBinding#toPoll} 뿐이다. 그때까지 성공/실패 terminal 값만 해석하고
@@ -14,9 +14,9 @@ import java.util.List;
  */
 public enum TerraformJobType {
 
-    PLAN("CREATED", "COMPLETED"),
-    APPLY("COMPLETED"),
-    DESTROY("COMPLETED", "DESTROYED");
+    PLAN("CREATED", "COMPLETED", "COMPLETE"),
+    APPLY("COMPLETED", "COMPLETE"),
+    DESTROY("COMPLETED", "DESTROYED", "COMPLETE");
 
     /** 타입 공통 실패 terminal 상태. */
     public static final String FAILED_STATE = "FAILED";
