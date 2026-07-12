@@ -48,8 +48,8 @@ public interface TerraformOperationBinding {
 
     /**
      * status 응답의 {@code terraformState}(String — 전체 값 목록 미확정, {@link TerraformJobType} TODO 참조)를 도메인
-     * {@link TerraformPoll}로 정규화한다. terminal 세 값만 해석한다: {@code FAILED} → 실패, jobType의 성공 상태
-     * ({@code COMPLETED}/{@code DESTROYED}) → 성공, 그 외 전부(미지 포함) → 진행 중. 미지 상태를 호출 실패로
+     * {@link TerraformPoll}로 정규화한다. terminal 값만 해석한다: {@code FAILED} → 실패, jobType의 성공 상태
+     * 목록에 드는 값 → 성공, 그 외 전부(미지 포함) → 진행 중. 미지 상태를 호출 실패로
      * 닫지 않는 이유(owner 지침): 전이 중 상태는 다음 폴이 해소하고, 영영 안 끝나면 executionTimeout이 회수한다 —
      * 무한 대기가 아니라 기존 예산 안의 지연이다. 응답이 없거나 상태가 비면 해석 불능이므로 CallFailed로 닫는다.
      */
@@ -66,7 +66,7 @@ public interface TerraformOperationBinding {
         if (TerraformJobType.FAILED_STATE.equals(state)) {
             return TerraformPoll.failure(state, failReason);
         }
-        if (jobType.successState().equals(state)) {
+        if (jobType.isSuccess(state)) {
             return TerraformPoll.success(state);
         }
         return TerraformPoll.running(state);

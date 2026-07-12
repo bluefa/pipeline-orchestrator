@@ -28,7 +28,7 @@ public record TaskExecutionSpec(
     public static TaskExecutionSpec terraform(TerraformJobType jobType, String dispatchApi, String statusApi,
             String resultApi) {
         String successPolicy = "디스패치가 만든 모든 job을 polling_interval 간격으로 상태 API로 폴링한다. "
-                + "모든 job의 terraformState가 " + jobType.successState() + "이면 성공이다. 하나라도 "
+                + "모든 job의 terraformState가 " + String.join("/", jobType.successStates()) + " 중 하나이면 성공이다. 하나라도 "
                 + TerraformJobType.FAILED_STATE + "이면 나머지 job이 종결될 때까지 기다린 뒤 JOB_FAILED로 판정한다. "
                 + "attempt 시작 후 execution_timeout에 도달하면 더 기다리지 않고 그때까지 "
                 + TerraformJobType.FAILED_STATE + " 관측이 있으면 JOB_FAILED, 없으면 EXECUTION_TIMEOUT으로 판정한다. "
