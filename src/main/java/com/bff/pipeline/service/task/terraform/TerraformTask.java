@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,8 +53,10 @@ import com.bff.pipeline.exception.CallTimeoutException;
  * 자체가 유실된 경우도 같은 정책이다({@code checkWithoutAttempt}). 반면 {@code response}가
  * 있는데 역직렬화가 안 되면(malformed) 곧바로 실패 처리한다({@code CHECK_ERROR}).
  *
- * 외부가 돌려준 값을 쓸 수 없는 경우(빈 dispatch 응답, null poll 상태)에는 영속/폴링 대신 호출 실패로 처리해
- * ({@code CallFailedException}) 엔진이 재시도하게 한다. 타입 이름 {@link #NAME}은 모든 terraform task 행에 저장된다.
+ * 빈 dispatch 응답은 영속/폴링 대신 호출 실패로 처리해({@code CallFailedException}) 엔진이 재dispatch하게 한다.
+ * 폴 단계의 호출 실패(전송 실패·타임아웃·null poll 상태)는 예외로 던지지 않고 job별 누적으로 흡수한다 — 임계
+ * ({@link #MAX_POLL_CALL_ERRORS}) 전까지는 미종결로 두고, 임계 이상이면 그 job만 실패로 확정한다(아래 폴 집계).
+ * 타입 이름 {@link #NAME}은 모든 terraform task 행에 저장된다.
  */
 @Slf4j
 @Component
@@ -63,6 +66,17 @@ public class TerraformTask implements TaskType {
     public static final String NAME = TaskOperation.Mechanism.TERRAFORM_JOB;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final TypeReference<List<String>> JOB_IDS = new TypeReference<>() { };
+
+    /**
+     * 한 job의 폴 호출이 이 횟수만큼 누적 실패하면 그 job을 관측 불능으로 보고 실패로 확정한다. 그 전까지의 전송
+     * 실패는 일시 장애로 보고 다음 폴에서 재시도한다. execution-timeout이 더 짧으면(기본 설정처럼 폴 간격 기준
+     * 임계 도달 시간이 timeout보다 길면) timeout이 먼저 종결하므로, 이 임계는 폴 간격이 짧게 설정된 task에서 조기
+     * 포기로 작동한다. task/pipeline별 튜닝이 필요해지면 PipelineSettings 값으로 승격할 수 있다.
+     */
+    public static final int MAX_POLL_CALL_ERRORS = 10;
+
+    /** 임계 초과로 실패 확정된 job의 합성 판정에 실을 원시 상태 표기(관측된 적 없어 실제 terraformState가 없다). */
+    private static final String POLL_UNREACHABLE_STATE = "UNREACHABLE";
 
     private final InfraManagerClient infraManagerClient;
     private final TerraformResultRecorder resultRecorder;
@@ -138,10 +152,14 @@ public class TerraformTask implements TaskType {
         Map<String, TerraformPoll> finished = new LinkedHashMap<>();
         boolean anyFailed = false;
         for (String jobId : jobIds) {
-            TerraformPoll poll = pollAndObserve(task, attempt, jobId);
-            if (poll.finished()) {
-                finished.put(jobId, poll);
-                anyFailed |= !poll.succeeded();
+            Optional<TerraformPoll> poll = pollAndObserve(task, attempt, jobId);
+            if (poll.isEmpty()) {
+                // 임계 미만 전송 실패 — 이번 turn은 미관측이라 미종결로 두고 다음 폴에서 재시도한다(형제 job은 계속 폴).
+                continue;
+            }
+            if (poll.get().finished()) {
+                finished.put(jobId, poll.get());
+                anyFailed |= !poll.get().succeeded();
             }
         }
         boolean allFinished = finished.size() == jobIds.size();
@@ -161,23 +179,50 @@ public class TerraformTask implements TaskType {
     }
 
     /**
-     * job 상태를 폴하고 진행-시점 관찰({@code terraform_job_state})을 남긴다. 폴 호출이 실패하면 그 job의 오류를
-     * 관찰에 남긴 뒤 기존 판정대로 전파한다(abort-on-first — 판정 불변, 형제 job은 이번 turn 재폴하지 않고 직전
-     * 관측을 유지하며 다음 attempt의 재dispatch로 신선도가 해소된다). 관찰 기록은 판정을 바꾸지 않는다.
+     * job 상태를 폴하고 진행-시점 관찰({@code terraform_job_state})을 남긴다. 정상 관측이면 그 폴을 담아 반환한다.
+     * 폴 호출이 실패하면(전송 실패·타임아웃·상태 없음) 그 job의 오류를 관찰에 누적하고 job별로 흡수한다 —
+     * 누적 호출 실패가 {@link #MAX_POLL_CALL_ERRORS} 미만이면 일시 장애로 보아 빈 값을 반환해 이번 turn 미관측
+     * (미종결)으로 두고, 임계 이상이면 그 job만 관측 불능으로 확정해 FAILED 합성 판정을 담아 반환한다. 어느
+     * 경우든 예외를 위로 던지지 않으므로 형제 job은 계속 폴되고 task.failCount는 이 경로로 오르지 않는다
+     * (전송 실패는 execution-timeout 또는 임계 확정으로만 판정에 반영된다).
+     *
+     * 임계를 이미 넘긴 job은 폴하지 않는다 — 형제 대기로 판정이 다음 turn으로 미뤄져도 실패 판정이 유지되도록
+     * (sticky) 누적 카운트를 폴 직전에 확인한다. 재폴로 일시 회복이 확정된 실패를 뒤집는 것을 막는다.
      */
-    private TerraformPoll pollAndObserve(Task task, TaskAttempt attempt, String jobId) {
+    private Optional<TerraformPoll> pollAndObserve(Task task, TaskAttempt attempt, String jobId) {
         TerraformJobRef job = new TerraformJobRef(task, attempt, jobId);
+        if (jobStateRecorder.currentCallErrorCount(job) >= MAX_POLL_CALL_ERRORS) {
+            return Optional.of(unreachable(MAX_POLL_CALL_ERRORS, "previously exhausted"));
+        }
         try {
             TerraformPoll poll = infraManagerClient.terraformJobStatus(jobId, task.getOperation());
             if (poll == null) {
-                throw new CallFailedException("InfraManager returned no status for job " + jobId);
+                return onPollCallError(job, "InfraManager returned no status for job " + jobId);
             }
             jobStateRecorder.recordObserved(job, poll);
-            return poll;
+            return Optional.of(poll);
         } catch (CallFailedException | CallTimeoutException callError) {
-            jobStateRecorder.recordCallError(job, callError.getMessage());
-            throw callError;
+            return onPollCallError(job, callError.getMessage());
         }
+    }
+
+    /**
+     * 폴 호출 실패를 job별로 흡수한다 — 오류를 관찰에 누적하고, 누적이 임계 미만이면 미관측(빈 값), 임계 이상이면
+     * 그 job을 실패로 확정한 합성 판정을 반환한다. 정상 응답의 FAILED(비즈니스 실패)와 달리 이 경로는 관측 자체를
+     * 못 한 job에 대한 것이다.
+     */
+    private Optional<TerraformPoll> onPollCallError(TerraformJobRef job, String message) {
+        int callErrorCount = jobStateRecorder.recordCallError(job, message);
+        if (callErrorCount >= MAX_POLL_CALL_ERRORS) {
+            return Optional.of(unreachable(callErrorCount, message));
+        }
+        return Optional.empty();
+    }
+
+    /** 관측 불능으로 확정된 job의 합성 FAILED 판정 — 관측된 적 없어 실제 terraformState가 없다. */
+    private static TerraformPoll unreachable(int callErrorCount, String detail) {
+        return TerraformPoll.failure(POLL_UNREACHABLE_STATE,
+                "poll call failed " + callErrorCount + " times: " + detail);
     }
 
     /** JOB_FAILED의 "왜" — 실패로 관측된 job id를 원인 텍스트로 남긴다(잡별 로그 본문은 terraform_result가 담당). */

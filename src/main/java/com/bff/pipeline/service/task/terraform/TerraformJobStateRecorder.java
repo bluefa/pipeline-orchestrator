@@ -33,7 +33,8 @@ public class TerraformJobStateRecorder {
 
     /**
      * 정상 폴 1회의 job 상태를 upsert한다 — 원시 상태·실패 사유·응답 원문을 최신값으로 덮고, 이 폴엔 호출 오류가
-     * 없으니 {@code lastError}를 지운다. 원문(response)은 TEXT 컬럼이라 clamp하지 않는다.
+     * 없으니 {@code lastError}를 지운다. 다만 {@code callErrorCount}는 누적값이라 정상 폴에도 리셋하지 않는다.
+     * 원문(response)은 TEXT 컬럼이라 clamp하지 않는다.
      */
     public void recordObserved(TerraformJobRef job, TerraformPoll poll) {
         upsert(job, row -> {
@@ -44,12 +45,30 @@ public class TerraformJobStateRecorder {
         });
     }
 
-    /** 폴 호출 자체가 실패한 job의 오류를 upsert한다 — {@code lastState}/{@code lastFailReason}은 직전 관측을 유지하고 {@code lastError}만 채운다. */
-    public void recordCallError(TerraformJobRef job, String message) {
-        upsert(job, row -> row.setLastError(clamp(message, TerraformJobState.DETAIL_LENGTH)));
+    /**
+     * 폴 호출 자체가 실패한 job의 오류를 upsert하고 이 attempt의 누적 호출 실패 횟수를 반환한다 —
+     * {@code lastState}/{@code lastFailReason}은 직전 관측을 유지하고 {@code lastError}와 {@code callErrorCount}만
+     * 갱신한다. 반환값은 완료 집계가 임계 판정에 쓴다. 저장이 유실되면(best-effort 강등) 0을 반환해 그 turn에는
+     * 임계를 넘기지 않는다 — 그 job은 계속 폴되다가 execution-timeout이 받친다.
+     */
+    public int recordCallError(TerraformJobRef job, String message) {
+        return upsert(job, row -> {
+            row.setLastError(clamp(message, TerraformJobState.DETAIL_LENGTH));
+            row.setCallErrorCount(row.getCallErrorCount() + 1);
+        });
     }
 
-    private void upsert(TerraformJobRef job, Consumer<TerraformJobState> mutation) {
+    /**
+     * 이 attempt에서 이 job의 현재 누적 폴 호출 실패 횟수를 반환한다(행이 없으면 0). 완료 집계가 폴 직전에 임계 도달
+     * 여부를 확인해, 이미 관측 불능으로 확정된 job을 다시 폴하지 않고 실패 판정을 유지(sticky)하는 데 쓴다.
+     */
+    public int currentCallErrorCount(TerraformJobRef job) {
+        return repository.findByTaskIdAndAttemptNumberAndJobId(job.taskId(), job.attemptNumber(), job.jobId())
+                .map(TerraformJobState::getCallErrorCount)
+                .orElse(0);
+    }
+
+    private int upsert(TerraformJobRef job, Consumer<TerraformJobState> mutation) {
         try {
             TerraformJobState row = repository
                     .findByTaskIdAndAttemptNumberAndJobId(job.taskId(), job.attemptNumber(), job.jobId())
@@ -58,10 +77,13 @@ public class TerraformJobStateRecorder {
             row.setPollCount(row.getPollCount() + 1);
             row.setLastPolledAt(clock.instant());
             save(row);
+            return row.getCallErrorCount();
         } catch (RuntimeException failure) {
             // harness-allow: targeted-catch — 관찰 전용 계약의 경계다. 어떤 기록 실패도 태스크 판정을 바꾸지 않는다.
             // 판정을 막으면 write-back이 불발돼 lease 회수 → 재크래시 루프에 갇히므로 관찰 결손으로 강등하고 소리 내어 남긴다.
+            // 유실 turn은 누적 0으로 강등해 임계 조기 발화를 막는다(execution-timeout이 최종 천장).
             log.error("{}: terraform job state recording failed — observation lost", job, failure);
+            return 0;
         }
     }
 

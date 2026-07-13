@@ -20,6 +20,7 @@ import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TerraformJobStateRepository;
 import com.bff.pipeline.repository.TerraformResultRepository;
+import com.bff.pipeline.entity.TerraformJobState;
 import com.bff.pipeline.entity.TerraformResult;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.service.execution.PipelineClaimer;
@@ -195,6 +196,116 @@ class PipelineExecutionTest {
         assertThat(terraformResultRepository.findAll())
                 .extracting(TerraformResult::getJobId)
                 .containsExactly("job-1");
+    }
+
+    @Test
+    void aTransientPollErrorRidesExecutionTimeoutWithoutBurningFailCountAndKeepsPollingSiblings() {
+        // 폴 전송 실패는 즉시 실패가 아니다: 임계 미만이면 미종결로 두고, 형제 job은 abort 없이 계속 관측되며,
+        // task.failCount는 이 경로로 오르지 않는다. 기본 설정에선 임계(10)에 닿기 전에 execution-timeout이 먼저 종결한다.
+        Pipeline pipeline = creator.create("e-poll-transient", PipelineType.DELETE);
+        infraManagerClient.onDispatch(() -> "[\"job-err\",\"job-ok\"]");   // err를 먼저 둬 abort-on-first 회귀를 잡는다
+        infraManagerClient.onPollByJob(jobId -> {
+            if (jobId.equals("job-ok")) {
+                return TerraformPoll.success("COMPLETED");
+            }
+            throw new CallFailedException("500");
+        });
+
+        pipelineWorker.pollOnce();   // dispatch (attempt 1)
+        pipelineWorker.pollOnce();   // poll: job-err 전송실패(누적 1), job-ok 성공 관측 → 미종결(대기)
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
+        assertThat(task(pipeline, 0).getFailCount()).isZero();   // 전송실패가 failCount를 태우지 않는다
+        assertThat(terraformJobStateRepository.findAll())
+                .extracting(TerraformJobState::getJobId, TerraformJobState::getLastState,
+                        TerraformJobState::getLastError, TerraformJobState::getCallErrorCount)
+                .containsExactlyInAnyOrder(
+                        tuple("job-ok", "COMPLETED", null, 0),      // err가 먼저여도 형제는 관측됐다(no abort-on-first)
+                        tuple("job-err", null, "500", 1));
+
+        clock.advance(Duration.ofHours(1));   // executionTimeout(PT50M) 초과
+        pipelineWorker.pollOnce();   // 미종결 job-err 잔존 + FAILED 관측 없음 → EXECUTION_TIMEOUT(재시도 가능)
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
+        assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
+        assertThat(attemptNo(pipeline, 0, 1).getErrorCode()).isEqualTo(ErrorCode.EXECUTION_TIMEOUT);
+        assertThat(terraformResultRepository.findAll())   // finished였던 job-ok만 행을 얻는다
+                .extracting(TerraformResult::getJobId, TerraformResult::isSucceeded)
+                .containsExactly(tuple("job-ok", true));
+    }
+
+    @Test
+    void aJobExceedingThePollErrorBudgetConcludesJobFailedWithABodylessResult() {
+        // 누적 전송 실패가 임계(10)를 넘으면 그 job을 관측 불능으로 확정한다 → JOB_FAILED. execution-timeout이
+        // 먼저 끊지 않도록 task별 타임아웃을 크게 오버라이드해 임계 발화 경로만 격리한다.
+        Pipeline pipeline = creator.create("e-poll-budget", PipelineType.DELETE);
+        Task terraform = task(pipeline, 0);
+        terraform.setExecutionTimeout(Duration.ofHours(100));
+        taskRepository.save(terraform);
+        infraManagerClient.onPoll(() -> { throw new CallFailedException("500"); });
+        infraManagerClient.onResult(() -> { throw new CallFailedException("500"); });   // 본문 조회도 실패 → body 없는 행
+
+        pipelineWorker.pollOnce();   // dispatch (attempt 1)
+        for (int poll = 1; poll <= TerraformTask.MAX_POLL_CALL_ERRORS - 1; poll++) {
+            clock.advance(Duration.ofMinutes(11));   // polling_interval 경과 후 재폴 (deadline 이내)
+            pipelineWorker.pollOnce();               // 누적 1..9 → 임계 미만 → 미종결
+            assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
+            assertThat(task(pipeline, 0).getFailCount()).isZero();
+        }
+
+        clock.advance(Duration.ofMinutes(11));
+        pipelineWorker.pollOnce();   // 10번째 전송실패 → 임계 도달 → job 실패 확정 → JOB_FAILED(재시도 가능)
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
+        assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
+        assertThat(attemptNo(pipeline, 0, 1).getErrorCode()).isEqualTo(ErrorCode.JOB_FAILED);
+        assertThat(terraformJobStateRepository.findAll()).singleElement()
+                .extracting(TerraformJobState::getCallErrorCount).isEqualTo(TerraformTask.MAX_POLL_CALL_ERRORS);
+        // 관측 불능 job도 result 행을 얻는다: succeeded=false, 본문 조회 실패라 result=null → has_body=false
+        assertThat(terraformResultRepository.findAll()).singleElement().satisfies(row -> {
+            assertThat(row.getJobId()).isEqualTo("job-1");
+            assertThat(row.isSucceeded()).isFalse();
+            assertThat(row.getResult()).isNull();
+        });
+    }
+
+    @Test
+    void anExhaustedJobStaysFailedAndIsNotRepolledWhileASiblingIsStillRunning() {
+        // 임계를 넘긴 job은 형제 대기로 판정이 미뤄지는 turn에도 실패로 남고 다시 폴되지 않는다(sticky).
+        // 재폴로 일시 회복이 확정된 실패를 뒤집으면 안 된다(codex P1 회귀 가드).
+        Pipeline pipeline = creator.create("e-sticky", PipelineType.DELETE);
+        Task terraform = task(pipeline, 0);
+        terraform.setExecutionTimeout(Duration.ofHours(100));   // 임계 발화 경로만 격리(timeout 배제)
+        taskRepository.save(terraform);
+        infraManagerClient.onDispatch(() -> "[\"job-err\",\"job-ok\"]");
+        infraManagerClient.onPollByJob(jobId -> {
+            if (jobId.equals("job-ok")) {
+                return TerraformPoll.running("RUNNING");   // 형제는 계속 running
+            }
+            throw new CallFailedException("500");          // job-err는 매 turn 전송 실패
+        });
+
+        pipelineWorker.pollOnce();   // dispatch (attempt 1)
+        for (int poll = 1; poll <= TerraformTask.MAX_POLL_CALL_ERRORS; poll++) {
+            clock.advance(Duration.ofMinutes(11));
+            pipelineWorker.pollOnce();   // job-err 누적 1..10, job-ok running → 형제 대기로 미종결
+            assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
+        }
+        assertThat(task(pipeline, 0).getFailCount()).isZero();   // 여기까지 failCount 불변
+
+        // job-err가 이제 성공을 돌려줘도(일시 회복) sticky 실패라 다시 폴되면 안 된다 — 폴되면 테스트가 시끄럽게 깨진다.
+        infraManagerClient.onPollByJob(jobId -> {
+            if (jobId.equals("job-ok")) {
+                return TerraformPoll.success("COMPLETED");
+            }
+            throw new AssertionError("exhausted job-err must not be re-polled");
+        });
+        clock.advance(Duration.ofMinutes(11));
+        pipelineWorker.pollOnce();   // job-err sticky 실패(미폴) + job-ok 성공 → 전원 terminal → JOB_FAILED
+
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
+        assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
+        assertThat(attemptNo(pipeline, 0, 1).getErrorCode()).isEqualTo(ErrorCode.JOB_FAILED);
+        assertThat(terraformResultRepository.findAll())
+                .extracting(TerraformResult::getJobId, TerraformResult::isSucceeded)
+                .containsExactlyInAnyOrder(tuple("job-err", false), tuple("job-ok", true));
     }
 
     @Test

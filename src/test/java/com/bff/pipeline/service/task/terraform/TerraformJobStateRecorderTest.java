@@ -100,6 +100,28 @@ class TerraformJobStateRecorderTest {
     }
 
     @Test
+    void accumulatesCallErrorCountAcrossPollsAndReturnsTheRunningTotal() {
+        assertThat(recorder().recordCallError(ref("job-1"), "500")).isEqualTo(1);
+        assertThat(recorder().recordCallError(ref("job-1"), "503")).isEqualTo(2);
+
+        assertThat(repository.findAll()).singleElement()
+                .extracting(TerraformJobState::getCallErrorCount).isEqualTo(2);
+    }
+
+    @Test
+    void doesNotResetTheCumulativeCallErrorCountOnAGoodPoll() {
+        recorder().recordCallError(ref("job-1"), "500");
+        recorder().recordObserved(ref("job-1"), TerraformPoll.running("APPLYING"));   // 정상 폴이 사이에 껴도
+        int total = recorder().recordCallError(ref("job-1"), "503");
+
+        assertThat(total).isEqualTo(2);   // 누적은 리셋되지 않는다
+        assertThat(repository.findAll()).singleElement().satisfies(row -> {
+            assertThat(row.getCallErrorCount()).isEqualTo(2);
+            assertThat(row.getLastError()).isEqualTo("503");
+        });
+    }
+
+    @Test
     void clampsOverlongExternalTextToColumnLengths() {
         recorder().recordObserved(ref("job-1"),
                 TerraformPoll.failure("F".repeat(40), "r".repeat(600)));

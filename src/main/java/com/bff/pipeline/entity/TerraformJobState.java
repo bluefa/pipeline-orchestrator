@@ -22,11 +22,13 @@ import lombok.Setter;
  * {@code lastFailReason}은 job이 FAILED로 관측될 때 status 응답이 실어 온 실패 사유이며, {@code lastError}는 폴
  * 호출 자체가 실패했을 때(API_ERROR/CALL_TIMEOUT)의 메시지다 — 셋 다 표시 전용이다.
  *
- * 쓰기 전용 관찰 테이블이라 엔진(claim·스케줄링·상태 전이·완료 판정)은 결코 읽지 않는다(ADR-016 §3 invariant).
- * {@code terraform_result}와 같이 run 단계(tx 밖)에서 best-effort로 쓰이므로, 행/카운트 유실은 진단 손실일 뿐
- * 정합성 손실이 아니다. {@code (task_id, attempt_number, job_id)} 유니크 제약이 재실행(크래시/리스 회수 후 re-poll)
- * 멱등성의 근거다 — 같은 키는 새 행이 아니라 제자리 갱신이다. {@code pollCount}는 그 재실행에 한해 over-count될 수
- * 있는 best-effort 카운터다(상태 자체의 upsert는 멱등).
+ * 표시 전용 관찰이 이 테이블의 주 용도지만, 완료 집계는 {@code callErrorCount} 한 값만 읽어 폴 호출이 누적
+ * 임계만큼 실패한 job을 관측 불능으로 확정한다 — 그 외 필드(상태·사유·원문·pollCount)는 엔진이 읽지 않는다.
+ * 이 테이블도 {@code terraform_result}처럼 run 단계(tx 밖)에서 best-effort로 쓰이므로 저장 유실이 판정을
+ * 막지는 않는다: 유실되면 그 job은 임계에 못 미친 것으로 보여 계속 폴되다가 execution-timeout이 최종 천장으로
+ * 받친다(진단 손실일 뿐 정합성 손실이 아니다). {@code (task_id, attempt_number, job_id)} 유니크 제약이
+ * 재실행(크래시/리스 회수 후 re-poll) 멱등성의 근거다 — 같은 키는 새 행이 아니라 제자리 갱신이다.
+ * {@code pollCount}는 그 재실행에 한해 over-count될 수 있는 best-effort 카운터다(상태 자체의 upsert는 멱등).
  */
 @Entity
 @Table(
@@ -83,6 +85,14 @@ public class TerraformJobState {
 
     @Column(name = "poll_count", nullable = false)
     private int pollCount;
+
+    /**
+     * 이 attempt 동안 이 job의 폴 호출이 실패한 누적 횟수(전송 실패·타임아웃·상태 없음). 정상 폴이 사이에 있어도
+     * 리셋하지 않는 누적값이며, 완료 집계가 이 값을 읽어 임계 이상이면 그 job을 관측 불능으로 보고 실패로 확정한다.
+     * attempt별 재dispatch는 새 job id를 만들어 이 카운터도 자연히 새로 시작한다.
+     */
+    @Column(name = "call_error_count", nullable = false)
+    private int callErrorCount;
 
     @Column(name = "last_polled_at", nullable = false)
     private Instant lastPolledAt;
