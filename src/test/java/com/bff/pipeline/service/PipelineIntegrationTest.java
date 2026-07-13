@@ -276,7 +276,7 @@ class PipelineIntegrationTest {
         PipelineSettings pipelineSettings() {
             return PipelineSettings.builder()
                     .executionTimeout(Duration.ofMinutes(50))
-                    .pollingInterval(Duration.ofMinutes(10)).maxFailCount(2).startDelay(DELAY).build();
+                    .pollingInterval(Duration.ofMinutes(10)).maxFailCount(2).maxTerraformPollCallErrors(10).startDelay(DELAY).build();
         }
 
         @Bean

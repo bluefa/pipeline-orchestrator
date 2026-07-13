@@ -77,6 +77,7 @@ class PipelineExecutionTest {
 
     static final Instant START = Instant.parse("2026-06-23T00:00:00Z");
     static final Duration LEASE = Duration.ofSeconds(30);
+    static final int MAX_TF_POLL_ERRORS = 10;   // Wiring의 PipelineSettings와 폴 임계 테스트가 공유하는 값
 
     @Autowired private PipelineWorker pipelineWorker;
     @Autowired private PipelineClaimer pipelineClaimer;
@@ -249,7 +250,7 @@ class PipelineExecutionTest {
         });
 
         pipelineWorker.pollOnce();   // dispatch (attempt 1)
-        for (int poll = 1; poll <= TerraformTask.DEFAULT_MAX_TERRAFORM_POLL_CALL_ERRORS - 1; poll++) {
+        for (int poll = 1; poll <= MAX_TF_POLL_ERRORS - 1; poll++) {
             clock.advance(Duration.ofMinutes(11));   // polling_interval 경과 후 재폴 (deadline 이내)
             pipelineWorker.pollOnce();               // 누적 1..9 → 임계 미만 → 미종결
             assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
@@ -261,8 +262,10 @@ class PipelineExecutionTest {
         assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.READY);
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
         assertThat(attemptNo(pipeline, 0, 1).getErrorCode()).isEqualTo(ErrorCode.JOB_FAILED);
+        // 원인 텍스트가 정상 응답 FAILED가 아니라 폴 임계 초과(관측 불능)임을 구분해 남긴다
+        assertThat(attemptNo(pipeline, 0, 1).getFailureDetail()).contains("unreachable after poll budget");
         assertThat(terraformJobStateRepository.findAll()).singleElement()
-                .extracting(TerraformJobState::getCallErrorCount).isEqualTo(TerraformTask.DEFAULT_MAX_TERRAFORM_POLL_CALL_ERRORS);
+                .extracting(TerraformJobState::getCallErrorCount).isEqualTo(MAX_TF_POLL_ERRORS);
         // 관측 불능 job에도 terraform log를 명시적 API call(terraformJobResult)로 조회한다 — 폴로 얻은 값이 아니다.
         assertThat(logFetches.get()).isGreaterThanOrEqualTo(1);
         // 그 결과 result 행을 얻는다: succeeded=false, 본문 조회도 실패했으므로 result=null → has_body=false
@@ -290,7 +293,7 @@ class PipelineExecutionTest {
         });
 
         pipelineWorker.pollOnce();   // dispatch (attempt 1)
-        for (int poll = 1; poll <= TerraformTask.DEFAULT_MAX_TERRAFORM_POLL_CALL_ERRORS; poll++) {
+        for (int poll = 1; poll <= MAX_TF_POLL_ERRORS; poll++) {
             clock.advance(Duration.ofMinutes(11));
             pipelineWorker.pollOnce();   // job-err 누적 1..10, job-ok running → 형제 대기로 미종결
             assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
@@ -708,6 +711,7 @@ class PipelineExecutionTest {
                     .executionTimeout(Duration.ofMinutes(50))
                     .pollingInterval(Duration.ofMinutes(10))
                     .maxFailCount(2)
+                    .maxTerraformPollCallErrors(MAX_TF_POLL_ERRORS)
                     .startDelay(Duration.ZERO)
                     .build();
         }
