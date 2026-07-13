@@ -122,6 +122,15 @@ class TerraformJobStateRecorderTest {
     }
 
     @Test
+    void recordCallErrorReturnsZeroWhenTheSaveIsLost() {
+        // job_id 컬럼(64자) 초과 → 저장이 무결성 위반으로 실패 → best-effort 강등. 반환 누적은 0이라 임계 조기 발화가 없다.
+        int count = recorder().recordCallError(ref("j".repeat(65)), "500");
+
+        assertThat(count).isZero();
+        assertThat(repository.findAll()).isEmpty();
+    }
+
+    @Test
     void clampsOverlongExternalTextToColumnLengths() {
         recorder().recordObserved(ref("job-1"),
                 TerraformPoll.failure("F".repeat(40), "r".repeat(600)));

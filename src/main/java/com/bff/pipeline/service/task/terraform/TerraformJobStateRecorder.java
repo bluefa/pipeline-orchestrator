@@ -63,9 +63,18 @@ public class TerraformJobStateRecorder {
      * 여부를 확인해, 이미 관측 불능으로 확정된 job을 다시 폴하지 않고 실패 판정을 유지(sticky)하는 데 쓴다.
      */
     public int currentCallErrorCount(TerraformJobRef job) {
-        return repository.findByTaskIdAndAttemptNumberAndJobId(job.taskId(), job.attemptNumber(), job.jobId())
-                .map(TerraformJobState::getCallErrorCount)
-                .orElse(0);
+        try {
+            return repository.findByTaskIdAndAttemptNumberAndJobId(job.taskId(), job.attemptNumber(), job.jobId())
+                    .map(TerraformJobState::getCallErrorCount)
+                    .orElse(0);
+        } catch (RuntimeException failure) {
+            // harness-allow: targeted-catch — 판정이 읽는 값이지만 관찰 테이블은 best-effort 계약이다. 읽기 실패로
+            // 판정 turn을 깨뜨리면 폴 전체가 lease 회수 루프에 갇히므로 관찰 결손으로 강등해 0을 반환한다 — 그 job은
+            // 다시 폴될 뿐이라 안전한 방향이다(읽기 실패 turn엔 sticky가 잠시 풀릴 수 있으나 stickiness 자체가
+            // best-effort 저장에 기대므로 허용한다).
+            log.error("{}: terraform job state read failed — treating as no call errors", job, failure);
+            return 0;
+        }
     }
 
     private int upsert(TerraformJobRef job, Consumer<TerraformJobState> mutation) {
@@ -77,6 +86,8 @@ public class TerraformJobStateRecorder {
             row.setPollCount(row.getPollCount() + 1);
             row.setLastPolledAt(clock.instant());
             save(row);
+            // 반환값은 완료 집계의 임계 판정에 쓰인다. 동시 중복 insert를 save가 조용히 삼킨 경우(멱등 경합)엔 이
+            // in-memory 증가분이 영속되지 않아 under-count될 수 있으나, 안전한 방향(조기 발화 아님)이라 그대로 반환한다.
             return row.getCallErrorCount();
         } catch (RuntimeException failure) {
             // harness-allow: targeted-catch — 관찰 전용 계약의 경계다. 어떤 기록 실패도 태스크 판정을 바꾸지 않는다.

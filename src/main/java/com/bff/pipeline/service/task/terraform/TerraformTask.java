@@ -57,7 +57,7 @@ import com.bff.pipeline.exception.CallTimeoutException;
  *
  * 빈 dispatch 응답은 영속/폴링 대신 호출 실패로 처리해({@code CallFailedException}) 엔진이 재dispatch하게 한다.
  * 폴 단계의 호출 실패(전송 실패·타임아웃·null poll 상태)는 예외로 던지지 않고 job별 누적으로 흡수한다 — 임계
- * ({@link #maxPollCallErrors}) 전까지는 미종결로 두고, 임계 이상이면 그 job만 실패로 확정한다(아래 폴 집계).
+ * ({@link #maxTerraformPollCallErrors}) 전까지는 미종결로 두고, 임계 이상이면 그 job만 실패로 확정한다(아래 폴 집계).
  * 타입 이름 {@link #NAME}은 모든 terraform task 행에 저장된다.
  */
 @Slf4j
@@ -69,8 +69,8 @@ public class TerraformTask implements TaskType {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final TypeReference<List<String>> JOB_IDS = new TypeReference<>() { };
 
-    /** 폴 호출 누적 실패 임계 기본값. env {@code PIPELINE_MAX_POLL_CALL_ERRORS}(프로퍼티 {@code pipeline.max-poll-call-errors})로 오버라이드한다. */
-    public static final int DEFAULT_MAX_POLL_CALL_ERRORS = 10;
+    /** 폴 호출 누적 실패 임계 기본값. env {@code PIPELINE_MAX_TERRAFORM_POLL_CALL_ERRORS}(프로퍼티 {@code pipeline.max-terraform-poll-call-errors})로 오버라이드한다. */
+    public static final int DEFAULT_MAX_TERRAFORM_POLL_CALL_ERRORS = 10;
 
     /** 임계 초과로 실패 확정된 job의 합성 판정에 실을 원시 상태 표기(관측된 적 없어 실제 terraformState가 없다). */
     private static final String POLL_UNREACHABLE_STATE = "UNREACHABLE";
@@ -85,17 +85,17 @@ public class TerraformTask implements TaskType {
      * 한 job의 폴 호출이 이 횟수만큼 누적 실패하면 그 job을 관측 불능으로 보고 실패로 확정한다. 그 전까지의 전송
      * 실패는 일시 장애로 보고 다음 폴에서 재시도한다. execution-timeout이 더 짧으면(기본 설정처럼 폴 간격 기준
      * 임계 도달 시간이 timeout보다 길면) timeout이 먼저 종결하므로, 이 임계는 폴 간격이 짧게 설정된 task에서 조기
-     * 포기로 작동한다. env {@code PIPELINE_MAX_POLL_CALL_ERRORS}로 조정한다.
+     * 포기로 작동한다. env {@code PIPELINE_MAX_TERRAFORM_POLL_CALL_ERRORS}로 조정한다.
      */
-    @Value("${pipeline.max-poll-call-errors:" + DEFAULT_MAX_POLL_CALL_ERRORS + "}")
-    private int maxPollCallErrors;
+    @Value("${pipeline.max-terraform-poll-call-errors:" + DEFAULT_MAX_TERRAFORM_POLL_CALL_ERRORS + "}")
+    private int maxTerraformPollCallErrors = DEFAULT_MAX_TERRAFORM_POLL_CALL_ERRORS;   // Spring 밖 생성 시에도 0(모든 job 즉시 실패)이 아니라 기본값을 쓴다
 
     /** 임계가 1 미만이면 첫 폴 전에 모든 job을 즉시 실패로 확정하는 오동작이 되므로, 기동 시 검증해 곧바로 실패한다(fail fast). */
     @PostConstruct
-    void validateMaxPollCallErrors() {
-        if (maxPollCallErrors < 1) {
+    void validateMaxTerraformPollCallErrors() {
+        if (maxTerraformPollCallErrors < 1) {
             throw new IllegalStateException(
-                    "pipeline.max-poll-call-errors must be >= 1, was " + maxPollCallErrors);
+                    "pipeline.max-terraform-poll-call-errors must be >= 1, was " + maxTerraformPollCallErrors);
         }
     }
 
@@ -172,9 +172,10 @@ public class TerraformTask implements TaskType {
                 // 임계 미만 전송 실패 — 이번 turn은 미관측이라 미종결로 두고 다음 폴에서 재시도한다(형제 job은 계속 폴).
                 continue;
             }
-            if (poll.get().finished()) {
-                finished.put(jobId, poll.get());
-                anyFailed |= !poll.get().succeeded();
+            TerraformPoll observed = poll.get();
+            if (observed.finished()) {
+                finished.put(jobId, observed);
+                anyFailed |= !observed.succeeded();
             }
         }
         boolean allFinished = finished.size() == jobIds.size();
@@ -196,7 +197,7 @@ public class TerraformTask implements TaskType {
     /**
      * job 상태를 폴하고 진행-시점 관찰({@code terraform_job_state})을 남긴다. 정상 관측이면 그 폴을 담아 반환한다.
      * 폴 호출이 실패하면(전송 실패·타임아웃·상태 없음) 그 job의 오류를 관찰에 누적하고 job별로 흡수한다 —
-     * 누적 호출 실패가 {@link #maxPollCallErrors} 미만이면 일시 장애로 보아 빈 값을 반환해 이번 turn 미관측
+     * 누적 호출 실패가 {@link #maxTerraformPollCallErrors} 미만이면 일시 장애로 보아 빈 값을 반환해 이번 turn 미관측
      * (미종결)으로 두고, 임계 이상이면 그 job만 관측 불능으로 확정해 FAILED 합성 판정을 담아 반환한다. 어느
      * 경우든 예외를 위로 던지지 않으므로 형제 job은 계속 폴되고 task.failCount는 이 경로로 오르지 않는다
      * (전송 실패는 execution-timeout 또는 임계 확정으로만 판정에 반영된다).
@@ -206,8 +207,8 @@ public class TerraformTask implements TaskType {
      */
     private Optional<TerraformPoll> pollAndObserve(Task task, TaskAttempt attempt, String jobId) {
         TerraformJobRef job = new TerraformJobRef(task, attempt, jobId);
-        if (jobStateRecorder.currentCallErrorCount(job) >= maxPollCallErrors) {
-            return Optional.of(unreachable(maxPollCallErrors, "previously exhausted"));
+        if (jobStateRecorder.currentCallErrorCount(job) >= maxTerraformPollCallErrors) {
+            return Optional.of(unreachable(maxTerraformPollCallErrors, "previously exhausted"));
         }
         try {
             TerraformPoll poll = infraManagerClient.terraformJobStatus(jobId, task.getOperation());
@@ -228,7 +229,7 @@ public class TerraformTask implements TaskType {
      */
     private Optional<TerraformPoll> onPollCallError(TerraformJobRef job, String message) {
         int callErrorCount = jobStateRecorder.recordCallError(job, message);
-        if (callErrorCount >= maxPollCallErrors) {
+        if (callErrorCount >= maxTerraformPollCallErrors) {
             return Optional.of(unreachable(callErrorCount, message));
         }
         return Optional.empty();

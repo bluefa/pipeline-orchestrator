@@ -43,6 +43,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -240,11 +241,15 @@ class PipelineExecutionTest {
         Task terraform = task(pipeline, 0);
         terraform.setExecutionTimeout(Duration.ofHours(100));
         taskRepository.save(terraform);
+        AtomicInteger logFetches = new AtomicInteger();
         infraManagerClient.onPoll(() -> { throw new CallFailedException("500"); });
-        infraManagerClient.onResult(() -> { throw new CallFailedException("500"); });   // 본문 조회도 실패 → body 없는 행
+        infraManagerClient.onResult(() -> {   // terraform log는 폴과 별개의 명시적 API call로 조회한다 — 여기서도 실패 → body 없는 행
+            logFetches.incrementAndGet();
+            throw new CallFailedException("500");
+        });
 
         pipelineWorker.pollOnce();   // dispatch (attempt 1)
-        for (int poll = 1; poll <= TerraformTask.DEFAULT_MAX_POLL_CALL_ERRORS - 1; poll++) {
+        for (int poll = 1; poll <= TerraformTask.DEFAULT_MAX_TERRAFORM_POLL_CALL_ERRORS - 1; poll++) {
             clock.advance(Duration.ofMinutes(11));   // polling_interval 경과 후 재폴 (deadline 이내)
             pipelineWorker.pollOnce();               // 누적 1..9 → 임계 미만 → 미종결
             assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
@@ -257,8 +262,10 @@ class PipelineExecutionTest {
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
         assertThat(attemptNo(pipeline, 0, 1).getErrorCode()).isEqualTo(ErrorCode.JOB_FAILED);
         assertThat(terraformJobStateRepository.findAll()).singleElement()
-                .extracting(TerraformJobState::getCallErrorCount).isEqualTo(TerraformTask.DEFAULT_MAX_POLL_CALL_ERRORS);
-        // 관측 불능 job도 result 행을 얻는다: succeeded=false, 본문 조회 실패라 result=null → has_body=false
+                .extracting(TerraformJobState::getCallErrorCount).isEqualTo(TerraformTask.DEFAULT_MAX_TERRAFORM_POLL_CALL_ERRORS);
+        // 관측 불능 job에도 terraform log를 명시적 API call(terraformJobResult)로 조회한다 — 폴로 얻은 값이 아니다.
+        assertThat(logFetches.get()).isGreaterThanOrEqualTo(1);
+        // 그 결과 result 행을 얻는다: succeeded=false, 본문 조회도 실패했으므로 result=null → has_body=false
         assertThat(terraformResultRepository.findAll()).singleElement().satisfies(row -> {
             assertThat(row.getJobId()).isEqualTo("job-1");
             assertThat(row.isSucceeded()).isFalse();
@@ -283,7 +290,7 @@ class PipelineExecutionTest {
         });
 
         pipelineWorker.pollOnce();   // dispatch (attempt 1)
-        for (int poll = 1; poll <= TerraformTask.DEFAULT_MAX_POLL_CALL_ERRORS; poll++) {
+        for (int poll = 1; poll <= TerraformTask.DEFAULT_MAX_TERRAFORM_POLL_CALL_ERRORS; poll++) {
             clock.advance(Duration.ofMinutes(11));
             pipelineWorker.pollOnce();   // job-err 누적 1..10, job-ok running → 형제 대기로 미종결
             assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
@@ -306,6 +313,23 @@ class PipelineExecutionTest {
         assertThat(terraformResultRepository.findAll())
                 .extracting(TerraformResult::getJobId, TerraformResult::isSucceeded)
                 .containsExactlyInAnyOrder(tuple("job-err", false), tuple("job-ok", true));
+    }
+
+    @Test
+    void aNullPollStatusCountsTowardThePerJobErrorBudget() {
+        // 상태 없음(null poll)도 전송 실패와 같은 관측 불능이라 누적 카운트에 반영된다(임계 미만이라 미종결).
+        Pipeline pipeline = creator.create("e-null-poll", PipelineType.DELETE);
+        infraManagerClient.onPoll(() -> null);
+
+        pipelineWorker.pollOnce();   // dispatch
+        pipelineWorker.pollOnce();   // poll이 null 반환 → call error 누적 1
+
+        assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
+        assertThat(task(pipeline, 0).getFailCount()).isZero();
+        assertThat(terraformJobStateRepository.findAll()).singleElement().satisfies(row -> {
+            assertThat(row.getCallErrorCount()).isEqualTo(1);
+            assertThat(row.getLastError()).isEqualTo("InfraManager returned no status for job job-1");
+        });
     }
 
     @Test
