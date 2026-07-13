@@ -236,8 +236,9 @@ class PipelineExecutionTest {
 
     @Test
     void aJobExceedingThePollErrorBudgetConcludesJobFailedWithABodylessResult() {
-        // 누적 전송 실패가 임계(10)를 넘으면 그 job을 관측 불능으로 확정한다 → JOB_FAILED. execution-timeout이
-        // 먼저 끊지 않도록 task별 타임아웃을 크게 오버라이드해 임계 발화 경로만 격리한다.
+        // 연속 전송 실패가 임계(10)에 닿으면 그 job을 관측 불능으로 확정한다 → JOB_FAILED. onPoll이 매번 실패하므로
+        // 사이에 정상 관측이 없어 연속이 곧 총합이다. execution-timeout이 먼저 끊지 않도록 task별 타임아웃을 크게
+        // 오버라이드해 임계 발화 경로만 격리한다.
         Pipeline pipeline = creator.create("e-poll-budget", PipelineType.DELETE);
         Task terraform = task(pipeline, 0);
         terraform.setExecutionTimeout(Duration.ofHours(100));
@@ -252,7 +253,7 @@ class PipelineExecutionTest {
         pipelineWorker.pollOnce();   // dispatch (attempt 1)
         for (int poll = 1; poll <= MAX_TF_POLL_ERRORS - 1; poll++) {
             clock.advance(Duration.ofMinutes(11));   // polling_interval 경과 후 재폴 (deadline 이내)
-            pipelineWorker.pollOnce();               // 누적 1..9 → 임계 미만 → 미종결
+            pipelineWorker.pollOnce();               // 연속 1..9 → 임계 미만 → 미종결
             assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
             assertThat(task(pipeline, 0).getFailCount()).isZero();
         }
@@ -320,7 +321,7 @@ class PipelineExecutionTest {
 
     @Test
     void aNullPollStatusCountsTowardThePerJobErrorBudget() {
-        // 상태 없음(null poll)도 전송 실패와 같은 관측 불능이라 누적 카운트에 반영된다(임계 미만이라 미종결).
+        // 상태 없음(null poll)도 전송 실패와 같은 관측 불능이라 연속 카운트에 반영된다(임계 미만이라 미종결).
         Pipeline pipeline = creator.create("e-null-poll", PipelineType.DELETE);
         infraManagerClient.onPoll(() -> null);
 
@@ -333,6 +334,34 @@ class PipelineExecutionTest {
             assertThat(row.getCallErrorCount()).isEqualTo(1);
             assertThat(row.getLastError()).isEqualTo("InfraManager returned no status for job job-1");
         });
+    }
+
+    @Test
+    void scatteredPollErrorsWithRecoveriesNeverExhaustTheConsecutiveBudget() {
+        // 산발적 전송 오류라도 사이에 정상 관측이 있으면 연속 카운트가 0으로 리셋돼 관측 불능으로 오판되지 않는다.
+        // 누적 시맨틱이라면 임계(10)를 훨씬 넘는 폴 수에서 이미 죽었을 것이다(Fable 회귀 가드).
+        Pipeline pipeline = creator.create("e-poll-reset", PipelineType.DELETE);
+        Task terraform = task(pipeline, 0);
+        terraform.setExecutionTimeout(Duration.ofHours(100));   // 임계 발화 경로만 격리(timeout 배제)
+        taskRepository.save(terraform);
+        AtomicInteger polls = new AtomicInteger();
+        infraManagerClient.onPoll(() -> {
+            // 5회마다 한 번 정상 관측 → 연속 실패는 최대 4로 임계(10)에 절대 닿지 않는다.
+            if (polls.incrementAndGet() % 5 == 0) {
+                return TerraformPoll.running("APPLYING");
+            }
+            throw new CallFailedException("500");
+        });
+
+        pipelineWorker.pollOnce();   // dispatch (attempt 1)
+        for (int i = 0; i < 30; i++) {   // 임계(10)를 훨씬 넘는 폴 수 — 누적이면 벌써 관측 불능으로 죽었을 것
+            clock.advance(Duration.ofMinutes(11));
+            pipelineWorker.pollOnce();
+            assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
+            assertThat(task(pipeline, 0).getFailCount()).isZero();
+        }
+        assertThat(terraformJobStateRepository.findAll()).singleElement().satisfies(row ->
+                assertThat(row.getCallErrorCount()).isLessThan(MAX_TF_POLL_ERRORS));   // 연속 카운트가 임계 미만으로 유지
     }
 
     @Test

@@ -31,7 +31,7 @@ pipeline:
   # execution-timeout: PT50M           # (default) TERRAFORM_JOB per-task deadline
   # polling-interval: PT10M            # (default) poll re-check cadence (CONDITION_CHECK retry spacing)
   # max-fail-count: 2                  # (default) attempts before a task is FAILED (also bounds CONDITION_CHECK not-met polls)
-  # max-terraform-poll-call-errors: 10 # (default) per-job cumulative poll-call failures before a job is deemed unreachable (env: PIPELINE_MAX_TERRAFORM_POLL_CALL_ERRORS)
+  # max-terraform-poll-call-errors: 3  # (default) per-job CONSECUTIVE poll-call failures before a job is deemed unreachable; a good observation resets the count (env: PIPELINE_MAX_TERRAFORM_POLL_CALL_ERRORS)
   # start-delay: PT15S                 # (default) LIN-17: wait after creation before the first task dispatches (0 = immediate)
 
   # ADR-021 execution model. Static server config, tuned in operation against observed InfraManager

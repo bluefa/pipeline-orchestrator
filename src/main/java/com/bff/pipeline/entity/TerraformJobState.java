@@ -22,7 +22,7 @@ import lombok.Setter;
  * {@code lastFailReason}은 job이 FAILED로 관측될 때 status 응답이 실어 온 실패 사유이며, {@code lastError}는 폴
  * 호출 자체가 실패했을 때(API_ERROR/CALL_TIMEOUT)의 메시지다 — 셋 다 표시 전용이다.
  *
- * 표시 전용 관찰이 이 테이블의 주 용도지만, 완료 집계는 {@code callErrorCount} 한 값만 읽어 폴 호출이 누적
+ * 표시 전용 관찰이 이 테이블의 주 용도지만, 완료 집계는 {@code callErrorCount} 한 값만 읽어 폴 호출이 연속
  * 임계만큼 실패한 job을 관측 불능으로 확정한다 — 그 외 필드(상태·사유·원문·pollCount)는 엔진이 읽지 않는다.
  * 이 테이블도 {@code terraform_result}처럼 run 단계(tx 밖)에서 best-effort로 쓰이므로 저장 유실이 판정을
  * 막지는 않는다: 유실되면 그 job은 임계에 못 미친 것으로 보여 계속 폴되다가 execution-timeout이 최종 천장으로
@@ -87,8 +87,10 @@ public class TerraformJobState {
     private int pollCount;
 
     /**
-     * 이 attempt 동안 이 job의 폴 호출이 실패한 누적 횟수(전송 실패·타임아웃·상태 없음). 정상 폴이 사이에 있어도
-     * 리셋하지 않는 누적값이며, 완료 집계가 이 값을 읽어 임계 이상이면 그 job을 관측 불능으로 보고 실패로 확정한다.
+     * 이 job의 폴 호출이 연속으로 실패한 횟수(전송 실패·타임아웃·상태 없음). 정상 관측이 한 번 들어오면
+     * {@code recordObserved}가 0으로 리셋하므로, 완료 집계는 이 값이 임계 이상 — 즉 중간에 성공 관측 없이 연속
+     * N회 실패 — 일 때만 그 job을 관측 불능으로 보고 실패로 확정한다. 이렇게 하면 산발적 전송 오류가 장기 job을
+     * 서서히 관측 불능으로 오판하지 못한다(진짜 관측 불능 job은 매 폴 실패하므로 연속 임계에 그대로 걸린다).
      * attempt별 재dispatch는 새 job id를 만들어 이 카운터도 자연히 새로 시작한다.
      */
     @Column(name = "call_error_count", nullable = false)

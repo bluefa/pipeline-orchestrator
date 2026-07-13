@@ -27,7 +27,7 @@ public record PipelineSettings(
         @DefaultValue("PT50M") Duration executionTimeout,
         @DefaultValue("PT10M") Duration pollingInterval,
         @DefaultValue("2") int maxFailCount,
-        @DefaultValue("10") int maxTerraformPollCallErrors,
+        @DefaultValue("3") int maxTerraformPollCallErrors,
         @DefaultValue("PT15S") Duration startDelay) {
 
     public PipelineSettings {

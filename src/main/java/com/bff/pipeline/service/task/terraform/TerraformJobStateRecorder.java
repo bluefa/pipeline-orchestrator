@@ -33,8 +33,9 @@ public class TerraformJobStateRecorder {
 
     /**
      * 정상 폴 1회의 job 상태를 upsert한다 — 원시 상태·실패 사유·응답 원문을 최신값으로 덮고, 이 폴엔 호출 오류가
-     * 없으니 {@code lastError}를 지운다. 다만 {@code callErrorCount}는 누적값이라 정상 폴에도 리셋하지 않는다.
-     * 원문(response)은 TEXT 컬럼이라 clamp하지 않는다.
+     * 없으니 {@code lastError}를 지운다. {@code callErrorCount}는 연속 실패 시맨틱이라 정상 관측이 한 번 들어오면
+     * 0으로 리셋한다 — 방금 관측된 job은 관측 불능이 아니므로, 임계는 "연속 N회" 실패에만 발화한다(산발적 전송
+     * 오류가 장기 job을 서서히 관측 불능으로 오판하는 것을 막는다). 원문(response)은 TEXT 컬럼이라 clamp하지 않는다.
      */
     public void recordObserved(TerraformJobRef job, TerraformPoll poll) {
         upsert(job, row -> {
@@ -42,14 +43,16 @@ public class TerraformJobStateRecorder {
             row.setLastFailReason(clamp(poll.failReason(), TerraformJobState.DETAIL_LENGTH));
             row.setLastResponse(poll.response());
             row.setLastError(null);
+            row.setCallErrorCount(0);
         });
     }
 
     /**
-     * 폴 호출 자체가 실패한 job의 오류를 upsert하고 이 attempt의 누적 호출 실패 횟수를 반환한다 —
+     * 폴 호출 자체가 실패한 job의 오류를 upsert하고 이 job의 연속 호출 실패 횟수를 반환한다 —
      * {@code lastState}/{@code lastFailReason}은 직전 관측을 유지하고 {@code lastError}와 {@code callErrorCount}만
-     * 갱신한다. 반환값은 완료 집계가 임계 판정에 쓴다. 저장이 유실되면(best-effort 강등) 0을 반환해 그 turn에는
-     * 임계를 넘기지 않는다 — 그 job은 계속 폴되다가 execution-timeout이 받친다.
+     * 갱신한다(정상 관측이 사이에 들어오면 {@code recordObserved}가 0으로 리셋한다). 반환값은 완료 집계가 임계
+     * 판정에 쓴다. 저장이 유실되면(best-effort 강등) 0을 반환해 그 turn에는 임계를 넘기지 않는다 — 그 job은
+     * 계속 폴되다가 execution-timeout이 받친다.
      */
     public int recordCallError(TerraformJobRef job, String message) {
         return upsert(job, row -> {
@@ -59,7 +62,7 @@ public class TerraformJobStateRecorder {
     }
 
     /**
-     * 이 attempt에서 이 job의 현재 누적 폴 호출 실패 횟수를 반환한다(행이 없으면 0). 완료 집계가 폴 직전에 임계 도달
+     * 이 attempt에서 이 job의 현재 연속 폴 호출 실패 횟수를 반환한다(행이 없으면 0). 완료 집계가 폴 직전에 임계 도달
      * 여부를 확인해, 이미 관측 불능으로 확정된 job을 다시 폴하지 않고 실패 판정을 유지(sticky)하는 데 쓴다.
      */
     public int currentCallErrorCount(TerraformJobRef job) {

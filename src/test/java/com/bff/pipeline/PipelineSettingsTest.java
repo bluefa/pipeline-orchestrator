@@ -47,10 +47,10 @@ class PipelineSettingsTest {
     }
 
     @Test
-    void maxTerraformPollCallErrorsBindsToTenWhenThePropertyIsAbsent() {
-        // 키를 빼고 바인딩 → @DefaultValue(10)로 채워진다("따로 설정하지 않아도 10").
+    void maxTerraformPollCallErrorsBindsToThreeWhenThePropertyIsAbsent() {
+        // 키를 빼고 바인딩 → @DefaultValue(3)로 채워진다("따로 설정하지 않아도 3").
         PipelineSettings bound = bind(propsWithout("pipeline.max-terraform-poll-call-errors"));
-        assertThat(bound.maxTerraformPollCallErrors()).isEqualTo(10);
+        assertThat(bound.maxTerraformPollCallErrors()).isEqualTo(3);
     }
 
     @Test
