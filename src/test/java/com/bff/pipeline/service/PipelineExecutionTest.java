@@ -244,7 +244,7 @@ class PipelineExecutionTest {
         infraManagerClient.onResult(() -> { throw new CallFailedException("500"); });   // 본문 조회도 실패 → body 없는 행
 
         pipelineWorker.pollOnce();   // dispatch (attempt 1)
-        for (int poll = 1; poll <= TerraformTask.MAX_POLL_CALL_ERRORS - 1; poll++) {
+        for (int poll = 1; poll <= TerraformTask.DEFAULT_MAX_POLL_CALL_ERRORS - 1; poll++) {
             clock.advance(Duration.ofMinutes(11));   // polling_interval 경과 후 재폴 (deadline 이내)
             pipelineWorker.pollOnce();               // 누적 1..9 → 임계 미만 → 미종결
             assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
@@ -257,7 +257,7 @@ class PipelineExecutionTest {
         assertThat(task(pipeline, 0).getFailCount()).isEqualTo(1);
         assertThat(attemptNo(pipeline, 0, 1).getErrorCode()).isEqualTo(ErrorCode.JOB_FAILED);
         assertThat(terraformJobStateRepository.findAll()).singleElement()
-                .extracting(TerraformJobState::getCallErrorCount).isEqualTo(TerraformTask.MAX_POLL_CALL_ERRORS);
+                .extracting(TerraformJobState::getCallErrorCount).isEqualTo(TerraformTask.DEFAULT_MAX_POLL_CALL_ERRORS);
         // 관측 불능 job도 result 행을 얻는다: succeeded=false, 본문 조회 실패라 result=null → has_body=false
         assertThat(terraformResultRepository.findAll()).singleElement().satisfies(row -> {
             assertThat(row.getJobId()).isEqualTo("job-1");
@@ -283,7 +283,7 @@ class PipelineExecutionTest {
         });
 
         pipelineWorker.pollOnce();   // dispatch (attempt 1)
-        for (int poll = 1; poll <= TerraformTask.MAX_POLL_CALL_ERRORS; poll++) {
+        for (int poll = 1; poll <= TerraformTask.DEFAULT_MAX_POLL_CALL_ERRORS; poll++) {
             clock.advance(Duration.ofMinutes(11));
             pipelineWorker.pollOnce();   // job-err 누적 1..10, job-ok running → 형제 대기로 미종결
             assertThat(task(pipeline, 0).getStatus()).isEqualTo(TaskStatus.IN_PROGRESS);
