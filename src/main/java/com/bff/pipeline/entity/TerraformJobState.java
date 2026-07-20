@@ -25,8 +25,10 @@ import lombok.Setter;
  * 표시 전용 관찰이 이 테이블의 주 용도지만, 완료 집계는 {@code callErrorCount} 한 값만 읽어 폴 호출이 연속
  * 임계만큼 실패한 job을 관측 불능으로 확정한다 — 그 외 필드(상태·사유·원문·pollCount)는 엔진이 읽지 않는다.
  * 이 테이블도 {@code terraform_result}처럼 run 단계(tx 밖)에서 best-effort로 쓰이므로 저장 유실이 판정을
- * 막지는 않는다: 유실되면 그 job은 임계에 못 미친 것으로 보여 계속 폴되다가 execution-timeout이 최종 천장으로
- * 받친다(진단 손실일 뿐 정합성 손실이 아니다). {@code (task_id, attempt_number, job_id)} 유니크 제약이
+ * 막지는 않는다: 실패 누적 기록이 유실되면 그 job은 임계에 못 미친 것으로 보여 계속 폴되다가 execution-timeout이
+ * 최종 천장으로 받친다. 반대로 정상 관측의 리셋 기록이 유실되면 카운트가 잠시 실제보다 높게 남아 job이
+ * 이르게 관측 불능으로 확정될 수 있으나(재시도 가능한 JOB_FAILED), 재dispatch가 새 job으로 자기치유한다 —
+ * 어느 방향이든 진단 손실일 뿐 정합성 손실이 아니다. {@code (task_id, attempt_number, job_id)} 유니크 제약이
  * 재실행(크래시/리스 회수 후 re-poll) 멱등성의 근거다 — 같은 키는 새 행이 아니라 제자리 갱신이다.
  * {@code pollCount}는 그 재실행에 한해 over-count될 수 있는 best-effort 카운터다(상태 자체의 upsert는 멱등).
  */

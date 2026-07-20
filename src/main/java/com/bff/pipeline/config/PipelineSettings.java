@@ -16,7 +16,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * {@code nextDueAt = now + startDelay}로 시딩해, claim 술어({@code next_due_at <= now})가 지연 경과 전에는
  * 이 실행을 잡지 않게 한다(sleep 없이 스케줄링으로 지연). 0이면 즉시 시작한다.
  *
- * <p>compact constructor가 값을 검증한다. 미설정은 {@code @DefaultValue}로 채워지므로 실패하지 않지만, 명시한
+ * compact constructor가 값을 검증한다. 미설정은 {@code @DefaultValue}로 채워지므로 실패하지 않지만, 명시한
  * 값이 유효하지 않으면(양수가 아닌 duration, 음수 start-delay, {@code maxFailCount}·{@code maxTerraformPollCallErrors}가
  * 1 미만) 문제가 된 키 이름과 함께 곧바로 시작에 실패한다(fail fast). 이렇게 막아 두면 데드라인 계산
  * ({@code TaskSettingsResolver})이나 terraform 폴 임계 판정에서 나중에 NPE나 조용한 오동작으로 번지지 않는다.
