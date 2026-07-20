@@ -100,6 +100,37 @@ class TerraformJobStateRecorderTest {
     }
 
     @Test
+    void accumulatesCallErrorCountAcrossConsecutivePollsAndReturnsTheRunningTotal() {
+        assertThat(recorder().recordCallError(ref("job-1"), "500")).isEqualTo(1);
+        assertThat(recorder().recordCallError(ref("job-1"), "503")).isEqualTo(2);
+
+        assertThat(repository.findAll()).singleElement()
+                .extracting(TerraformJobState::getCallErrorCount).isEqualTo(2);
+    }
+
+    @Test
+    void resetsTheCallErrorCountOnAGoodPoll() {
+        recorder().recordCallError(ref("job-1"), "500");
+        recorder().recordObserved(ref("job-1"), TerraformPoll.running("APPLYING"));   // 정상 관측이 사이에 끼면
+        int afterReset = recorder().recordCallError(ref("job-1"), "503");
+
+        assertThat(afterReset).isEqualTo(1);   // 연속 실패 시맨틱 — 정상 폴이 카운트를 0으로 리셋해 다시 1부터 센다
+        assertThat(repository.findAll()).singleElement().satisfies(row -> {
+            assertThat(row.getCallErrorCount()).isEqualTo(1);
+            assertThat(row.getLastError()).isEqualTo("503");
+        });
+    }
+
+    @Test
+    void recordCallErrorReturnsZeroWhenTheSaveIsLost() {
+        // job_id 컬럼(64자) 초과 → 저장이 무결성 위반으로 실패 → best-effort 강등. 반환 누적은 0이라 임계 조기 발화가 없다.
+        int count = recorder().recordCallError(ref("j".repeat(65)), "500");
+
+        assertThat(count).isZero();
+        assertThat(repository.findAll()).isEmpty();
+    }
+
+    @Test
     void clampsOverlongExternalTextToColumnLengths() {
         recorder().recordObserved(ref("job-1"),
                 TerraformPoll.failure("F".repeat(40), "r".repeat(600)));

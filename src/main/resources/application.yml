@@ -25,13 +25,11 @@ spring:
     properties:
       hibernate.jdbc.time_zone: UTC
 
-# Per-task deadline defaults (domain; ADR-016).
+# Per-task deadline defaults (domain; ADR-016)은 PipelineSettings의 @DefaultValue가 코드 단일 출처다
+# (execution-timeout PT50M · polling-interval PT10M · max-fail-count 2 · max-terraform-poll-call-errors 3 ·
+# start-delay PT15S). 오버라이드가 필요한 배포만 아래 pipeline.* 에 키를 추가하거나 env로 주입한다
+# (예: PIPELINE_MAX_TERRAFORM_POLL_CALL_ERRORS). 잘못된 값이면 PipelineSettings가 기동에서 fail-fast한다.
 pipeline:
-  execution-timeout: PT50M    # TERRAFORM_JOB per-task deadline
-  polling-interval: PT10M     # poll re-check cadence (CONDITION_CHECK retry spacing)
-  max-fail-count: 2           # attempts before a task is FAILED (also bounds CONDITION_CHECK not-met polls)
-  start-delay: PT15S          # LIN-17: wait after creation before the first task dispatches (0 = immediate)
-
   # ADR-021 execution model. Static server config, tuned in operation against observed InfraManager
   # latency. Hard constraint (Decision 5): lease-duration > api-call-timeout (+ pool queue wait +
   # margin, the latter two tuned operationally). worker-per-pod sizes BOTH the worker pool and the

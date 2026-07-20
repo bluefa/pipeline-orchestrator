@@ -304,6 +304,7 @@ class PipelineQueryServiceTest {
                     .executionTimeout(Duration.ofMinutes(50))
                     .pollingInterval(Duration.ofMinutes(10))
                     .maxFailCount(2)
+                    .maxTerraformPollCallErrors(10)
                     .startDelay(Duration.ZERO)
                     .build();
         }

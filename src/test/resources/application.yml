@@ -19,4 +19,5 @@ pipeline:
   execution-timeout: PT50M
   polling-interval: PT10M
   max-fail-count: 2
+  # max-terraform-poll-call-errors 미설정 → PipelineSettings의 @DefaultValue(3)로 바인딩됨(기본값 경로 검증)
   start-delay: PT0S   # tests exercise immediate dispatch; LIN-17 delay is covered by PipelineStartDelayTest overrides
