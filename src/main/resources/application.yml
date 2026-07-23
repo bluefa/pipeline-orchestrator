@@ -75,6 +75,31 @@ pipeline:
     # 주소를 줘야 한다(안 주면 알림의 링크가 localhost로 나간다).
     detail-url-base: ${PIPELINE_NOTIFY_DETAIL_URL_BASE:http://localhost:3001/integration/admin/pipelines}
 
+# 운영 관측(메트릭·헬스) 표면. 서비스 포트(8080)와 분리한 9090에서만 열리고, GKE에서는 이 포트를
+# Service에 노출하지 않는 것이 보호의 전부다 — GMP PodMonitoring이 pod 안에서 직접 긁어 간다.
+# percentiles-histogram이 켜진 두 Timer만 p95/p99 쿼리용 _bucket 시계열을 만든다(나머지는 비용 절약).
+management:
+  server:
+    port: 9090
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus   # 이 둘만 — 최소 표면 원칙
+  metrics:
+    tags:
+      application: pipeline-orchestrator
+      # 배포 환경 이름(stg, prd 등). notify의 environment와 별개 키다 — 알림 설정과 관측 identity가
+      # 서로를 끌고 다니지 않게 분리한다(둘 다 같은 값을 줘도 무방).
+      environment: ${DEPLOYMENT_ENVIRONMENT:local}
+    distribution:
+      percentiles-histogram:
+        "[http.server.requests]": true
+        "[infra.manager.call]": true
+  endpoint:
+    health:
+      probes:
+        enabled: true   # /actuator/health/liveness · readiness — K8s probe와 업타임 체크가 본다
+
 # InfraManager 프로덕션 HTTP delegate. base-url·auth-token 은 필수 설정이다 — 도메인이 InfraManagerClient 를
 # 필수 주입받으므로 full 컨텍스트는 이 연동 없이는 못 뜬다(FeignConfig 참조). 값은 env 로 주입한다:
 #   INFRA_MANAGER_BASE_URL(없으면 @FeignClient url 해석 실패), INFRA_MANAGER_TOKEN(비면 인터셉터가 fail-fast).

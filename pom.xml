@@ -55,6 +55,23 @@
             <artifactId>spring-cloud-starter-openfeign</artifactId>
         </dependency>
 
+        <!-- 운영 관측: /actuator/health(liveness/readiness probe)와 /actuator/prometheus(메트릭 scrape 표면). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
+        <!-- gcp 프로필의 JSON 콘솔 로그(logback-spring.xml). Cloud Logging이 severity 필드로 레벨을 인식한다. -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>8.0</version>
+        </dependency>
+
         <!-- Production target DB. -->
         <dependency>
             <groupId>com.mysql</groupId>

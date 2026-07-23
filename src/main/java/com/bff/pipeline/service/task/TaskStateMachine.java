@@ -10,6 +10,7 @@ import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.StepOutcome;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.metrics.PipelineMetrics;
 import com.bff.pipeline.utils.TaskSettingsResolver;
 import java.time.Clock;
 import java.time.Duration;
@@ -50,6 +51,7 @@ public class TaskStateMachine {
     private final TaskRepository taskRepository;
     private final ObservationRecorder observationRecorder;
     private final PipelineSettings pipelineSettings;
+    private final PipelineMetrics pipelineMetrics;
     private final Clock clock;
 
     public void applyOutcome(Task task, StepOutcome outcome) {
@@ -116,11 +118,13 @@ public class TaskStateMachine {
     }
 
     private void failOutright(Task task, ErrorCode reason, String failureDetail) {
+        pipelineMetrics.taskAttemptFailed(reason);
         observationRecorder.endAttempt(task, TaskStatus.FAILED, reason, failureDetail);
         fail(task, reason);
     }
 
     private void retryOrFail(Task task, ErrorCode reason, String failureDetail) {
+        pipelineMetrics.taskAttemptFailed(reason);
         observationRecorder.endAttempt(task, TaskStatus.FAILED, reason, failureDetail);
         task.setFailCount(task.getFailCount() + 1);
         if (task.getFailCount() >= TaskSettingsResolver.resolveMaxFailCount(task, pipelineSettings)) {

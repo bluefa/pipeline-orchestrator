@@ -163,4 +163,21 @@ public interface PipelineRepository extends JpaRepository<Pipeline, Long> {
             + "and p.notifiedAt is null "
             + "and p.notifyAttempts >= :maxAttempts")
     long countGivenUp(@Param("maxAttempts") int maxAttempts);
+
+    /**
+     * 아직 알림이 나가지 못한 파이프라인 중 지금 보낼 수 있는 것들({@link #lockNotifiable}과 같은 조건 —
+     * 재시도 대기 중이거나 자동 재시도가 멈춘 행은 제외)에서 가장 먼저 끝난 것의 종료 시각을 돌려준다.
+     * 알림 지연 지표(notify.pending.age.seconds)가 이 시각과 현재 시각의 차이로 계산된다.
+     * 잠그지 않는 읽기 전용 질의라 알림 전송과 경합하지 않는다.
+     */
+    @Query("select min(p.lastActivityAt) from Pipeline p "
+            + "where p.status in (com.bff.pipeline.enums.PipelineStatus.DONE, "
+            + "com.bff.pipeline.enums.PipelineStatus.FAILED, "
+            + "com.bff.pipeline.enums.PipelineStatus.CANCELLED) "
+            + "and p.notifiedAt is null "
+            + "and p.lastActivityAt >= :enabledAfter "
+            + "and p.notifyAttempts < :maxAttempts "
+            + "and (p.notifyNextAt is null or p.notifyNextAt <= :now)")
+    Optional<Instant> findOldestPendingNotifiableFinishedAt(@Param("now") Instant now,
+            @Param("maxAttempts") int maxAttempts, @Param("enabledAfter") Instant enabledAfter);
 }

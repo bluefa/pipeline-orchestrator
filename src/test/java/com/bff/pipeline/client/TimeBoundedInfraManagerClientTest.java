@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import com.bff.pipeline.exception.CallTimeoutException;
 import com.bff.pipeline.exception.CallInterruptedException;
 import com.bff.pipeline.exception.CallFailedException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 /**
  * {@link TimeBoundedInfraManagerClient} per-call timeout 데코레이터 단위 테스트. 실제 스레드풀 + 스크립터블
@@ -25,6 +26,7 @@ import com.bff.pipeline.exception.CallFailedException;
 class TimeBoundedInfraManagerClientTest {
 
     private final ExecutorService pool = Executors.newFixedThreadPool(2);
+    private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
     private TimeBoundedInfraManagerClient decorator(InfraManagerClient delegate) {
         ExecutionSettings settings = ExecutionSettings.builder()
@@ -34,7 +36,7 @@ class TimeBoundedInfraManagerClientTest {
                 .backoffBase(Duration.ofMillis(100)).backoffMax(Duration.ofSeconds(1)).jitterRatio(0.2)
                 .schedulerInitialDelay(Duration.ofSeconds(5))
                 .build();
-        return new TimeBoundedInfraManagerClient(delegate, pool, settings);
+        return new TimeBoundedInfraManagerClient(delegate, pool, settings, meterRegistry);
     }
 
     @AfterEach
@@ -80,6 +82,24 @@ class TimeBoundedInfraManagerClientTest {
         assertThatThrownBy(() -> decorator(delegate).runTerraform("t", TaskOperation.AWS_SERVICE_TF_APPLY))
                 .isInstanceOf(CallInterruptedException.class);
         assertThat(Thread.interrupted()).isTrue();   // restored (and cleared for the next test)
+    }
+
+    @Test
+    void everyCallOutcomeIsTimedUnderItsOwnTag() {
+        decorator(delegate(() -> "ok")).runTerraform("t", TaskOperation.AWS_SERVICE_TF_APPLY);
+        assertThatThrownBy(() -> decorator(delegate(() -> { throw new CallFailedException("503"); }))
+                .runTerraform("t", TaskOperation.AWS_SERVICE_TF_APPLY)).isInstanceOf(CallFailedException.class);
+        assertThatThrownBy(() -> decorator(delegate(() -> { sleep(2000); return "late"; }))
+                .runTerraform("t", TaskOperation.AWS_SERVICE_TF_APPLY)).isInstanceOf(CallTimeoutException.class);
+
+        assertThat(callCount(TimeBoundedInfraManagerClient.OUTCOME_SUCCESS)).isEqualTo(1);
+        assertThat(callCount(TimeBoundedInfraManagerClient.OUTCOME_FAILURE)).isEqualTo(1);
+        assertThat(callCount(TimeBoundedInfraManagerClient.OUTCOME_TIMEOUT)).isEqualTo(1);
+    }
+
+    private long callCount(String outcome) {
+        return meterRegistry.timer(TimeBoundedInfraManagerClient.INFRA_MANAGER_CALL,
+                TimeBoundedInfraManagerClient.OUTCOME_TAG, outcome).count();
     }
 
     private static InfraManagerClient delegate(Supplier<String> dispatch) {

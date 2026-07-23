@@ -35,7 +35,9 @@ import com.bff.pipeline.service.task.ConditionCheckTask;
 import com.bff.pipeline.service.task.ObservationRecorder;
 import com.bff.pipeline.service.task.TaskCanceller;
 import com.bff.pipeline.service.task.TaskStateMachine;
+import com.bff.pipeline.service.metrics.PipelineMetrics;
 import com.bff.pipeline.service.task.TaskTypeRegistry;
+import io.micrometer.core.instrument.MeterRegistry;
 import com.bff.pipeline.service.task.terraform.TerraformJobStateRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformResultRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
@@ -71,7 +73,7 @@ import com.bff.pipeline.exception.CallFailedException;
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
         TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, TerraformJobStateRecorder.class, ConditionCheckTask.class,
         ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class, PipelineInserter.class,
-        PipelineControl.class, RecipeCatalog.class, PipelineExecutionTest.Wiring.class})
+        PipelineControl.class, RecipeCatalog.class, PipelineExecutionTest.Wiring.class, MetricsTestWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineExecutionTest {
 
@@ -91,6 +93,7 @@ class PipelineExecutionTest {
     @Autowired private MutableClock clock;
     @Autowired private FakeInfraManagerClient infraManagerClient;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private MeterRegistry meterRegistry;
 
     @BeforeEach
     void reset() {
@@ -132,6 +135,27 @@ class PipelineExecutionTest {
         pipelineWorker.pollOnce();   // poll → DONE → pipeline DONE
         assertThat(task(pipeline, 2).getStatus()).isEqualTo(TaskStatus.DONE);
         assertThat(status(pipeline)).isEqualTo(PipelineStatus.DONE);
+    }
+
+    @Test
+    void aCommittedTerminalTransitionIncrementsTheTerminalCounterExactlyOnce() {
+        // write-back 트랜잭션이 실제로 커밋된 뒤에만 종단 카운터가 오르는지(AFTER_COMMIT 계약) 본다.
+        double before = terminalDoneDeleteCount();
+        Pipeline pipeline = creator.create("e-terminal-metric", PipelineType.DELETE);
+        infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
+
+        for (int turn = 0; turn < 6; turn++) {
+            pipelineWorker.pollOnce();   // 3단계 × (dispatch + poll)
+        }
+
+        assertThat(status(pipeline)).isEqualTo(PipelineStatus.DONE);
+        assertThat(terminalDoneDeleteCount() - before).isEqualTo(1.0);
+    }
+
+    private double terminalDoneDeleteCount() {
+        return meterRegistry.counter(PipelineMetrics.PIPELINE_TERMINAL,
+                PipelineMetrics.STATUS_TAG, PipelineStatus.DONE.name(),
+                PipelineMetrics.TYPE_TAG, PipelineType.DELETE.name()).count();
     }
 
     @Test
