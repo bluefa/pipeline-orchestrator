@@ -197,6 +197,8 @@ public class PipelineQueryService {
                 .definition(TaskDefinition.find(task.getTaskDefinition())
                         .map(TaskDefinitionView::from).orElse(null))
                 .operation(task.getOperation())
+                .terraformAction(task.getOperation() == null
+                        ? null : task.getOperation().terraformAction().orElse(null))
                 .status(task.getStatus())
                 .failCount(task.getFailCount())
                 .errorCode(task.getErrorCode())

@@ -78,6 +78,20 @@ public enum TaskOperation {
     }
 
     /**
+     * terraform 액션 라벨(PLAN/APPLY/DESTROY)이다 — 운영 UI가 job 노드에 태그로 표시한다. TERRAFORM_JOB
+     * operation의 이름 규약(…_TF_PLAN/…_TF_APPLY/…_TF_DESTROY) suffix에서 파생하며, terraform이 아닌
+     * operation(CONDITION_CHECK)이나 규약을 벗어난 이름은 empty다. 이 값은 표시용 분류 라벨일 뿐이고,
+     * 폴 정규화·API 바인딩의 authority는 여전히 TerraformBindingCatalog의 행(operation → TerraformJobType)이다.
+     */
+    public Optional<String> terraformAction() {
+        if (!Mechanism.TERRAFORM_JOB.equals(mechanism)) {
+            return Optional.empty();
+        }
+        int marker = name().lastIndexOf("_TF_");
+        return marker < 0 ? Optional.empty() : Optional.of(name().substring(marker + "_TF_".length()));
+    }
+
+    /**
      * terraform slot 소비 여부의 단일 authority다. slot 소비는 operation이 아니라 mechanism의 속성이라, 값을 op마다
      * 두지 않고 mechanism으로 판별한다. insert 때 이 값이 task 행(consumes_terraform_slot)에 캐시돼 slot 게이트가 쓴다.
      */
