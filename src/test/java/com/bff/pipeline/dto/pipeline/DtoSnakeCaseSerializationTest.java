@@ -42,8 +42,12 @@ class DtoSnakeCaseSerializationTest {
 
     @Test
     void pipelineDetailAndNestedTaskSerializeSnakeCase() throws Exception {
-        TaskSummary task = new TaskSummary(5L, 0, "TERRAFORM_JOB", "AWS_SERVICE_APPLY_V1", TaskOperation.AWS_SERVICE_TF_APPLY,
-                TaskStatus.IN_PROGRESS, 0, null, true, Instant.parse("2026-07-02T00:00:00Z"), null, "manual apply");
+        TaskSummary task = TaskSummary.builder()
+                .taskId(5L).sequence(0).kind("TERRAFORM_JOB").taskDefinition("AWS_SERVICE_APPLY_V1")
+                .operation(TaskOperation.AWS_SERVICE_TF_APPLY).terraformAction("APPLY")
+                .status(TaskStatus.IN_PROGRESS).failCount(0).errorCode(null).consumesTerraformSlot(true)
+                .startedAt(Instant.parse("2026-07-02T00:00:00Z")).finishedAt(null).description("manual apply")
+                .build();
         PipelineDetail detail = new PipelineDetail(101L, PipelineType.INSTALL, "ts-1", CloudProvider.AWS,
                 "AWS_INSTALL_V1", PipelineStatus.RUNNING, Instant.parse("2026-07-02T00:00:00Z"),
                 Instant.parse("2026-07-02T00:05:00Z"), Instant.parse("2026-07-02T00:06:00Z"), true, false,
@@ -54,7 +58,7 @@ class DtoSnakeCaseSerializationTest {
         assertThat(json).contains("\"next_due_at\":", "\"cancel_requested\":false", "\"due_lag_millis\":0",
                 "\"current_task_sequence\":0", "\"final_task_sequence\":1", "\"current_max_fail_count\":3");
         assertThat(json).contains("\"task_id\":5", "\"consumes_terraform_slot\":true", "\"fail_count\":0",
-                "\"description\":\"manual apply\"");
+                "\"terraform_action\":\"APPLY\"", "\"description\":\"manual apply\"");
         assertThat(json).doesNotContain("nextDueAt", "cancelRequested", "taskId", "consumesTerraformSlot");
     }
 
@@ -87,7 +91,7 @@ class DtoSnakeCaseSerializationTest {
         String json = mapper.writeValueAsString(RecipePreview.from(RecipeDefinition.AWS_INSTALL_V1));
 
         assertThat(json).contains("\"recipe_definition\":\"AWS_INSTALL_V1\"", "\"display_name\":",
-                "\"task_definition\":", "\"consumes_terraform_slot\":",
+                "\"task_definition\":", "\"consumes_terraform_slot\":", "\"terraform_action\":",
                 "\"definition\":", "\"dispatch_api\":", "\"success_policy\":", "\"result_storage\":");
         assertThat(json).doesNotContain("recipeDefinition", "displayName", "consumesTerraformSlot",
                 "dispatchApi", "successPolicy", "resultStorage");
@@ -95,20 +99,25 @@ class DtoSnakeCaseSerializationTest {
 
     @Test
     void taskDetailEffectiveSettingsSerializeSnakeCase() throws Exception {
-        TaskDetail detail = new TaskDetail(5L, 101L, 0, "TERRAFORM_JOB", "AWS_SERVICE_APPLY_V1",
-                TaskDefinitionView.from(TaskDefinition.AWS_SERVICE_APPLY_V1),
-                TaskOperation.AWS_SERVICE_TF_APPLY, TaskStatus.IN_PROGRESS, 0, null, true,
-                Instant.parse("2026-07-02T00:00:00Z"), Instant.parse("2026-07-02T00:00:00Z"), null, null,
-                Duration.ofMinutes(10), Duration.ofMinutes(50), 2, List.of(), "custom note");
+        TaskDetail detail = TaskDetail.builder()
+                .taskId(5L).pipelineId(101L).sequence(0).kind("TERRAFORM_JOB").taskDefinition("AWS_SERVICE_APPLY_V1")
+                .definition(TaskDefinitionView.from(TaskDefinition.AWS_SERVICE_APPLY_V1))
+                .operation(TaskOperation.AWS_SERVICE_TF_APPLY).terraformAction("APPLY")
+                .status(TaskStatus.IN_PROGRESS).failCount(0).errorCode(null).consumesTerraformSlot(true)
+                .startedAt(Instant.parse("2026-07-02T00:00:00Z")).readyAt(Instant.parse("2026-07-02T00:00:00Z"))
+                .finishedAt(null).nextCheckAt(null)
+                .effectivePollingInterval(Duration.ofMinutes(10)).effectiveExecutionTimeout(Duration.ofMinutes(50))
+                .effectiveMaxFailCount(2).attempts(List.of()).description("custom note")
+                .build();
 
         String json = mapper.writeValueAsString(detail);
 
         assertThat(json).contains("\"effective_polling_interval\":", "\"effective_execution_timeout\":",
-                "\"effective_max_fail_count\":2", "\"next_check_at\":",
+                "\"effective_max_fail_count\":2", "\"next_check_at\":", "\"terraform_action\":\"APPLY\"",
                 "\"definition\":", "\"dispatch_api\":", "\"status_api\":", "\"result_api\":",
                 "\"success_policy\":", "\"result_storage\":", "\"description\":\"custom note\"");
         assertThat(json).doesNotContain("effectiveMaxFailCount", "nextCheckAt", "dispatchApi", "statusApi",
-                "resultApi", "successPolicy", "resultStorage");
+                "resultApi", "successPolicy", "resultStorage", "terraformAction");
     }
 
     @Test
@@ -119,7 +128,7 @@ class DtoSnakeCaseSerializationTest {
 
         assertThat(json).contains("\"task_definitions\":", "\"name\":\"AWS_SERVICE_APPLY_V1\"", "\"display_name\":",
                 "\"description\":", "\"provider\":\"AWS\"", "\"kind\":\"TERRAFORM_JOB\"",
-                "\"consumes_terraform_slot\":true");
+                "\"terraform_action\":\"APPLY\"", "\"consumes_terraform_slot\":true");
         assertThat(json).doesNotContain("taskDefinitions", "displayName", "consumesTerraformSlot");
     }
 
