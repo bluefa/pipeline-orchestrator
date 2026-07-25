@@ -80,6 +80,31 @@ suffix로 만든 `PipelinePlan`을 기존 `PipelineInserter.insert()`에 넘긴�
   edge)에 자연스러운 완충이 된다(겹쳐도 멱등이라 무해하지만 큐 낭비를 줄인다).
 - **fresh fail_count·fresh attempt 관측 행**: "retry is a fresh run"(§6/§7)의 파이프라인 수준 유사체.
 
+### 결정 5 — 재시작 가능 대상은 "최신 + FAILED/CANCELLED" 뿐이다 (양측 강제)
+
+재시작은 **실패의 복구 수단**이지 재실행 수단이 아니다. 허용 조건을 상태별로 못박는다:
+
+| 원본 상태 | 재시작 | 근거 |
+|---|---|---|
+| `FAILED` | **허용** | 이 기능의 존재 이유. |
+| `CANCELLED` | **허용** | 타임아웃 후 취소 등 — 실패와 동일하게 미완의 실행. |
+| `DONE` | **거절 (409 `PIPELINE_NOT_RESTARTABLE`)** | 재시작할 실패 지점이 없다. 성공한 설치의 재실행은 혼란(이력상 같은 설치 2회)만 남긴다 — 전체 재실행이 정말 필요하면 새 create가 정직한 경로다. |
+| `RUNNING` / `PENDING` | **거절 (409 `PIPELINE_NOT_RESTARTABLE`)** | 동작 중인 실행은 재시작 대상이 아니라 **취소 대상**이다(취소 → terminal → 그때 재시작). |
+| 최신이 아닌 terminal | **거절 (409 `PIPELINE_NOT_LATEST`)** | stale한 과거 이력의 재시작은 현재 인프라 상태와 무관한 실행을 만든다. |
+
+**강제는 두 겹이다:**
+
+1. **백엔드(권위)** — `PipelineRestarter`가 위 표를 명시 검증해 409를 반환한다. restart-preview도
+   **같은 검증을 먼저** 수행하므로 불가 상태에서는 미리보기 단계부터 409다(실행 버튼에서야
+   실패하는 UX가 없게). 비종료(RUNNING/PENDING) 원본은 설령 이 검사를 빠뜨려도
+   `active_target` 슬롯을 아직 쥐고 있어 insert의 유일 제약(`ORCHESTRATION_PIPELINE_ALREADY_ACTIVE`)이
+   백스톱으로 거절한다 — 명시 검사는 그 위에 **정확한 오류 코드**를 얹는 것이다. `DONE`은 슬롯을
+   해제한 뒤라 백스톱이 없으므로, 명시 검사가 유일한 방어선이다.
+2. **프론트엔드(UX 게이팅)** — 재시작 CTA를 `최신 && (FAILED || CANCELLED)`일 때만 렌더한다
+   (§8.1의 노출 조건표). live면 [중단]만, DONE이면 [새 작업 시작]만 노출한다. 다만 프론트 게이팅은
+   편의일 뿐 권위가 아니다 — 화면이 낡았거나 API를 직접 부르는 경우는 백엔드 409가 막고,
+   프론트는 409를 받으면 latest를 재조회해 안내한다(§8.2).
+
 ## 3. API 설계
 
 ### 3.1 재시작 미리보기 — `GET /api/v1/target-sources/{targetSourceId}/pipelines/{pipelineId}/restart-preview`
@@ -131,6 +156,9 @@ suffix로 만든 `PipelinePlan`을 기존 `PipelineInserter.insert()`에 넘긴�
 - `warnings`는 차단이 아닌 안내다(현재 1종: 최근 취소/실패 직후의 in-flight job 안내.
   `last_activity_at`이 executionTimeout 창 이내면 노출).
 - 쿼리 파라미터 `?from_sequence=n`으로 오버라이드 시의 미리보기도 지원한다(실행과 동일한 검증).
+- **재시작 가능 검증(결정 5)을 실행과 동일하게 먼저 수행한다**: `DONE`·`RUNNING`·`PENDING`
+  원본이나 최신이 아닌 원본은 미리보기부터 409다 — 불가한 재시작이 미리보기 화면까지
+  진행되는 UX를 만들지 않는다.
 
 ### 3.2 재시작 실행 — `POST /api/v1/target-sources/{targetSourceId}/pipelines/{pipelineId}/restart`
 
@@ -144,7 +172,9 @@ suffix로 만든 `PipelinePlan`을 기존 `PipelineInserter.insert()`에 넘긴�
 검증 순서(트랜잭션 밖 → 삽입만 트랜잭션):
 
 1. `pipelineId`가 해당 target 소속인지 — 아니면 404.
-2. 원본이 terminal `FAILED`/`CANCELLED`인지 — `DONE`(재시작할 게 없음)·비종료(아직 실행 중)는 409.
+2. 원본이 terminal `FAILED`/`CANCELLED`인지 — `DONE`과 비종료(`RUNNING`/`PENDING`)는 409
+   `PIPELINE_NOT_RESTARTABLE`(결정 5의 허용표; 비종료는 유일 제약 백스톱도 있지만 여기서
+   정확한 코드로 먼저 거절한다).
 3. 원본이 그 target의 **최신 실행**인지 — 과거 이력의 stale 재시작 방지, 아니면 409.
    (best-effort 검사다. 최종 동시성 심판은 4의 유일 제약.)
 4. suffix의 각 `task_definition`을 `TaskDefinition.find()`로 재해석 — 카탈로그에서 사라진 이름은
@@ -158,7 +188,7 @@ suffix로 만든 `PipelinePlan`을 기존 `PipelineInserter.insert()`에 넘긴�
 | 상황 | 응답 | 코드 |
 |---|---|---|
 | 파이프라인이 없거나 target 불일치 | 404 | `PIPELINE_NOT_FOUND` |
-| 원본이 비종료(RUNNING/PENDING) 또는 DONE | 409 | `PIPELINE_NOT_RESTARTABLE` |
+| 원본이 비종료(RUNNING/PENDING) 또는 DONE — 결정 5 허용표 | 409 | `PIPELINE_NOT_RESTARTABLE` |
 | 원본이 target의 최신 실행이 아님 | 409 | `PIPELINE_NOT_LATEST` |
 | suffix에 해석 불가 task 이름 | 400 | `UNKNOWN_TASK` |
 | `from_sequence` 범위 밖(음수·기본 지점보다 뒤·체인 밖) | 400 | `INVALID_RESUME_SEQUENCE` |
@@ -292,8 +322,100 @@ PipelineInserter (확장)
 
 1. **스키마·plan 확장**: `origin_pipeline_id`/`origin_task_id` 컬럼, `PipelinePlan.restartOf`,
    `PipelineInserter` 스탬핑. (엔진 무접촉 — 회귀 위험 최소)
-2. **`PipelineRestarter` + POST /restart**: suffix 계산·검증·오류 계약 + 통합 테스트
-   (FAILED 재시작 / CANCELLED 재시작 / 최신 아님 / DONE / 활성 존재 / UNKNOWN_TASK / from_sequence 경계).
+2. **`PipelineRestarter` + POST /restart**: suffix 계산·검증(결정 5 허용표)·오류 계약 + 통합 테스트
+   (FAILED 재시작 / CANCELLED 재시작 / **DONE 거절 / RUNNING·PENDING 거절 / 최신 아님 거절** /
+   활성 존재 / UNKNOWN_TASK / from_sequence 경계).
 3. **GET /restart-preview**: restarter의 검증·계산 로직 재사용(읽기 전용 분리).
 4. **조회 확장**: Summary/Detail/TaskSummary 필드, 역링크 조회, NotifyPayload 필드.
 5. **ADR-016 개정 1건** + acceptance-criteria 항목 추가.
+6. **프론트엔드(§8)**: 배선(§8.5) → 진입 카드 + RestartModal(§8.1–8.2) → provenance 표시(§8.3–8.4).
+
+## 8. 프론트엔드 설계 (pii-agent-demo 어드민)
+
+pii-agent-demo의 R24 어드민 UI(Target 상세 `TargetDetailView` + `PreviewModal`, 작업 상세
+`PipelineDetailView` + exec band + `TaskFlow`/`TaskDrawer`, 작업 이력 테이블)에 재시작을 얹는
+설계다. 원칙: **기존 화면 문법을 재사용**하고(모달 스텝·SeqFlow 캔버스·토스트·409 처리 패턴),
+새 화면을 만들지 않는다.
+
+### 8.1 진입점 — Target 상세 "현재 작업" 섹션의 3분기
+
+현재 이 섹션은 2분기다: live면 `CurrentPipelineCard`, 아니면 `EmptyPipelineCard`(작업 시작 CTA).
+여기에 세 번째 상태를 추가한다:
+
+| latest 상태 | 카드 | 노출 CTA |
+|---|---|---|
+| `RUNNING`/`PENDING` (live) | `CurrentPipelineCard` (기존) | (카드 내 상세 이동; 중단은 상세에서) |
+| `FAILED`/`CANCELLED` | **`LastRunFailedCard` (신규)** | **[실패 지점부터 재시작]** (primary) + [새 작업 시작] (ghost → 기존 PreviewModal) |
+| `DONE` 또는 이력 없음 | `EmptyPipelineCard` (기존) | [작업 시작] (기존 PreviewModal) |
+
+- `LastRunFailedCard`: 실패한 최신 실행의 요약(TypeTile + recipe명 + StatusPill + 진행도 N/M +
+  실패 task명·`error_code`)을 카드로 노출한다. "실패했는데 어떻게 하지?"의 답이 실패 사실과
+  같은 화면에 있게 하는 것이 목적이다 — 지금은 실패 후 empty card가 떠서 실패 맥락이 사라진다.
+- **이 표가 결정 5의 프론트 게이팅이다**: live·DONE에서는 재시작 CTA 자체가 렌더되지 않는다.
+  게이팅은 편의일 뿐이므로, 화면이 낡은 사이 상태가 바뀌었으면 서버 409가 최종 방어한다(§8.2).
+
+### 8.2 RestartModal — PreviewModal의 preview 스텝 문법 재사용
+
+`GET restart-preview` 응답을 R24 SeqFlow 캔버스로 렌더하되, **원본 전체 체인을 그리고
+상태로 구분**한다 (flowClasses의 기존 상태 톤 재사용):
+
+```
+[1 Service Plan ✓]──[2 Service Apply ✓]──[3 NETWORK_READY ⚠]──[4 BDC Plan]──…
+     dimmed              dimmed             실패 지점 강조        재실행 톤
+  "완료 — 건너뜀"     "완료 — 건너뜀"   "실패 5회 · CONDITION_NOT_MET"
+```
+
+- skipped(DONE) 노드는 dim + 체크, 실패 노드는 FAILED 톤 + `origin_error_code` 서브타이틀,
+  이후 노드는 일반 톤 — **"왜 여기부터인지"가 캔버스 자체로 설명**된다.
+- `warnings`(취소 직후 in-flight job 안내)는 기존 `ModalNote`로.
+- CTA **[N단계부터 재시작]** → `POST restart` → 성공 시 기존 패턴 그대로: 모달 닫기 + 토스트 +
+  `router.push`(새 작업 상세).
+- 오류 처리는 PreviewModal의 `ALREADY_ACTIVE` 핸들러 패턴을 확장한다:
+  `PIPELINE_NOT_RESTARTABLE`/`PIPELINE_NOT_LATEST`/`ALREADY_ACTIVE` 모두 → latest 재조회 후
+  토스트("상태가 바뀌었어요")와 함께 그쪽으로 안내. 미리보기 fetch 자체가 409면 모달을 열지
+  않고 토스트만(결정 5 — preview 단계 검증).
+- `from_sequence`(앞당기기)는 **2차 범위**: dimmed DONE 노드 클릭으로 "여기부터 포함" 토글.
+  1차는 기본 지점 고정.
+- 부수 정리: 기존 `TYPE_DESCS.CUSTOM`의 "실패 구간만 골라 재실행할 때" 문구는 재시작 도입 후
+  "Task 순서를 직접 구성해 실행합니다"로 되돌린다 — 실패 재실행의 정식 경로가 생기므로.
+
+### 8.3 이력 테이블 — 계보가 한 줄에서 읽히게
+
+`PipelineSummary.origin_pipeline_id`만으로 렌더한다(행별 조인 불필요):
+
+- **작업 컬럼**: recipe 표시명 옆에 작은 재시작 칩 `↻ #123`(클릭 시 원본 상세로 이동).
+- **유형 컬럼**: INSTALL 그대로 — type을 CUSTOM으로 오염시키지 않은 백엔드 결정(결정 1)이
+  여기서 화면 가치로 드러난다(필터·통계 무오염).
+- 원본 FAILED 행에는 칩을 더하지 않는다(역링크는 상세에서). 목록은 "이 행이 재시작인가"만 답한다.
+
+### 8.4 작업 상세 — 양방향 계보 + 실패 시 재시작 CTA
+
+- **exec band의 대칭 활용**: live면 밴드 우측 [중단](기존), terminal `FAILED`/`CANCELLED`이고
+  **최신이며 아직 재시작되지 않았으면** 같은 자리에 [실패 지점부터 재시작] — "이 상태에서 할 수
+  있는 행동은 항상 밴드 우측"이라는 문법이 완성된다. `DONE`이면 아무 CTA도 없다(결정 5).
+  RestartModal은 Target 상세와 공유. "재시작 여부"는 `restarted_by_pipeline_id != null`로 판별.
+- **헤더 metaGrid**: `origin_pipeline_id`가 있으면 "작업" 그룹에 `원본 작업 → #123 ↗` 행 추가.
+  역방향은 FAILED 원본 상세에 "↻ #124로 재시작됨" 링크(`restarted_by_pipeline_id`) — 운영자가
+  실패 화면에서 "이미 조치됐는지"를 즉시 알아 중복 재시작 시도를 예방한다.
+- **TaskFlow 위 컨텍스트 스트립**(재시작 파이프라인일 때):
+  `원본 #123의 7단계 중 1–2단계 완료 — 3단계부터 재실행 중`. origin 블록의 카운트만으로 렌더
+  가능하고, ghost 노드를 캔버스에 섞지 않아 진행도(0/5)의 의미가 왜곡되지 않는다.
+- **TaskDrawer**: `origin_task_id`가 있으면 "이전 실행 이력 보기 ↗" — 원본 상세로 이동하며 해당
+  task 프리셀렉트(`?task={originTaskId}` 쿼리 파라미터로 초기 selected 지정). 원본의 attempt·
+  terraform 로그(실패 진단의 원천)로 화면 이탈 없이 연결된다.
+
+### 8.5 배선 — LIN-25 verbatim proxy 패턴 그대로
+
+- **BFF 라우트 2개 추가**: `…/pipelines/[pipelineId]/restart-preview/route.ts`(GET),
+  `…/restart/route.ts`(POST) — 기존 12경로와 동일한 그대로-프록시.
+- **타입**(`lib/pipeline/types`): `PipelineSummary.origin_pipeline_id`,
+  `PipelineDetail.origin`/`restarted_by_pipeline_id`, `TaskSummary.origin_task_id`,
+  신규 `RestartPreview` — 전부 optional 필드로 두어 구버전 백엔드와 하위호환.
+- **API 함수**(`app/lib/api/pipeline`): `getRestartPreview`, `restartPipeline`.
+
+### 8.6 우선순위와 오너 게이트
+
+- **최소 완결 단위**: §8.5(배선) + §8.1(진입 카드) + §8.2(모달). §8.3·§8.4는 각각 독립적으로
+  얹을 수 있는 provenance 표시 계층이다.
+- **오너 게이트**: 어드민 UI 표면 추가이므로 착수 전 오너 확인 대상. 특히 취향이 갈리는 두 지점 —
+  `LastRunFailedCard`의 카드 시안, exec band의 재시작 CTA 배치 — 은 시안 비교로 오너 선택을 받는다.
