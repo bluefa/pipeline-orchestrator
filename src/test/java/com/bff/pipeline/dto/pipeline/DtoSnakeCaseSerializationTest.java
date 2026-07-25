@@ -30,14 +30,16 @@ class DtoSnakeCaseSerializationTest {
     void pipelineSummarySerializesSnakeCase() throws Exception {
         PipelineSummary summary = new PipelineSummary(101L, PipelineType.INSTALL, "ts-1", CloudProvider.AWS,
                 "AWS_INSTALL_V1", PipelineStatus.RUNNING, 1, 2,
-                Instant.parse("2026-07-02T00:00:00Z"), Instant.parse("2026-07-02T00:05:00Z"));
+                Instant.parse("2026-07-02T00:00:00Z"), Instant.parse("2026-07-02T00:05:00Z"), 90L);
 
         String json = mapper.writeValueAsString(summary);
 
         assertThat(json).contains("\"pipeline_id\":101", "\"target_source_id\":\"ts-1\"",
                 "\"cloud_provider\":\"AWS\"", "\"recipe_definition\":", "\"done_task_count\":1",
-                "\"total_task_count\":2", "\"created_at\":", "\"last_activity_at\":");
-        assertThat(json).doesNotContain("pipelineId", "targetSourceId", "cloudProvider", "doneTaskCount");
+                "\"total_task_count\":2", "\"created_at\":", "\"last_activity_at\":",
+                "\"origin_pipeline_id\":90");
+        assertThat(json).doesNotContain("pipelineId", "targetSourceId", "cloudProvider", "doneTaskCount",
+                "originPipelineId");
     }
 
     @Test
@@ -48,10 +50,21 @@ class DtoSnakeCaseSerializationTest {
                 .status(TaskStatus.IN_PROGRESS).failCount(0).errorCode(null).consumesTerraformSlot(true)
                 .startedAt(Instant.parse("2026-07-02T00:00:00Z")).finishedAt(null).description("manual apply")
                 .build();
-        PipelineDetail detail = new PipelineDetail(101L, PipelineType.INSTALL, "ts-1", CloudProvider.AWS,
-                "AWS_INSTALL_V1", PipelineStatus.RUNNING, Instant.parse("2026-07-02T00:00:00Z"),
-                Instant.parse("2026-07-02T00:05:00Z"), Instant.parse("2026-07-02T00:06:00Z"), true, false,
-                0L, 0, 1, 0, 3, 1, 2, List.of(task));
+        PipelineDetail detail = PipelineDetail.builder()
+                .pipelineId(101L).type(PipelineType.INSTALL).targetSourceId("ts-1")
+                .cloudProvider(CloudProvider.AWS).recipeDefinition("AWS_INSTALL_V1")
+                .status(PipelineStatus.RUNNING).createdAt(Instant.parse("2026-07-02T00:00:00Z"))
+                .lastActivityAt(Instant.parse("2026-07-02T00:05:00Z"))
+                .nextDueAt(Instant.parse("2026-07-02T00:06:00Z")).leased(true).cancelRequested(false)
+                .dueLagMillis(0L).currentTaskSequence(0).finalTaskSequence(1)
+                .currentFailCount(0).currentMaxFailCount(3).doneTaskCount(1).totalTaskCount(2)
+                .tasks(List.of(task)).originPipelineId(90L)
+                .origin(RestartOriginView.builder()
+                        .pipelineId(90L).type(PipelineType.INSTALL).recipeDefinition("AWS_INSTALL_V1")
+                        .status(PipelineStatus.FAILED).totalTaskCount(8).doneTaskCount(5)
+                        .resumedFromSequence(5).build())
+                .restartedByPipelineId(null)
+                .build();
 
         String json = mapper.writeValueAsString(detail);
 
@@ -59,7 +72,10 @@ class DtoSnakeCaseSerializationTest {
                 "\"current_task_sequence\":0", "\"final_task_sequence\":1", "\"current_max_fail_count\":3");
         assertThat(json).contains("\"task_id\":5", "\"consumes_terraform_slot\":true", "\"fail_count\":0",
                 "\"terraform_action\":\"APPLY\"", "\"description\":\"manual apply\"");
-        assertThat(json).doesNotContain("nextDueAt", "cancelRequested", "taskId", "consumesTerraformSlot");
+        assertThat(json).contains("\"origin_pipeline_id\":90", "\"origin\":", "\"resumed_from_sequence\":5",
+                "\"restarted_by_pipeline_id\":null");
+        assertThat(json).doesNotContain("nextDueAt", "cancelRequested", "taskId", "consumesTerraformSlot",
+                "originPipelineId", "resumedFromSequence", "restartedByPipelineId");
     }
 
     @Test

@@ -128,6 +128,19 @@ documented).
 | J4 | Tests behavior-named, fixed `Clock`, fakes not mocks | test suite (`FakeInfraManagerClient`, `MutableClock`) | ✅ |
 | J5 | Extension seams (more task kinds / outbox) documented, not pre-built | `docs/extensibility.md` | ✅ |
 
+## K. Pipeline restart (재시작 설계 결정 1–5)
+
+| # | Criterion | Verified by | Status |
+|---|---|---|---|
+| K1 | Restart = a NEW pipeline from the origin chain's first non-DONE task suffix; type/recipe/provider inherited (never `CUSTOM`-masqueraded); `origin_pipeline_id`/`origin_task_id` stamped; sequence renumbered from 0; fresh fail_count; first task READY | `RestartPipelineTest.failedPipelineRestartsFromFailedTask` / `cancelledPipelineRestartsFromCancelPoint` | ✅ |
+| K2 | `DONE` origin → 409 `PIPELINE_NOT_RESTARTABLE` — the explicit check is the ONLY defense (no `active_target` backstop after slot release) | `RestartPipelineTest.doneOriginIsRejected` | ✅ |
+| K3 | Live (`RUNNING`/`PENDING`) origin → 409 `PIPELINE_NOT_RESTARTABLE` with the explicit code, ahead of the unique-constraint backstop | `RestartPipelineTest.liveOriginIsRejectedWithExplicitCode` | ✅ |
+| K4 | Non-latest terminal origin → 409 `PIPELINE_NOT_LATEST`; the restart-of-restart chain points to the immediate origin and only the chain tail restarts | `RestartPipelineTest.staleTerminalOriginIsRejected` / `restartOfRestartChainsToImmediateOrigin` | ✅ |
+| K5 | Concurrency's final arbiter stays the `active_target` unique constraint (race → 409 `PIPELINE_ALREADY_ACTIVE`, translated by the shared `PipelineCreator.insert`) | `RestartPipelineTest.activeRunBlocksRestartAtTheUniqueConstraint` | ✅ |
+| K6 | A vanished `task_definition` in the suffix → 400 `UNKNOWN_TASK` (no silent degradation); `from_sequence` overrides only toward the front (0..default, skipping the failed task → 400 `INVALID_RESUME_SEQUENCE`) | `RestartPipelineTest.unknownTaskDefinitionIsRejected` / `fromSequenceOverridesOnlyTowardTheFront` | ✅ |
+| K7 | `restart-preview` shares the exact validation+suffix computation with restart (rejections start at preview), saves nothing, and explains "why from here" (`origin_status`/`origin_error_code`) plus the in-flight-job warning | `RestartPipelineTest.previewMatchesRestartAndSavesNothing` | ✅ |
+| K8 | Provenance is visible both ways: detail carries `origin_pipeline_id`/`origin` block (with derived `resumed_from_sequence`)/`restarted_by_pipeline_id`; task views carry `origin_task_id`; notify payload carries `origin_pipeline_id` (schema v3) | `RestartPipelineTest.detailCarriesProvenanceInBothDirections` + `DtoSnakeCaseSerializationTest` + `NotifyPayloadPiiTest` | ✅ |
+
 ## Deferred / accepted limitations (📦)
 
 - **Observations ride the write-back transaction** (no `REQUIRES_NEW` / separate bean). A failed

@@ -212,11 +212,17 @@ cancel is applied against a live worker is an execution concern (ADR-021).
 **Domain state tables**
 
 - `pipeline(id, type, target, cloud_provider, recipe_definition, status, created_at,
-  last_activity_at, active_target)` — execution adds `next_due_at, claimed_by, claimed_until,
+  last_activity_at, active_target, origin_pipeline_id)` — execution adds `next_due_at, claimed_by, claimed_until,
   cancel_requested` (see ADR-021). `cloud_provider` is a **write-once** (`updatable=false`) cache
   of the provider looked up at create for recipe selection; `recipe_definition` is stamped at
   create with the `RecipeDefinition` constant name the Admin API joins on (set once at insert,
-  though not annotation-immutable). **Per-target uniqueness (Decision 4) is enforced by
+  though not annotation-immutable). `origin_pipeline_id` is a **write-once, display-only**
+  provenance link stamped by the restart path (the pipeline this run restarted; `NULL` otherwise;
+  no FK — a deleted origin degrades to a null-safe display omission; reverse-link lookups are
+  backed by `idx_pipeline_origin`). The engine never reads it. Note that a **catalog-typed
+  pipeline's task chain may be a suffix of its recipe when `origin_pipeline_id` is set** — restart
+  inherits `type`/`recipe_definition` from the origin instead of masquerading as `CUSTOM`.
+  **Per-target uniqueness (Decision 4) is enforced by
   `active_target`**: MySQL 8 — the target engine — has no partial (filtered) unique index, so
   instead of a `WHERE status non-terminal` index the application keeps `active_target = target`
   while the pipeline is non-terminal and sets it `NULL` in the same transaction as the terminal
@@ -227,13 +233,16 @@ cancel is applied against a live worker is an execution concern (ADR-021).
   path matches that constraint name to translate the violation).
 - `task(id, pipeline_id, sequence, task_name, operation, task_definition,
   consumes_terraform_slot, description, status, fail_count, error_code, started_at, ready_at,
-  finished_at, next_check_at, polling_interval, execution_timeout, max_fail_count, version)` —
+  finished_at, next_check_at, polling_interval, execution_timeout, max_fail_count, version,
+  origin_task_id)` —
   `(pipeline_id, sequence)` is unique (`uq_task_pipeline_sequence`). `task_definition` is the
   row's source of truth (a version-frozen `TaskDefinition` constant name); `task_name` (the
   executor mechanism) and `operation` are write-once caches derived from it, as is the
   `consumes_terraform_slot` slot-gate flag (ADR-021 Decision 7; a supporting index
   `idx_task_slot_status` on `(consumes_terraform_slot, status)` backs the slot count).
-  `description` is the operator's per-step note on a `CUSTOM` run. `version` is an optimistic
+  `description` is the operator's per-step note on a `CUSTOM` run. `origin_task_id` is the
+  write-once, display-only restart provenance twin of `pipeline.origin_pipeline_id` (the origin
+  task row this task re-runs; `NULL` otherwise; never read by the engine). `version` is an optimistic
   lock kept as defense-in-depth under the pipeline-row `FOR UPDATE` serialization (ADR-021
   Decision 4). No job-id column: one dispatch's `N` job ids live inside the `task_attempt`
   `response`, and completion is a code-level `check(target, task, attempt)` over the latest attempt result.

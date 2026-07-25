@@ -13,6 +13,7 @@ import lombok.Builder;
  * "TERRAFORM_JOB"/"CONDITION_CHECK" 같은 실행 메커니즘 식별자다. errorCode는 FAILED일 때만 채워진다.
  * description은 custom recipe 실행에서 운영자가 붙인 설명이고 카탈로그 task면 null이다(LIN-18).
  * terraformAction은 operation에서 파생한 표시용 액션 라벨(PLAN/APPLY/DESTROY)이고 terraform이 아닌 task면 null이다.
+ * originTaskId는 재시작 계보다 — 이 task가 다시 실행하는 원본 task 행 id이며, 재시작이 아니면 null이다.
  * 와이어 필드는 snake_case로 직렬화한다. 인접 동형 인자가 많아 위치 기반 생성 대신 {@code @Builder}로 만든다.
  */
 @Builder
@@ -29,7 +30,8 @@ public record TaskSummary(
         @JsonProperty("consumes_terraform_slot") Boolean consumesTerraformSlot,
         @JsonProperty("started_at") Instant startedAt,
         @JsonProperty("finished_at") Instant finishedAt,
-        @JsonProperty("description") String description) {
+        @JsonProperty("description") String description,
+        @JsonProperty("origin_task_id") Long originTaskId) {
 
     public static TaskSummary from(Task task) {
         TaskOperation operation = task.getOperation();
@@ -47,6 +49,7 @@ public record TaskSummary(
                 .startedAt(task.getStartedAt())
                 .finishedAt(task.getFinishedAt())
                 .description(task.getDescription())
+                .originTaskId(task.getOriginTaskId())
                 .build();
     }
 }

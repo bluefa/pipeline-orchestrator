@@ -109,6 +109,9 @@ public interface PipelineRepository extends JpaRepository<Pipeline, Long> {
     /** 최근 파이프라인 카드(P8): 특정 target의 가장 최근 실행 1건(상태 무관). id를 tiebreaker로 결정적 선택. */
     Optional<Pipeline> findFirstByTargetOrderByCreatedAtDescIdDesc(String target);
 
+    /** 재시작 역링크: 이 파이프라인을 재시작한 최신 실행. idx_pipeline_origin이 지원한다. */
+    Optional<Pipeline> findFirstByOriginPipelineIdOrderByIdDesc(Long originPipelineId);
+
     // ── 종단 알림(ADR-022) 질의. TerminalNotifier가 쓴다. ──
 
     /**

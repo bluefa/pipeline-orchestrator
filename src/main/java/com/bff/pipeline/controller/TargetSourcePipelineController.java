@@ -5,9 +5,12 @@ import com.bff.pipeline.dto.pipeline.CustomPipelineRequest;
 import com.bff.pipeline.dto.pipeline.PipelineDetail;
 import com.bff.pipeline.dto.pipeline.PipelineSummary;
 import com.bff.pipeline.dto.pipeline.RecipePreview;
+import com.bff.pipeline.dto.pipeline.RestartPipelineRequest;
+import com.bff.pipeline.dto.pipeline.RestartPreview;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.exception.MissingPipelineTypeException;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
+import com.bff.pipeline.service.lifecycle.PipelineRestarter;
 import com.bff.pipeline.service.query.PipelineQueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -37,6 +40,7 @@ public class TargetSourcePipelineController {
 
     private final PipelineQueryService queryService;
     private final PipelineCreator pipelineCreator;
+    private final PipelineRestarter pipelineRestarter;
 
     @GetMapping
     public Page<PipelineSummary> history(@PathVariable String targetSourceId,
@@ -73,5 +77,26 @@ public class TargetSourcePipelineController {
             @RequestBody CustomPipelineRequest request) {
         return queryService.toDetail(pipelineCreator.createCustom(targetSourceId,
                 request == null ? null : request.tasks()));
+    }
+
+    /**
+     * 재시작 미리보기(재시작 설계 §3.1). 실행과 동일한 검증을 먼저 수행하므로 불가 상태(DONE·live·최신 아님)는
+     * 미리보기 단계부터 409다. from_sequence 오버라이드 시의 미리보기도 같은 검증으로 지원한다.
+     */
+    @GetMapping("/{pipelineId}/restart-preview")
+    public RestartPreview restartPreview(@PathVariable String targetSourceId, @PathVariable Long pipelineId,
+            @RequestParam(name = "from_sequence", required = false) Integer fromSequence) {
+        return pipelineRestarter.preview(targetSourceId, pipelineId, fromSequence);
+    }
+
+    /**
+     * 재시작 실행(재시작 설계 §3.2). 원본 체인의 첫 non-DONE task부터(또는 from_sequence 오버라이드 — 더
+     * 앞으로만) suffix로 새 파이프라인을 만든다. 본문은 생략 가능하고, 응답은 create와 동일한 상세다.
+     */
+    @PostMapping("/{pipelineId}/restart")
+    public PipelineDetail restart(@PathVariable String targetSourceId, @PathVariable Long pipelineId,
+            @RequestBody(required = false) RestartPipelineRequest request) {
+        return queryService.toDetail(pipelineRestarter.restart(targetSourceId, pipelineId,
+                request == null ? null : request.fromSequence()));
     }
 }

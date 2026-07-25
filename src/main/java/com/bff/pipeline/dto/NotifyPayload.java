@@ -13,6 +13,8 @@ import lombok.Builder;
  * {@code cloudProvider}도 같은 이유(또는 미지정 파이프라인)로 null일 수 있다(AWS | GCP | AZURE | IDC | null).
  * {@code environment}는 설정에서 오는 배포 환경 이름(stg, prd 등)이다 — 여러 환경이 한 채널을
  * 공유할 때 알림을 구분한다.
+ * {@code originPipelineId}는 재시작 계보다 — 이 실행이 재시작한 원본 파이프라인 id(재시작이 아니면 null).
+ * 수신측이 "INSTALL(#123의 재시작)" 문맥을 붙일 수 있게 한다. id 값이라 민감 정보가 아니다.
  * {@code detailUrl}은 이 스키마에서 유일하게 허용되는 링크다. 파이프라인 상세 화면 주소
  * (설정된 base)에 파이프라인 id만 붙여 만들고(오너 결정 2026-07-10), 대상 정보가 담긴 다른
  * 링크는 여전히 금지다.
@@ -28,8 +30,9 @@ public record NotifyPayload(
         String failedTask,
         String errorCode,
         String detailUrl,
-        String schemaVersion) {
+        String schemaVersion,
+        Long originPipelineId) {
 
     /** payload 스키마 버전. 알림을 받는 쪽이 형식이 바뀌었는지 구분하는 기준 값이다. */
-    public static final String SCHEMA_VERSION = "2";
+    public static final String SCHEMA_VERSION = "3";
 }
