@@ -78,6 +78,27 @@ class SlackNotifierTest {
     }
 
     @Test
+    void aRestartedRunHeadlineCarriesTheOriginContext() {
+        // 재시작 실행의 알림은 "INSTALL(#123의 재시작)"로 읽혀야 한다(재시작 설계 §3.4) —
+        // payload에만 실리고 웹훅 메시지에서 사라지면 일반 INSTALL 알림과 구분되지 않는다.
+        NotifyPayload payload = NotifyPayload.builder()
+                .pipelineId(124L).type("INSTALL").terminalStatus("DONE").targetRef("483")
+                .environment("prd").detailUrl("http://localhost:3001/integration/admin/pipelines/124")
+                .schemaVersion(NotifyPayload.SCHEMA_VERSION)
+                .originPipelineId(123L)
+                .build();
+
+        Map<String, Object> message = SlackNotifier.toSlackMessage(payload);
+
+        assertThat((String) message.get("text")).contains("INSTALL(#123의 재시작)", "(id 124)");
+    }
+
+    @Test
+    void aNonRestartHeadlineCarriesNoRestartSegment() {
+        assertThat((String) SlackNotifier.toSlackMessage(donePayload()).get("text")).doesNotContain("재시작");
+    }
+
+    @Test
     void degradedOrMissingOptionalValuesAreOmittedInsteadOfPrintedAsNull() {
         // type을 해석 못 하는 옛 행 + 환경/링크/CSP가 없는 payload — 빠진 값은 그 구간째 사라져야 한다.
         NotifyPayload payload = NotifyPayload.builder()
