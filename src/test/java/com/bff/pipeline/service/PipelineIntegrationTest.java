@@ -33,6 +33,7 @@ import com.bff.pipeline.service.execution.StepRunner;
 import com.bff.pipeline.service.lifecycle.PipelineControl;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
 import com.bff.pipeline.service.lifecycle.PipelineInserter;
+import com.bff.pipeline.service.lifecycle.PipelineRestarter;
 import com.bff.pipeline.service.lifecycle.RecipeCatalog;
 import com.bff.pipeline.service.query.PipelineQueryService;
 import com.bff.pipeline.service.task.ConditionCheckTask;
@@ -74,8 +75,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
         TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, TerraformJobStateRecorder.class,
         ConditionCheckTask.class, ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class,
-        PipelineInserter.class, PipelineControl.class, RecipeCatalog.class, PipelineQueryService.class,
-        TargetSourcePipelineController.class, PipelineIntegrationTest.Wiring.class})
+        PipelineInserter.class, PipelineRestarter.class, PipelineControl.class, RecipeCatalog.class,
+        PipelineQueryService.class, TargetSourcePipelineController.class, PipelineIntegrationTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineIntegrationTest {
 

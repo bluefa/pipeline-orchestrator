@@ -215,6 +215,7 @@ public class TerminalNotifier {
                 .errorCode(failedTask.map(Task::getErrorCode).map(ErrorCode::name).orElse(null))
                 .detailUrl(toDetailUrl(pipeline.getId()))
                 .schemaVersion(NotifyPayload.SCHEMA_VERSION)
+                .originPipelineId(pipeline.getOriginPipelineId())
                 .build();
     }
 

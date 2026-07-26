@@ -27,6 +27,7 @@ import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
 import com.bff.pipeline.service.lifecycle.PipelineInserter;
+import com.bff.pipeline.service.lifecycle.PipelineRestarter;
 import com.bff.pipeline.service.lifecycle.RecipeCatalog;
 import com.bff.pipeline.service.query.PipelineQueryService;
 import java.time.Duration;
@@ -50,8 +51,8 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineCreator.class, PipelineInserter.class, RecipeCatalog.class, PipelineQueryService.class,
-        TargetSourcePipelineController.class, CustomRecipeCreationTest.Wiring.class})
+@Import({PipelineCreator.class, PipelineInserter.class, PipelineRestarter.class, RecipeCatalog.class,
+        PipelineQueryService.class, TargetSourcePipelineController.class, CustomRecipeCreationTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class CustomRecipeCreationTest {
 

@@ -103,6 +103,13 @@ public class Task {
     private String description;
 
     /**
+     * 이 task가 다시 실행하는 원본 task 행 id. 재시작이 아니면 null. 표시용 계보 — 엔진은 읽지 않으며,
+     * 재시작 실행 화면에서 원본 task의 attempt·terraform 로그(실패 진단)로 바로 이동하는 링크다.
+     */
+    @Column(name = "origin_task_id", updatable = false)
+    private Long originTaskId;
+
+    /**
      * task 상태 머신의 현재 상태(varchar 저장, {@link TaskStatusConverter}). {@code @Enumerated}가 아닌 변환기를
      * 쓰는 이유는 write 안전뿐이다 — status는 엔진 분기에 직접 쓰이므로 read는 fail-fast를 유지한다(미해석
      * 값은 열화하지 않고 그대로 예외).

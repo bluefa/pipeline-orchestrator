@@ -77,8 +77,8 @@ public class PipelineCreator {
         return insert(PipelinePlan.custom(target, provider, steps), target);
     }
 
-    /** plan 삽입 + active-target 유니크 위반의 도메인 번역. catalog/custom 경로가 공유한다. */
-    private Pipeline insert(PipelinePlan plan, String target) {
+    /** plan 삽입 + active-target 유니크 위반의 도메인 번역. catalog/custom/restart(PipelineRestarter) 경로가 공유한다. */
+    Pipeline insert(PipelinePlan plan, String target) {
         try {
             return pipelineInserter.insert(plan);
         } catch (DataIntegrityViolationException violation) {
@@ -134,9 +134,9 @@ public class PipelineCreator {
     /**
      * cloud provider를 조회한다(외부 호출). 인프라 실패(타임아웃/호출 오류)는 비즈니스 실패가 아니므로 503으로
      * 번역한다 — raw CallTimeout/CallFailed가 catch-all로 새어 500이 되지 않게 한다(§3). CallInterrupted는 잡지 않고
-     * 그대로 전파한다(fail-fast).
+     * 그대로 전파한다(fail-fast). create/preview와 restart(provider 열화 폴백, PipelineRestarter)가 공유한다.
      */
-    private CloudProvider resolveProvider(String target) {
+    CloudProvider resolveProvider(String target) {
         CloudProvider provider;
         try {
             provider = infraManagerClient.cloudProvider(target);

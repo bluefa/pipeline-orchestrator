@@ -10,6 +10,8 @@ import java.time.Instant;
 /**
  * 목록·이력·최근카드가 쓰는 pipeline 요약 행이다(P3/P7/P8). targetName은 이 저장소에 없어(다른 repo 담당)
  * 싣지 않고 targetSourceId와 cloudProvider만 준다. 진행 N/M은 task 집계값(doneTaskCount/totalTaskCount)이다.
+ * originPipelineId는 재시작 계보다 — 자기 행의 컬럼이라 행별 조인 없이 목록에서 "재시작" 배지와 원본
+ * 링크를 그릴 수 있고, 재시작이 아니면 null이다.
  * 와이어 필드는 BFF swagger 계약에 맞춰 snake_case로 직렬화한다({@code @JsonProperty}).
  */
 public record PipelineSummary(
@@ -22,11 +24,13 @@ public record PipelineSummary(
         @JsonProperty("done_task_count") long doneTaskCount,
         @JsonProperty("total_task_count") long totalTaskCount,
         @JsonProperty("created_at") Instant createdAt,
-        @JsonProperty("last_activity_at") Instant lastActivityAt) {
+        @JsonProperty("last_activity_at") Instant lastActivityAt,
+        @JsonProperty("origin_pipeline_id") Long originPipelineId) {
 
     public static PipelineSummary from(Pipeline pipeline, long doneTaskCount, long totalTaskCount) {
         return new PipelineSummary(pipeline.getId(), pipeline.getType(), pipeline.getTarget(),
                 pipeline.getCloudProvider(), pipeline.getRecipeDefinition(), pipeline.getStatus(),
-                doneTaskCount, totalTaskCount, pipeline.getCreatedAt(), pipeline.getLastActivityAt());
+                doneTaskCount, totalTaskCount, pipeline.getCreatedAt(), pipeline.getLastActivityAt(),
+                pipeline.getOriginPipelineId());
     }
 }

@@ -114,16 +114,20 @@ public class SlackNotifier {
     }
 
     /**
-     * 예: ":white_check_mark: *[prd] Pipeline DONE* — INSTALL (id 1234) · 상세 보기 링크".
+     * 예: ":white_check_mark: *[prd] Pipeline DONE* — INSTALL(#123의 재시작) (id 1234) · 상세 보기 링크".
      * 상세 링크는 Slack 링크 문법(꺾쇠 괄호로 주소와 라벨을 묶는 형식)으로 붙인다.
      * type을 알 수 없는 옛 데이터면(null) 그 구간을 빼고, environment/detailUrl이 없으면 그 구간도 뺀다.
+     * 재시작 실행이면 재시작 구간이 붙는다 — 수신자가 "CUSTOM 종료"가 아니라 "INSTALL의 재시작"으로
+     * 읽게 하는 것이 재시작 설계 §3.4의 요구다.
      */
     private static String headline(MessageStyle style, NotifyPayload payload) {
         String environmentSegment = payload.environment() == null ? "" : "[" + payload.environment() + "] ";
         String typeSegment = payload.type() == null ? "" : " — " + payload.type();
+        String restartSegment = payload.originPipelineId() == null
+                ? "" : "(#" + payload.originPipelineId() + "의 재시작)";
         String detailSegment = payload.detailUrl() == null ? "" : " · <" + payload.detailUrl() + "|상세 보기 →>";
         return style.emoji() + " *" + environmentSegment + "Pipeline " + payload.terminalStatus() + "*"
-                + typeSegment + " (id " + payload.pipelineId() + ")" + detailSegment;
+                + typeSegment + restartSegment + " (id " + payload.pipelineId() + ")" + detailSegment;
     }
 
     private static void addFieldUnlessNull(List<Map<String, Object>> fields, String title, String value,

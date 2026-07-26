@@ -6,6 +6,7 @@ import com.bff.pipeline.dto.pipeline.LivePipelineStatistics;
 import com.bff.pipeline.dto.pipeline.PipelineDetail;
 import com.bff.pipeline.dto.pipeline.PipelineStatistics;
 import com.bff.pipeline.dto.pipeline.PipelineSummary;
+import com.bff.pipeline.dto.pipeline.RestartOriginView;
 import com.bff.pipeline.dto.pipeline.TaskAttemptView;
 import com.bff.pipeline.dto.pipeline.TaskDefinitionView;
 import com.bff.pipeline.dto.pipeline.TaskDetail;
@@ -171,7 +172,44 @@ public class PipelineQueryService {
                 .doneTaskCount(countDone(chain))
                 .totalTaskCount(chain.size())
                 .tasks(chain.stream().map(TaskSummary::from).toList())
+                .originPipelineId(pipeline.getOriginPipelineId())
+                .origin(originView(pipeline, chain))
+                .restartedByPipelineId(pipelines.findFirstByOriginPipelineIdOrderByIdDesc(pipeline.getId())
+                        .map(Pipeline::getId).orElse(null))
                 .build();
+    }
+
+    /**
+     * 재시작 파이프라인의 원본 요약 블록. 원본 행이 사라졌으면(FK 없음) 계보 표시만 생략하고 null을 준다.
+     * resumed_from_sequence는 저장값이 아닌 파생값이다 — 이 체인의 첫 task가 가리키는(originTaskId) 원본
+     * task의 sequence. 상세 단건 조회에만 붙는 추가 read 2회라 목록 경로 비용은 없다.
+     */
+    private RestartOriginView originView(Pipeline pipeline, List<Task> chain) {
+        if (pipeline.getOriginPipelineId() == null) {
+            return null;
+        }
+        return pipelines.findById(pipeline.getOriginPipelineId()).map(origin -> {
+            List<Task> originChain = tasks.findByPipelineIdOrderBySequenceAsc(origin.getId());
+            return RestartOriginView.builder()
+                    .pipelineId(origin.getId()).type(origin.getType())
+                    .recipeDefinition(origin.getRecipeDefinition()).status(origin.getStatus())
+                    .totalTaskCount(originChain.size()).doneTaskCount(countDone(originChain))
+                    .resumedFromSequence(resumedFromSequence(chain, originChain))
+                    .build();
+        }).orElse(null);
+    }
+
+    private static Integer resumedFromSequence(List<Task> chain, List<Task> originChain) {
+        if (chain.isEmpty()) {
+            return null;
+        }
+        Long firstOriginTaskId = chain.getFirst().getOriginTaskId();
+        if (firstOriginTaskId == null) {
+            return null;
+        }
+        return originChain.stream()
+                .filter(task -> firstOriginTaskId.equals(task.getId()))
+                .findFirst().map(Task::getSequence).orElse(null);
     }
 
     private static boolean isLeased(Pipeline pipeline, Instant now) {
@@ -212,6 +250,7 @@ public class PipelineQueryService {
                 .effectiveMaxFailCount(TaskSettingsResolver.resolveMaxFailCount(task, pipelineSettings))
                 .attempts(attemptViews(taskId))
                 .description(task.getDescription())
+                .originTaskId(task.getOriginTaskId())
                 .build();
     }
 

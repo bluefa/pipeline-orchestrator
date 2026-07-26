@@ -42,5 +42,6 @@ public record TaskDetail(
         @JsonProperty("effective_execution_timeout") Duration effectiveExecutionTimeout,
         @JsonProperty("effective_max_fail_count") int effectiveMaxFailCount,
         @JsonProperty("attempts") List<TaskAttemptView> attempts,
-        @JsonProperty("description") String description) {
+        @JsonProperty("description") String description,
+        @JsonProperty("origin_task_id") Long originTaskId) {
 }

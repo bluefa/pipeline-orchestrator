@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
  * {@link NotifyPayload}가 직렬화될 때 민감 정보가 새지 않는다는 규칙을 회귀 테스트로 고정한다.
  *
  * 고정하는 규칙:
- * (a) 스키마에는 허용된 10개 필드만 있다. 링크는 detailUrl 하나만 허용된다(오너 결정 2026-07-10) —
+ * (a) 스키마에는 허용된 11개 필드만 있다. 링크는 detailUrl 하나만 허용된다(오너 결정 2026-07-10) —
  *     파이프라인 상세 화면 주소에 id만 붙인 값이고, 대상 정보가 담긴 다른 링크 필드는 여전히 없다.
  * (b) failed_task 값은 정해진 단계 이름 목록 안에서만 나온다. 1순위는 taskDefinition(TaskDefinition
  *     상수 이름)이고, 정의가 없는 옛 행은 taskName(TaskOperation의 mechanism 값 — 부팅 시
@@ -37,14 +37,14 @@ class NotifyPayloadPiiTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
-    void theSchemaCarriesExactlyTheTenAllowedFieldsAndOnlyTheDetailLink() {
+    void theSchemaCarriesExactlyTheElevenAllowedFieldsAndOnlyTheDetailLink() {
         JsonNode json = mapper.valueToTree(failedPayload());
 
         List<String> fields = new ArrayList<>();
         json.fieldNames().forEachRemaining(fields::add);
         assertThat(fields).containsExactlyInAnyOrder(
                 "pipelineId", "type", "terminalStatus", "targetRef", "cloudProvider", "environment",
-                "failedTask", "errorCode", "detailUrl", "schemaVersion");
+                "failedTask", "errorCode", "detailUrl", "schemaVersion", "originPipelineId");
         // 링크가 들어갈 수 있는 자리는 detailUrl 하나뿐이라는 사실을 회귀로 고정한다 —
         // url 같은 범용 링크 필드가 생기면 대상 상세가 채널로 새는 문이 열린다.
         assertThat(json.has("url")).isFalse();
@@ -113,6 +113,7 @@ class NotifyPayloadPiiTest {
                 .errorCode(ErrorCode.JOB_FAILED.name())
                 .detailUrl("http://localhost:3001/integration/admin/pipelines/1234")
                 .schemaVersion(NotifyPayload.SCHEMA_VERSION)
+                .originPipelineId(1200L)   // 재시작 계보 — id 값이라 raw 연결 식별자가 아니다
                 .build();
     }
 }

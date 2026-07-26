@@ -42,7 +42,9 @@ import lombok.Setter;
                 @Index(name = "idx_pipeline_target_created", columnList = "target, created_at"),
                 // ponytail: ~2,000행 규모엔 (notified_at, notify_next_at) 복합이면 충분. MySQL8은 부분(filtered)
                 // 인덱스가 없으므로 status 필터는 옵티마이저에 맡긴다. 대규모로 커지면 재검토.
-                @Index(name = "idx_pipeline_notify", columnList = "notified_at, notify_next_at")
+                @Index(name = "idx_pipeline_notify", columnList = "notified_at, notify_next_at"),
+                // 재시작 역링크 조회(origin_pipeline_id = :id인 최신 행) 지원.
+                @Index(name = "idx_pipeline_origin", columnList = "origin_pipeline_id")
         })
 @Getter
 @Setter
@@ -95,6 +97,14 @@ public class Pipeline {
 
     @Column(name = "active_target")
     private String activeTarget;
+
+    /**
+     * 이 실행이 재시작한 원본 파이프라인 id. 재시작이 아니면 null. 표시용 계보 메타데이터라 엔진(claim·전이·
+     * reconciler)은 읽지 않고, FK 제약도 걸지 않는다 — 원본 행이 사라져도 조회가 null-safe로 계보 표시만
+     * 생략한다(카탈로그 이름 열화와 같은 태도).
+     */
+    @Column(name = "origin_pipeline_id", updatable = false)
+    private Long originPipelineId;
 
     // ── ADR-021 실행 좌표(execution-coordination) 컬럼: claim/lease/cooperative-cancel. 도메인 상태와는 분리된다. ──
 
