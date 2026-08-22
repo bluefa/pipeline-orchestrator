@@ -277,3 +277,76 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
     terraform DISPATCH response (read back to drive polling) is deliberately NOT truncated. **DO flag any
     NEW unbounded external string routed into a judgment-tx column; bound it (truncate) or move it to a
     best-effort observation write.**
+- R14 (ADR terraform-apply-approval-gate, doc review round 1, 2026-08-22): codex (gpt-5.6-sol xhigh)
+  on the new approval-gate ADR — P0 3 / P1 9 / P2 1, merge-ready no. All P0s were doc-vs-code drift a
+  doc-only review would have missed: (a) approve CAS lacked `expires_at > now` so a late approve could
+  beat expiry — fixed with worker-side `REQUESTED→EXPIRED` CAS (0 rows ⇒ re-read decision); (b) enum
+  value length vs `VARCHAR(16)` status columns (hbm2ddl update never alters length) — renamed
+  `AWAITING_APPROVAL`→`AWAIT_APPROVAL`; (c) recipe V2 coexistence trips `RecipeCatalog`'s
+  one-per-(provider,type) boot check — replaced with settings-driven active-version selection (inactive
+  version = name-resolution only). P1 themes worth re-checking on the implementation PRs:
+  **status-enum ripple** (claim/nearest-due/idle-cancel predicates, cancel Case A/B, current-task query
+  all hardcode RUNNING/PENDING — enumerate before adding any status; PENDING claim-flip precedent keeps
+  write-back unchanged); **engine must not read `terraform_result`** (ADR-016) — display-only exception
+  declared + fail-closed summary; **side-effect placement** (send moved to derive-from-state after
+  write-back commit; ack after durable commit); **gated-loop piggyback** (TerminalNotifier doesn't start
+  when notify disabled — dedicated loop instead). Owner overrides recorded: thread history kept with
+  at-least-once semantics (rejected codex's removal advice); resource addresses masked at the for_each
+  index segment instead of dropped. Rounds 2-3: P0s confirmed fixed; remaining P1s were all
+  "doc promises a contract the code doesn't have" — gate-entry variant belonged on `DispatchResult`
+  (execute()'s return type), not `TaskProgress` (check()'s); rejection had no value path to full
+  cancellation until routed through the existing `cancel_requested` flag; period-statistics wire
+  contract needed an explicit `await_approval_count` field (status-sum = total invariant).
+  **DO verify, when an ADR names a sealed-type variant, that it sits on the type the relevant
+  method actually returns; and when it adds a status, that every exhaustive switch/sum contract
+  (SlackNotifier MessageStyle, statistics DTO) is in the ripple list.** Round 3 ended P0 0 / P1 3
+  (all contract-precision, fixed in-doc); no round 4 run — owner accepted convergence.
+- R15 (ADR terraform-apply-approval-gate, independent dual review, 2026-08-22): after codex rounds
+  (R14) converged, owner asked for a fresh pass — ran TWO independent agents in parallel: an Opus
+  design review (adversarial, concurrency-focused) plus an exhaustive code-fact sweep (78 claims,
+  every type/column/enum/return-type the ADR names, verified against source). Both found real issues
+  the 3 codex rounds missed. **P0: gate entry never advances `next_due_at`** — `StepReporter.releaseClaim`
+  recomputes it only under `status == RUNNING`, and AWAIT_APPROVAL is the status *at write-back end*,
+  so the stale (past) value causes reclaim every sweep; combined with the then-unguarded expiry CAS
+  (`REQUESTED` only, no time condition) every gated pipeline would fail APPROVAL_EXPIRED seconds after
+  entry. Root lesson: **the PENDING claim-flip precedent only covers the RESUME direction (state held
+  at claim time), never the ENTER direction (state held at write-back end) — check which side of the
+  claim cycle a new status lives on before claiming "write-back unchanged".** Other confirmed finds:
+  expiry CAS needed `expires_at <= :now` to be the exact complement of decide's guard (per-pod clocks
+  can early-close a valid window); decide() vs worker write-back had ABBA lock order (fix: all
+  approval txs lock pipeline → task_approval, now invariant 6); lock-held Slack call pattern
+  (ADR-022) is invalid when the locked row is contended by decide/expiry CAS — TerminalNotifier's own
+  header states this precondition; adopted its prescribed stamp-then-call 2-tx split; initial-send
+  give-up = lost approval request (deterministic 24h expiry) so send retries until expires_at with
+  repeated alert + pollable count, only sync keeps soft give-up; judgment cannot run in check()
+  (outside tx) — delegated via new `StepOutcome.ApprovalPoll` variant judged inside write-back,
+  declared as an explicit ADR-021 exception. Fact-sweep kills: "NETWORK_READY reused across recipes"
+  was fiction (AWS-only, one recipe; provider-scoped TaskDefinition means the single gate op still
+  needs AWS+GCP definitions ×2); "TaskStateMachine sole status writer" false (it can't even touch
+  Pipeline); RecipeCatalog registers values() unconditionally so version selection REQUIRES a
+  constructor change; `markInProgress` is a single instanceof, so a new DispatchResult variant
+  silently falls to IN_PROGRESS — exhaustive-switch it. **DO run a code-fact sweep (every named
+  artifact verified) as a separate axis from design review on any ADR before implementation — the
+  two axes caught disjoint defect sets. DO check every RUNNING-guarded recompute path when a new
+  non-terminal pipeline status is added, not just the claim predicates.**
+- R16 (ADR terraform-apply-approval-gate, targeted review of revisions 7-8, 2026-08-22): after the
+  R15 dual review converged, owner added rev 7 (WITH_ADMIN_CONSENT recipe naming + gated DELETE
+  ordering: service destroy plan → gate → BDC destroy → service destroy) and rev 8 (request context:
+  requested_by/request_note on pipeline creation). Ran codex (gpt-5.6-sol xhigh) scoped to the delta
+  only, with "rev ≤6 is settled" stated in the prompt — round 1: P0 0 / P1 3 / P2 4; round 2 verified
+  all resolved (P0 0 / P1 0, 2 leftover P2s fixed in-doc). The P1s were again unverified-code-fact
+  class: (a) op name `*_TF_DESTROY_PLAN` breaks THREE suffix-derived contracts at once —
+  terraformAction() label (PLAN/APPLY/DESTROY closed set), TerraformJobType binding (DESTROY binding
+  leaves PLAN's CREATED success state stuck "in progress" until execution timeout), and the
+  wire/test contract — fix: preserve the `_TF_PLAN` suffix (`*_SERVICE_DESTROY_TF_PLAN`) so label,
+  job type, and success list all derive correctly; never leave suffix-contract questions "to be
+  decided in implementation"; (b) new message fields (requested_by/at/note) were mandated by the
+  message-composition section but absent from the closed PII allowlist — two MUSTs in one doc that
+  cannot both hold; (c) request_note input was placed in the approval modal, but the first Slack send
+  derives right after gate-entry commit, so modal input is ALWAYS missing from the initial message —
+  free-text context must be captured at creation time. Round-2 P2 worth keeping: any free text
+  rendered into Slack needs a plain_text/escape contract (mention/link markup would otherwise
+  execute). **DO check, when adding an enum value whose NAME feeds derivation logic (suffix →
+  label/binding/success-states), every contract that parses the name — and DO scan the schema
+  section for stale wording after changing a validation contract in the body (truncate vs reject
+  drifted between sections).**
