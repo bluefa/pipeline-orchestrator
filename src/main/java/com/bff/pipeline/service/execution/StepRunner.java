@@ -78,6 +78,10 @@ public class StepRunner {
             case BLOCKED -> StepOutcome.unblock();
             case READY -> runExternalCall(task, true, () -> StepOutcome.dispatched(type.execute(target, task)));
             case IN_PROGRESS -> runExternalCall(task, false, () -> mapProgress(checkProgress(target, task, attempt, type)));
+            // 이 상태로 태스크를 옮기는 코드는 아직 없다(승인 게이트가 들어오면서 여기가 채워진다).
+            // 그때까지 도달하면 데이터가 손상된 것이므로 조용히 넘기지 않고 멈춘다.
+            case AWAIT_APPROVAL ->
+                    throw new IllegalStateException("nothing produces AWAIT_APPROVAL yet: task " + task.getId());
             case DONE, FAILED, CANCELLED ->
                     throw new IllegalStateException("runStep on a terminal task " + task.getId());
         };

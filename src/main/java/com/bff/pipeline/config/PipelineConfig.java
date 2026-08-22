@@ -13,7 +13,8 @@ import org.springframework.web.client.RestClient;
 /**
  * Spring 빈 구성 클래스다. 테스트에서 시간을 제어할 수 있도록 주입 가능한 {@link Clock} 빈을 제공하고,
  * 타입화된 설정({@link PipelineSettings} 도메인 데드라인, {@link ExecutionSettings} ADR-021 실행 파라미터,
- * {@link NotifySettings} ADR-022 종단 알림 파라미터)을 {@code @ConfigurationProperties}로 켠다.
+ * {@link NotifySettings} ADR-022 종단 알림 파라미터, {@link ApprovalSettings} Apply 승인 게이트 파라미터)을
+ * {@code @ConfigurationProperties}로 켠다.
  *
  * <p>ADR-021 실행 모델용 스레드 풀을 둘로 나눠 제공한다(데드락 회피). {@code pipelineWorkerPool}은 워커
  * drain 사이클에 쓰고, {@code infraManagerCallPool}은 호출별 타임아웃 데코레이터({@code TimeBoundedInfraManagerClient})가
@@ -23,7 +24,8 @@ import org.springframework.web.client.RestClient;
  * 타임아웃으로 건 빈을 직접 만든다(호출 상한을 HTTP 클라이언트가 소유해 별도 스레드풀이 필요 없다).
  */
 @Configuration
-@EnableConfigurationProperties({PipelineSettings.class, ExecutionSettings.class, NotifySettings.class})
+@EnableConfigurationProperties({PipelineSettings.class, ExecutionSettings.class, NotifySettings.class,
+        ApprovalSettings.class})
 public class PipelineConfig {
 
     @Bean

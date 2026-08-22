@@ -76,7 +76,7 @@ import org.springframework.transaction.annotation.Transactional;
         TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, TerraformJobStateRecorder.class,
         ConditionCheckTask.class, ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class,
         PipelineInserter.class, PipelineRestarter.class, PipelineControl.class, RecipeCatalog.class,
-        PipelineQueryService.class, TargetSourcePipelineController.class, PipelineIntegrationTest.Wiring.class})
+        PipelineQueryService.class, TargetSourcePipelineController.class, PipelineIntegrationTest.Wiring.class, ApprovalTestWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineIntegrationTest {
 
@@ -125,7 +125,7 @@ class PipelineIntegrationTest {
     void customRecipeUnderStartDelay_isQueriedAsCustomWithDescriptions_thenRunsAfterTheDelay() {
         PipelineDetail created = controller.createCustom("integ-custom", new CustomPipelineRequest(List.of(
                 new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "plan the service"),
-                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply the service"))));
+                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply the service")), null, null));
         long pipelineId = created.pipelineId();
 
         // 생성 응답(P10) 자체가 CUSTOM 분류 + 설명 + 초기 PENDING (지연이 실제로 걸렸는지는 아래 pollOnce로 확증)
@@ -171,7 +171,7 @@ class PipelineIntegrationTest {
     void cancelDuringTheStartDelayWait_isQueriedAsCancelled_andDispatchesNoTask() {
         PipelineDetail created = controller.createCustom("integ-cancel", new CustomPipelineRequest(List.of(
                 new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "plan"),
-                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply"))));
+                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply")), null, null));
         long pipelineId = created.pipelineId();
         assertThat(created.status()).isEqualTo(PipelineStatus.PENDING);
 
@@ -203,11 +203,11 @@ class PipelineIntegrationTest {
     void oneActivePerTarget_holdsWhileACustomPipelineWaits_andReleasesAfterCancel() {
         String target = "integ-unique";
         PipelineDetail first = controller.createCustom(target, new CustomPipelineRequest(List.of(
-                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "plan"))));
+                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "plan")), null, null));
         assertThat(first.status()).isEqualTo(PipelineStatus.PENDING);   // 비종단 → active_target 점유
 
         // 대기 중에도 동일 target 재실행은 거절(정상 요청이므로 원인은 활성 슬롯 뿐)
-        assertThatThrownBy(() -> controller.create(target, new CreatePipelineRequest(PipelineType.INSTALL)))
+        assertThatThrownBy(() -> controller.create(target, new CreatePipelineRequest(PipelineType.INSTALL, null, null)))
                 .isInstanceOf(PipelineAlreadyActiveException.class);
 
         // 취소로 슬롯 해제 → 조회도 CANCELLED
@@ -215,7 +215,7 @@ class PipelineIntegrationTest {
         assertThat(service.detail(first.pipelineId()).status()).isEqualTo(PipelineStatus.CANCELLED);
 
         // 해제 후엔 동일 target 새 실행 허용(다른 id)
-        PipelineDetail second = controller.create(target, new CreatePipelineRequest(PipelineType.INSTALL));
+        PipelineDetail second = controller.create(target, new CreatePipelineRequest(PipelineType.INSTALL, null, null));
         assertThat(second.pipelineId()).isNotEqualTo(first.pipelineId());
         assertThat(second.status()).isEqualTo(PipelineStatus.PENDING);
     }
@@ -229,7 +229,7 @@ class PipelineIntegrationTest {
         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
         infraManagerClient.onCheck(() -> true);
 
-        PipelineDetail created = controller.create("integ-fixed", new CreatePipelineRequest(PipelineType.INSTALL));
+        PipelineDetail created = controller.create("integ-fixed", new CreatePipelineRequest(PipelineType.INSTALL, null, null));
         long pipelineId = created.pipelineId();
         assertThat(created.type()).isEqualTo(PipelineType.INSTALL);
         assertThat(created.recipeDefinition()).isEqualTo("AWS_INSTALL_V1");   // 고정 카탈로그 recipe 백킹

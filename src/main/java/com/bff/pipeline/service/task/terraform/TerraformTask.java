@@ -13,9 +13,8 @@ import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TerraformJobRef;
 import com.bff.pipeline.model.TaskType;
 import com.bff.pipeline.utils.TaskSettingsResolver;
+import com.bff.pipeline.utils.TerraformDispatchResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -66,8 +65,6 @@ import com.bff.pipeline.exception.CallTimeoutException;
 public class TerraformTask implements TaskType {
 
     public static final String NAME = TaskOperation.Mechanism.TERRAFORM_JOB;
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-    private static final TypeReference<List<String>> JOB_IDS = new TypeReference<>() { };
 
     /** 임계 초과로 실패 확정된 job의 합성 판정에 실을 원시 상태 표기(관측된 적 없어 실제 terraformState가 없다). */
     private static final String POLL_UNREACHABLE_STATE = "UNREACHABLE";
@@ -104,7 +101,7 @@ public class TerraformTask implements TaskType {
         }
         List<String> jobIds;
         try {
-            jobIds = OBJECT_MAPPER.readValue(response, JOB_IDS);
+            jobIds = TerraformDispatchResponse.jobIds(response);
         } catch (JsonProcessingException exception) {
             log.warn("task {} attempt {}: malformed dispatch response, failing the task: {}",
                     task.getId(), attempt.getAttemptNumber(), exception.getOriginalMessage());

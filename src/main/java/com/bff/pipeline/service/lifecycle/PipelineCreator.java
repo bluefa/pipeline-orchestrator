@@ -7,6 +7,7 @@ import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.RecipeDefinition;
 import com.bff.pipeline.enums.TaskDefinition;
+import com.bff.pipeline.exception.ApprovalGateNotAllowedException;
 import com.bff.pipeline.exception.EmptyCustomRecipeException;
 import com.bff.pipeline.exception.MissingPipelineTypeException;
 import com.bff.pipeline.exception.MissingTargetException;
@@ -19,6 +20,7 @@ import com.bff.pipeline.exception.UnknownTaskException;
 import com.bff.pipeline.exception.UnsupportedRecipeException;
 import com.bff.pipeline.model.PipelinePlan;
 import com.bff.pipeline.model.PipelinePlan.PlannedStep;
+import com.bff.pipeline.model.RequestContext;
 import java.util.List;
 import java.util.Locale;
 import lombok.RequiredArgsConstructor;
@@ -49,12 +51,22 @@ public class PipelineCreator {
     private final RecipeCatalog recipeCatalog;
     private final InfraManagerClient infraManagerClient;
 
-    /** 카탈로그 recipe 실행(P10). (provider, type)으로 고정 recipe를 골라 실행한다. */
-    public Pipeline create(String target, PipelineType type) {
+    /**
+     * 카탈로그 recipe 실행(P10). (provider, type)으로 고정 recipe를 골라 실행한다. 요청 맥락은 형식을 먼저
+     * 검증하고(길이 초과는 그 자리에서 400), 요청자 필수 여부는 고른 recipe가 승인 게이트를 포함할 때만
+     * 건다 — 승인이 없는 실행에까지 요청자를 강제하면 기존 호출자가 전부 깨진다.
+     */
+    public Pipeline create(String target, PipelineType type, RequestContext request) {
         if (type == null) {
             throw new MissingPipelineTypeException();
         }
-        return insert(PipelinePlan.fromCatalog(target, resolveRecipe(target, type)), target);   // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
+        RecipeDefinition recipe = resolveRecipe(target, type);   // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
+        return insert(PipelinePlan.fromCatalog(target, recipe, requireRequesterIfGated(request, recipe)), target);
+    }
+
+    /** 승인 게이트가 있는 recipe에서만 요청자를 필수로 건다(승인 게이트 ADR §결정 4). */
+    private static RequestContext requireRequesterIfGated(RequestContext request, RecipeDefinition recipe) {
+        return recipe.hasApprovalGate() ? request.requireRequestedBy() : request;
     }
 
     /**
@@ -63,7 +75,7 @@ public class PipelineCreator {
      * 이름 존재·provider 일치·설명 길이(≤100)를 검사해 하나라도 어기면 400이다. plan 구성은 트랜잭션 밖에서 입력 검증 +
      * provider 조회를 마치고 삽입만 inserter의 트랜잭션에 맡긴다 — 유니크 위반은 {@link #insert}가 도메인 응답으로 번역한다.
      */
-    public Pipeline createCustom(String target, List<CustomTaskRequest> tasks) {
+    public Pipeline createCustom(String target, List<CustomTaskRequest> tasks, RequestContext request) {
         if (target == null || target.isBlank()) {
             throw new MissingTargetException();
         }
@@ -74,7 +86,7 @@ public class PipelineCreator {
         List<PlannedStep> steps = tasks.stream().map(PipelineCreator::resolveNameAndDescription).toList();
         CloudProvider provider = resolveProvider(target);   // 트랜잭션 밖 외부 조회(§3)
         steps.forEach(step -> requireProviderMatch(step.definition(), provider));
-        return insert(PipelinePlan.custom(target, provider, steps), target);
+        return insert(PipelinePlan.custom(target, provider, steps, request), target);
     }
 
     /** plan 삽입 + active-target 유니크 위반의 도메인 번역. catalog/custom/restart(PipelineRestarter) 경로가 공유한다. */
@@ -94,6 +106,10 @@ public class PipelineCreator {
         String name = task == null ? null : task.name();
         TaskDefinition definition = TaskDefinition.find(name)
                 .orElseThrow(() -> new UnknownTaskException(name));
+        if (definition.isApprovalGate()) {
+            // 승인 게이트는 Plan 바로 뒤라는 자리에서만 의미가 있다 — 요청이 임의로 배치하는 것을 막는다.
+            throw new ApprovalGateNotAllowedException(name);
+        }
         String description = task == null ? null : task.description();
         if (description != null && description.length() > CustomTaskRequest.MAX_DESCRIPTION_LENGTH) {
             throw new TaskDescriptionTooLongException(name, description.length(),

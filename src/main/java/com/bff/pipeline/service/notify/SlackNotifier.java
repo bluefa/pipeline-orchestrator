@@ -144,7 +144,7 @@ public class SlackNotifier {
                 case DONE -> new MessageStyle(":white_check_mark:", "good");
                 case FAILED -> new MessageStyle(":x:", "danger");
                 case CANCELLED -> new MessageStyle(":no_entry:", "warning");
-                case PENDING, RUNNING -> throw new IllegalStateException(
+                case PENDING, RUNNING, AWAIT_APPROVAL -> throw new IllegalStateException(
                         "a non-terminal status cannot be notified: " + terminalStatus);
             };
         }

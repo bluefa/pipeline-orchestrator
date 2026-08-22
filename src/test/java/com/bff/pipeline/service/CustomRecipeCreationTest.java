@@ -30,6 +30,7 @@ import com.bff.pipeline.service.lifecycle.PipelineInserter;
 import com.bff.pipeline.service.lifecycle.PipelineRestarter;
 import com.bff.pipeline.service.lifecycle.RecipeCatalog;
 import com.bff.pipeline.service.query.PipelineQueryService;
+import com.bff.pipeline.model.RequestContext;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -52,7 +53,7 @@ import org.springframework.transaction.annotation.Transactional;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineCreator.class, PipelineInserter.class, PipelineRestarter.class, RecipeCatalog.class,
-        PipelineQueryService.class, TargetSourcePipelineController.class, CustomRecipeCreationTest.Wiring.class})
+        PipelineQueryService.class, TargetSourcePipelineController.class, CustomRecipeCreationTest.Wiring.class, ApprovalTestWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class CustomRecipeCreationTest {
 
@@ -75,7 +76,7 @@ class CustomRecipeCreationTest {
                 new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply first"),
                 new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "then plan"));
 
-        Pipeline pipeline = creator.createCustom("cust-order", tasks);
+        Pipeline pipeline = creator.createCustom("cust-order", tasks, RequestContext.none());
 
         assertThat(pipeline.getType()).isEqualTo(PipelineType.CUSTOM);   // 분류는 type이 진다
         assertThat(pipeline.getRecipeDefinition()).isNull();              // 백킹 RecipeDefinition이 없다
@@ -90,7 +91,7 @@ class CustomRecipeCreationTest {
     void customRecipeRunsThroughTheCustomEndpoint() {
         CustomPipelineRequest request = new CustomPipelineRequest(List.of(
                 new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply first"),
-                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "then plan")));
+                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "then plan")), null, null);
 
         PipelineDetail detail = controller.createCustom("cust-endpoint", request);
 
@@ -104,7 +105,7 @@ class CustomRecipeCreationTest {
     @Test
     void catalogEndpointStaysTypedInstallOrDelete() {
         PipelineDetail detail = controller.create("cust-endpoint-catalog",
-                new CreatePipelineRequest(PipelineType.DELETE));
+                new CreatePipelineRequest(PipelineType.DELETE, null, null));
 
         assertThat(detail.type()).isEqualTo(PipelineType.DELETE);
         assertThat(detail.recipeDefinition()).isEqualTo("AWS_DELETE_V1");
@@ -113,7 +114,7 @@ class CustomRecipeCreationTest {
     @Test
     void nullDescriptionIsAllowed() {
         Pipeline pipeline = creator.createCustom("cust-nodesc",
-                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), null)));
+                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), null)), RequestContext.none());
 
         assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).getFirst().getDescription())
                 .isNull();
@@ -122,7 +123,7 @@ class CustomRecipeCreationTest {
     @Test
     void unknownTaskNameIsRejected() {
         assertThatThrownBy(() -> creator.createCustom("cust-unknown",
-                List.of(new CustomTaskRequest("NOT_A_REAL_TASK", null))))
+                List.of(new CustomTaskRequest("NOT_A_REAL_TASK", null)), RequestContext.none()))
                 .isInstanceOf(UnknownTaskException.class);
     }
 
@@ -131,7 +132,7 @@ class CustomRecipeCreationTest {
         infraManager.onCloudProvider(CloudProvider.AWS);   // target is AWS, task is GCP
 
         assertThatThrownBy(() -> creator.createCustom("cust-mismatch",
-                List.of(new CustomTaskRequest(TaskDefinition.GCP_SERVICE_PLAN_V1.name(), null))))
+                List.of(new CustomTaskRequest(TaskDefinition.GCP_SERVICE_PLAN_V1.name(), null)), RequestContext.none()))
                 .isInstanceOf(TaskProviderMismatchException.class);
     }
 
@@ -140,7 +141,7 @@ class CustomRecipeCreationTest {
         String tooLong = "x".repeat(CustomTaskRequest.MAX_DESCRIPTION_LENGTH + 1);
 
         assertThatThrownBy(() -> creator.createCustom("cust-long",
-                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), tooLong))))
+                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), tooLong)), RequestContext.none()))
                 .isInstanceOf(TaskDescriptionTooLongException.class);
     }
 
@@ -149,7 +150,7 @@ class CustomRecipeCreationTest {
         String maxLen = "x".repeat(CustomTaskRequest.MAX_DESCRIPTION_LENGTH);
 
         Pipeline pipeline = creator.createCustom("cust-max",
-                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), maxLen)));
+                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), maxLen)), RequestContext.none());
 
         assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).getFirst().getDescription())
                 .hasSize(CustomTaskRequest.MAX_DESCRIPTION_LENGTH);
@@ -157,9 +158,9 @@ class CustomRecipeCreationTest {
 
     @Test
     void emptyTaskListIsRejected() {
-        assertThatThrownBy(() -> creator.createCustom("cust-empty", List.of()))
+        assertThatThrownBy(() -> creator.createCustom("cust-empty", List.of(), RequestContext.none()))
                 .isInstanceOf(EmptyCustomRecipeException.class);
-        assertThatThrownBy(() -> creator.createCustom("cust-null", null))
+        assertThatThrownBy(() -> creator.createCustom("cust-null", null, RequestContext.none()))
                 .isInstanceOf(EmptyCustomRecipeException.class);
     }
 
@@ -167,7 +168,7 @@ class CustomRecipeCreationTest {
     void catalogEndpointRejectsCustomTypeBeforeProviderLookup() {
         infraManager.onCloudProvider(null);   // provider 조회가 503을 낼 상황
 
-        assertThatThrownBy(() -> creator.create("cat-custom", PipelineType.CUSTOM))
+        assertThatThrownBy(() -> creator.create("cat-custom", PipelineType.CUSTOM, RequestContext.none()))
                 .isInstanceOf(UnsupportedRecipeException.class);   // 503이 아니라 400 — CUSTOM을 먼저 거절
     }
 
@@ -176,7 +177,7 @@ class CustomRecipeCreationTest {
         infraManager.onCloudProvider(null);   // provider 조회가 503을 낼 상황
 
         assertThatThrownBy(() -> creator.createCustom("cust-badname",
-                List.of(new CustomTaskRequest("NOT_A_REAL_TASK", null))))
+                List.of(new CustomTaskRequest("NOT_A_REAL_TASK", null)), RequestContext.none()))
                 .isInstanceOf(UnknownTaskException.class);   // 이름 검증이 provider 조회보다 먼저라 400 유지
     }
 

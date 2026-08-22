@@ -61,7 +61,8 @@ class NotifyPayloadPiiTest {
 
         // 대체용 이름 목록 자체가 고정돼 있고(TaskType.NAME들 — 부팅 시 TaskTypeRegistry가 등록을 검증한다)
         assertThat(mechanismVocabulary).containsExactlyInAnyOrder(
-                TaskOperation.Mechanism.TERRAFORM_JOB, TaskOperation.Mechanism.CONDITION_CHECK);
+                TaskOperation.Mechanism.TERRAFORM_JOB, TaskOperation.Mechanism.CONDITION_CHECK,
+                TaskOperation.Mechanism.APPROVAL);
         // 행에 저장되는 taskName(PipelineInserter가 definition.mechanism()에서 만드는 값)도
         // 전부 이 목록에서만 나온다 — provider나 운영자가 지은 raw 이름이 낄 자리가 없다
         assertThat(Arrays.stream(TaskDefinition.values()).map(TaskDefinition::mechanism))
