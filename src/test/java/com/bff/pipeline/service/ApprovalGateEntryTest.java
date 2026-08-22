@@ -25,6 +25,7 @@ import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.repository.TerraformJobStateRepository;
 import com.bff.pipeline.repository.TerraformResultRepository;
+import com.bff.pipeline.service.approval.PlanSummaryExtractor;
 import com.bff.pipeline.service.execution.PipelineClaimer;
 import com.bff.pipeline.service.execution.PipelineWorker;
 import com.bff.pipeline.service.execution.StepReporter;
@@ -42,6 +43,7 @@ import com.bff.pipeline.service.task.TaskTypeRegistry;
 import com.bff.pipeline.service.task.terraform.TerraformJobStateRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformResultRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -73,7 +75,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
         TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class,
         TerraformJobStateRecorder.class, ConditionCheckTask.class, ApprovalGateTask.class,
-        ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class, PipelineInserter.class,
+        PlanSummaryExtractor.class, ObservationRecorder.class, TaskCanceller.class,
+        PipelineCreator.class, PipelineInserter.class,
         PipelineControl.class, RecipeCatalog.class, ApprovalGateEntryTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class ApprovalGateEntryTest {
@@ -83,9 +86,21 @@ class ApprovalGateEntryTest {
     private static final RequestContext REQUEST =
             RequestContext.of("admin@example.com", "스테이징 신규 클러스터입니다. 확인 부탁드립니다.");
 
+    /** 승인자가 보게 될 값이 실제로 나오는지 보려면 진짜 plan 로그 모양이 필요하다. */
+    private static final String PLAN_LOG = """
+            Terraform will perform the following actions:
+
+              # aws_instance.web will be created
+              # aws_s3_bucket.logs will be destroyed
+              # aws_db_instance.main must be replaced
+
+            Plan: 2 to add, 0 to change, 2 to destroy.
+            """;
+
     @Autowired private PipelineWorker worker;
     @Autowired private PipelineCreator creator;
     @Autowired private PipelineControl control;
+    @Autowired private PlanSummaryExtractor planSummaryExtractor;
     @Autowired private PipelineRepository pipelineRepository;
     @Autowired private TaskRepository taskRepository;
     @Autowired private TaskApprovalRepository approvalRepository;
@@ -100,6 +115,7 @@ class ApprovalGateEntryTest {
         clock.set(START);
         infraManagerClient.onDispatch(() -> "[\"job-1\"]");
         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
+        infraManagerClient.onResult(() -> PLAN_LOG);
     }
 
     @AfterEach
@@ -150,7 +166,7 @@ class ApprovalGateEntryTest {
 
     /** 승인 요청은 게이트에 들어가는 그 트랜잭션에서 함께 만들어진다 — 대기 중인데 요청이 없는 조합은 없다. */
     @Test
-    void enteringTheGateCreatesTheApprovalRequest() {
+    void enteringTheGateCreatesTheApprovalRequestWithASummaryOfThePlan() {
         Pipeline pipeline = runToGate("gate-request");
 
         TaskApproval approval = approvalRepository.findByTaskId(gateTask(pipeline).getId()).orElseThrow();
@@ -158,7 +174,59 @@ class ApprovalGateEntryTest {
         assertThat(approval.getRequestedAt()).isEqualTo(START);
         assertThat(approval.getExpiresAt()).isEqualTo(START.plus(APPROVAL_TIMEOUT));
         assertThat(approval.getDecidedAt()).isNull();
+        assertThat(approval.getPlanSummary())
+                .contains("\"verified\":true")
+                .contains("\"create_count\":1")
+                .contains("\"destroy_count\":1")
+                .contains("\"replace_count\":1")
+                .contains("aws_db_instance.main");   // 위험한 것(교체)이 목록 앞에 남는다
     }
+
+
+    /**
+     * 원천 로그가 온전하지 않으면 수치를 아예 내보내지 않는다. 얼추 맞는 요약을 근거로 승인이 나가는 것이
+     * 이 기능에서 가장 나쁜 결말이라, 못 읽었으면 못 읽었다고 말한다.
+     */
+    @Test
+    void anUnreadablePlanLogYieldsAnUnverifiedSummaryButStillEntersTheGate() {
+        infraManagerClient.onResult(() -> "terraform: ok");   // 변경 목록도 합계도 없는 로그
+
+        Pipeline pipeline = runToGate("gate-unverified");
+
+        TaskApproval approval = approvalRepository.findByTaskId(gateTask(pipeline).getId()).orElseThrow();
+        assertThat(approval.getStatus()).isEqualTo(ApprovalStatus.REQUESTED);   // 요약 실패가 게이트를 막지 않는다
+        assertThat(approval.getPlanSummary())
+                .contains("\"verified\":false")
+                .contains("합계가 맞지 않습니다")
+                // 수치를 아예 내보내지 않는다 — 0을 실으면 "0건 생성"으로 읽혀 모른다는 사실이 지워진다.
+                .doesNotContain("create_count", "destroy_count", "omitted_count");
+    }
+
+
+    /**
+     * job 하나의 로그가 통째로 사라져도 검증됨으로 나가면 안 된다. "던진 job이 전부 몇 개였나"의 근거를
+     * 저장 실패를 삼키는 관찰 테이블에서 가져오면, 그 job의 관찰까지 함께 빠졌을 때 애초에 없던 job으로
+     * 착각해 반쪽짜리 요약이 통과한다 — 근거는 상태 전이와 함께 저장되는 dispatch 응답이어야 한다.
+     */
+    @Test
+    void aPlanMissingOneJobsLogIsNeverReportedAsVerified() {
+        infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
+        Pipeline pipeline = runToGate("gate-partial");
+        Task gate = gateTask(pipeline);
+        assertThat(planSummaryExtractor.summarize(gate)).contains("\"verified\":true");
+
+        // job-2의 흔적을 양쪽 관찰 테이블에서 모두 지운다 — 두 기록 모두 best-effort라 함께 빠질 수 있다.
+        Task planStep = chainOf(pipeline).getFirst();
+        terraformResultRepository.findByTaskIdAndAttemptNumberAndJobId(planStep.getId(), 1, "job-2")
+                .ifPresent(terraformResultRepository::delete);
+        terraformJobStateRepository.deleteAll();
+
+        assertThat(planSummaryExtractor.summarize(gate))
+                .contains("\"verified\":false")
+                .contains("일부 Plan 작업의 로그가 없습니다")
+                .doesNotContain("create_count");
+    }
+
 
     /** 기한이 지나면 실행이 실패로 닫히고, 재시도하지 않는다 — 승인은 다시 시도해 결과가 달라지지 않는다. */
     @Test
@@ -237,6 +305,11 @@ class ApprovalGateEntryTest {
         @Bean
         FakeInfraManagerClient infraManagerClient() {
             return new FakeInfraManagerClient();
+        }
+
+        @Bean
+        ObjectMapper objectMapper() {
+            return new ObjectMapper();
         }
 
         /** 이 테스트만 승인을 켠다 — 켜야 게이트가 든 레시피로 실행이 만들어진다. */

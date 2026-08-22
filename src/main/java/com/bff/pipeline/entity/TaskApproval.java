@@ -23,7 +23,8 @@ import lombok.Setter;
  * ({@code task_id} 유니크), 요청이 만들어진 순간부터 승인·반려·만료·취소로 닫힐 때까지 같은 행이 갱신된다.
  *
  * 이 행이 곧 게이트의 상태다. 게이트 태스크를 다음 상태로 보낼지 정하는 입력은 여기 있는
- * {@code status}와 {@code expiresAt} 둘뿐이고, 승인자 같은 표시용 값은 전이에 관여하지 않는다.
+ * {@code status}와 {@code expiresAt} 둘뿐이고, {@code planSummary} 같은 표시용 값은 전이에 관여하지 않는다.
+ * 그래서 요약 추출이 실패해도 승인 자체는 정상적으로 동작한다.
  *
  * {@code approverId}/{@code approverName}은 콘솔 계정이나 Slack 사용자에서 오는 외부 유래 값이라 길이를
  * 통제할 수 없다 — 저장 전에 컬럼 길이({@link #APPROVER_LENGTH})로 잘라, 이름 하나가 길다는 이유로 승인
@@ -46,6 +47,12 @@ public class TaskApproval {
 
     /** 승인자 식별자·이름 컬럼 길이. 외부 유래 문자열을 저장 전에 이 길이로 자른다. */
     public static final int APPROVER_LENGTH = 64;
+
+    /**
+     * plan_summary에 담을 수 있는 최대 바이트. 컬럼은 TEXT(65535바이트)이고, 만드는 쪽이 이 값에 맞춰
+     * 목록을 줄인다 — 컬럼과 그 가드가 한 상수를 나눠 써야 컬럼이 바뀔 때 가드가 조용히 어긋나지 않는다.
+     */
+    public static final int PLAN_SUMMARY_MAX_BYTES = 60_000;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -79,6 +86,14 @@ public class TaskApproval {
     @Convert(converter = ApprovalChannelConverter.class)
     @Column(length = 16)
     private ApprovalChannel channel;
+
+    /**
+     * 승인 화면에 보여줄 plan 요약(JSON). 표시 전용이라 전이 판정은 읽지 않으며, 원천 로그가 불완전하면
+     * 수치 대신 "검증 불가"가 담긴다. 무제한 외부 문자열이 이 컬럼을 넘겨 게이트 진입을 롤백시키지 않도록,
+     * 만드는 쪽에서 목록 길이를 줄여서라도 컬럼 한도 안으로 맞춘다.
+     */
+    @Column(name = "plan_summary", columnDefinition = "TEXT")
+    private String planSummary;
 
     /**
      * 외부 유래 표시 문자열을 컬럼 길이로 자른다 — 길이 하나 때문에 판정 트랜잭션이 통째로 깨지지 않게.

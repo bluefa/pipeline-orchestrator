@@ -30,13 +30,13 @@ public sealed interface DispatchResult
      * 잡히는 시각이기도 하다. {@code planSummary}는 승인 화면에 보여줄 요약 JSON이며 표시 전용이라
      * null이어도 게이트는 정상 동작한다.
      */
-    record AwaitApproval(Instant expiresAt) implements DispatchResult { }
+    record AwaitApproval(Instant expiresAt, String planSummary) implements DispatchResult { }
 
     static DispatchResult withResponse(String response) {
         return new WithResponse(response);
     }
 
-    static DispatchResult awaitApproval(Instant expiresAt) {
-        return new AwaitApproval(expiresAt);
+    static DispatchResult awaitApproval(Instant expiresAt, String planSummary) {
+        return new AwaitApproval(expiresAt, planSummary);
     }
 }

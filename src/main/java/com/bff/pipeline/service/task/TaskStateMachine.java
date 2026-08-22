@@ -146,6 +146,7 @@ public class TaskStateMachine {
                 .status(ApprovalStatus.REQUESTED)
                 .requestedAt(now)
                 .expiresAt(gate.expiresAt())
+                .planSummary(gate.planSummary())
                 .build());
         task.setStatus(TaskStatus.AWAIT_APPROVAL);
         task.setStartedAt(now);

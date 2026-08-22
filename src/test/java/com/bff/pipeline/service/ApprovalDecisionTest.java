@@ -36,6 +36,7 @@ import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.repository.TerraformJobStateRepository;
 import com.bff.pipeline.repository.TerraformResultRepository;
 import com.bff.pipeline.service.approval.ApprovalService;
+import com.bff.pipeline.service.approval.PlanSummaryExtractor;
 import com.bff.pipeline.service.execution.PipelineClaimer;
 import com.bff.pipeline.service.execution.PipelineWorker;
 import com.bff.pipeline.service.execution.StepReporter;
@@ -84,7 +85,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
         TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class,
         TerraformJobStateRecorder.class, ConditionCheckTask.class, ApprovalGateTask.class,
-        ApprovalService.class, ObservationRecorder.class, TaskCanceller.class,
+        PlanSummaryExtractor.class, ApprovalService.class, ObservationRecorder.class, TaskCanceller.class,
         PipelineCreator.class, PipelineInserter.class, PipelineControl.class, RecipeCatalog.class,
         PipelineQueryService.class, ApprovalDecisionTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)

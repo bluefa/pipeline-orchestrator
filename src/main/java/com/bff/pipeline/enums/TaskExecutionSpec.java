@@ -52,8 +52,8 @@ public record TaskExecutionSpec(
                 + "승인이 기록되면 성공, 만료되면 APPROVAL_EXPIRED로 실패, 반려는 파이프라인 취소로 이어진다. "
                 + "재시도는 없다 — 승인은 사람의 결정이라 다시 시도해서 결과가 달라지는 종류가 아니다.";
         String resultStorage = "승인 요청부터 결정까지의 전 과정을 task_approval 테이블에 태스크당 1행으로 "
-                + "남긴다(요청 시각, 만료 시각, 결정 시각, 승인자, "
-                + "승인 경로). 시도 이력은 다른 태스크와 똑같이 task_attempt에 남는다.";
+                + "남긴다(요청 시각, 만료 시각, 결정 시각, 승인자, 승인 경로, 그리고 승인 화면에 보여줄 "
+                + "plan 요약). 시도 이력은 다른 태스크와 똑같이 task_attempt에 남는다.";
         return new TaskExecutionSpec(null, null, null, successPolicy, resultStorage);
     }
 
