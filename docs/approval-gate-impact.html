@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  인프라 변경 승인 게이트 — 팀 공유용 설명 문서.
+  근거: docs/adr/terraform-apply-approval-gate.md
+  단독 실행 가능한 정적 페이지다(외부 스크립트 없음, 폰트만 Google Fonts).
+-->
+<title>인프라 변경 승인 게이트</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+
+<style>
+
+  /* 단독 문서용 최소 reset — 아티팩트 런타임이 주던 것을 대신한다 */
+  *, *::before, *::after { box-sizing: border-box; }
+  body, h1, h2, h3, h4, p, figure, blockquote, dl, dd { margin: 0; }
+  img, svg, video { display: block; max-width: 100%; }
+  button { font: inherit; color: inherit; background: none; border: none; }
+  :root {
+    --ground: #FBFBFC;
+    --surface: #FFFFFF;
+    --surface-2: #F7F8FA;
+    --ink: #16191F;
+    --ink-2: #4E5968;
+    --ink-3: #8B95A1;
+    --line: #E6E9EE;
+    --line-2: #D5DAE1;
+
+    --accent: #0064FF;
+    --accent-ink: #0050D6;
+    --accent-bg: #E8F1FF;
+
+    --gate-ink: #B54708;
+    --gate-bg: #FFFAEB;
+    --gate-line: #FEDF89;
+
+    --danger-ink: #B42318;
+    --danger-bg: #FEF3F2;
+    --danger-line: #FECDCA;
+
+    --ok-ink: #067647;
+    --ok-bg: #ECFDF3;
+    --ok-line: #ABEFC6;
+
+    --shadow-sm: 0 1px 2px rgba(17,24,39,.04), 0 4px 16px -8px rgba(17,24,39,.06);
+    --shadow-md: 0 1px 3px rgba(17,24,39,.06), 0 8px 20px -8px rgba(17,24,39,.12);
+
+    --fs-cap: 12px;
+    --fs-sm: 14px;
+    --fs-base: 16px;
+    --fs-lg: 20px;
+    --fs-xl: 26px;
+    --fs-2xl: clamp(28px, 4.4vw, 34px);
+
+    --sans: "IBM Plex Sans KR", "Noto Sans KR", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --body: "Noto Sans KR", "IBM Plex Sans KR", -apple-system, BlinkMacSystemFont, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    --spine: 880px;
+    --stage: 1180px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #101216;
+      --surface: #171A20;
+      --surface-2: #1D2129;
+      --ink: #EDEFF3;
+      --ink-2: #A8B0BC;
+      --ink-3: #79828F;
+      --line: #262B34;
+      --line-2: #333A45;
+
+      --accent: #5B9CFF;
+      --accent-ink: #8FBAFF;
+      --accent-bg: #14243F;
+
+      --gate-ink: #F0C168;
+      --gate-bg: #2A2213;
+      --gate-line: #4C3C1C;
+
+      --danger-ink: #FF9B92;
+      --danger-bg: #2C1614;
+      --danger-line: #5A2A24;
+
+      --ok-ink: #6FDBA0;
+      --ok-bg: #10261B;
+      --ok-line: #1F4733;
+
+      --shadow-sm: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px -8px rgba(0,0,0,.5);
+      --shadow-md: 0 1px 3px rgba(0,0,0,.4), 0 8px 20px -8px rgba(0,0,0,.6);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #101216;
+    --surface: #171A20;
+    --surface-2: #1D2129;
+    --ink: #EDEFF3;
+    --ink-2: #A8B0BC;
+    --ink-3: #79828F;
+    --line: #262B34;
+    --line-2: #333A45;
+
+    --accent: #5B9CFF;
+    --accent-ink: #8FBAFF;
+    --accent-bg: #14243F;
+
+    --gate-ink: #F0C168;
+    --gate-bg: #2A2213;
+    --gate-line: #4C3C1C;
+
+    --danger-ink: #FF9B92;
+    --danger-bg: #2C1614;
+    --danger-line: #5A2A24;
+
+    --ok-ink: #6FDBA0;
+    --ok-bg: #10261B;
+    --ok-line: #1F4733;
+
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px -8px rgba(0,0,0,.5);
+    --shadow-md: 0 1px 3px rgba(0,0,0,.4), 0 8px 20px -8px rgba(0,0,0,.6);
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: var(--fs-base);
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  .spine { max-width: var(--spine); margin-inline: auto; padding-inline: 24px; }
+  .stage { max-width: var(--stage); margin-inline: auto; padding-inline: 24px; }
+
+  h1, h2, h3, h4 { font-family: var(--sans); color: var(--ink); text-wrap: balance; line-height: 1.35; }
+  h1 { font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -.02em; }
+  h2 { font-size: var(--fs-xl); font-weight: 600; letter-spacing: -.015em; }
+  h3 { font-size: var(--fs-lg); font-weight: 600; letter-spacing: -.01em; }
+  p { margin: 0; }
+  strong { font-weight: 700; color: var(--ink); }
+  code { font-family: var(--mono); font-size: .88em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; color: var(--ink-2); }
+  a { color: var(--accent-ink); text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+  .eyebrow {
+    font-family: var(--mono); font-size: var(--fs-cap); font-weight: 500;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3);
+  }
+
+  /* ── header ───────────────────────────────── */
+  header.hero { padding: 64px 0 8px; border-bottom: 1px solid var(--line); }
+  .hero-inner { display: flex; flex-direction: column; gap: 20px; }
+  .hero h1 { margin-top: 6px; }
+  .lede { font-size: 18px; color: var(--ink-2); max-width: 62ch; }
+  .lede b { color: var(--ink); font-weight: 700; }
+
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 20px 0 48px; }
+  .stat { background: var(--surface); padding: 18px 20px; display: flex; flex-direction: column; gap: 4px; }
+  .stat .k { font-family: var(--mono); font-size: var(--fs-cap); letter-spacing: .06em; color: var(--ink-3); text-transform: uppercase; }
+  .stat .v { font-family: var(--sans); font-size: 21px; font-weight: 700; letter-spacing: -.01em; }
+  .stat .n { font-size: 13px; color: var(--ink-3); line-height: 1.5; }
+  .stat.is-gate .v { color: var(--gate-ink); }
+
+  /* ── sections ─────────────────────────────── */
+  section { padding: 56px 0; }
+  section + section { border-top: 1px solid var(--line); }
+  .sec-head { display: flex; flex-direction: column; gap: 10px; margin-bottom: 28px; }
+  .sec-head p { color: var(--ink-2); max-width: 64ch; }
+
+  .prose > * + * { margin-top: 16px; }
+  .prose p { color: var(--ink-2); }
+
+  /* ── before / after ───────────────────────── */
+  .ba { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .ba-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px; box-shadow: var(--shadow-sm); }
+  .ba-card h4 { font-size: var(--fs-sm); font-weight: 600; color: var(--ink-3); margin-bottom: 14px; letter-spacing: .02em; }
+  .track { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .node { font-family: var(--mono); font-size: 13px; font-weight: 500; padding: 7px 11px; border-radius: 7px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-2); white-space: nowrap; }
+  .node.is-gate { background: var(--gate-bg); border-color: var(--gate-line); color: var(--gate-ink); font-weight: 600; }
+  .node.is-danger { background: var(--danger-bg); border-color: var(--danger-line); color: var(--danger-ink); }
+  .arrow { color: var(--ink-3); font-family: var(--mono); font-size: 13px; }
+  .ba-note { margin-top: 14px; font-size: 13px; color: var(--ink-3); line-height: 1.6; }
+  .ba-card.after { border-color: var(--gate-line); }
+
+  /* ── flow ─────────────────────────────────── */
+  .flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+  .step { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 16px 16px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow-sm); }
+  .step.is-gate { border-color: var(--gate-line); background: var(--gate-bg); }
+  .step .idx { font-family: var(--mono); font-size: var(--fs-cap); font-weight: 600; color: var(--ink-3); letter-spacing: .08em; }
+  .step.is-gate .idx { color: var(--gate-ink); }
+  .step h4 { font-size: 15px; font-weight: 600; }
+  .step p { font-size: 13px; color: var(--ink-2); line-height: 1.6; }
+  .actor { align-self: flex-start; font-family: var(--mono); font-size: 11px; letter-spacing: .04em; padding: 3px 7px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-3); }
+  .step.is-gate .actor { background: rgba(255,255,255,.55); border-color: var(--gate-line); color: var(--gate-ink); }
+  :root[data-theme="dark"] .step.is-gate .actor { background: rgba(0,0,0,.25); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .step.is-gate .actor { background: rgba(0,0,0,.25); } }
+
+  .phase2-badge { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; font-family: var(--mono); font-size: 11px; font-weight: 500; padding: 4px 8px; border-radius: 5px; background: var(--accent-bg); color: var(--accent-ink); border: 1px dashed var(--accent); }
+
+  .flow-legend { margin-top: 18px; display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--ink-3); }
+  .flow-legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  /* ── mockups ──────────────────────────────── */
+  .mocks { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .mock-label { font-family: var(--mono); font-size: var(--fs-cap); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 10px; }
+
+  /* console card */
+  .console { background: #FFFFFF; border: 1px solid #EBEEF2; border-radius: 16px; padding: 22px; box-shadow: var(--shadow-md); color: #191F28; font-family: var(--body); }
+  :root[data-theme="dark"] .console { background: var(--surface); border-color: var(--line); color: var(--ink); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .console { background: var(--surface); border-color: var(--line); color: var(--ink); } }
+  .c-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  .c-title { font-family: var(--sans); font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
+  .pill { font-size: 12px; font-weight: 700; padding: 5px 10px; border-radius: 999px; white-space: nowrap; }
+  .pill.wait { background: var(--gate-bg); color: var(--gate-ink); border: 1px solid var(--gate-line); }
+  .pill.done { background: var(--ok-bg); color: var(--ok-ink); border: 1px solid var(--ok-line); }
+  .c-rows { border-top: 1px solid #EBEEF2; }
+  :root[data-theme="dark"] .c-rows { border-color: var(--line); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .c-rows { border-color: var(--line); } }
+  .c-row { display: grid; grid-template-columns: 96px 1fr; gap: 12px; padding: 11px 0; border-bottom: 1px solid #EBEEF2; font-size: 14px; }
+  :root[data-theme="dark"] .c-row { border-color: var(--line); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .c-row { border-color: var(--line); } }
+  .c-row .k { color: #8B95A1; font-size: 13px; }
+  :root[data-theme="dark"] .c-row .k { color: var(--ink-3); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .c-row .k { color: var(--ink-3); } }
+  .c-row .v { color: inherit; }
+  .c-row .v.mono { font-family: var(--mono); font-size: 13px; }
+  .note-quote { display: block; background: #F7F8FA; border-radius: 8px; padding: 10px 12px; font-size: 14px; color: #4E5968; line-height: 1.6; }
+  :root[data-theme="dark"] .note-quote { background: var(--surface-2); color: var(--ink-2); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .note-quote { background: var(--surface-2); color: var(--ink-2); } }
+
+  .summary { margin: 16px 0 0; background: #F7F8FA; border-radius: 10px; padding: 14px; }
+  :root[data-theme="dark"] .summary { background: var(--surface-2); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .summary { background: var(--surface-2); } }
+  .summary h5 { font-family: var(--sans); font-size: 13px; font-weight: 600; margin-bottom: 10px; color: inherit; }
+  .counts { display: flex; gap: 8px; flex-wrap: wrap; }
+  .count { font-family: var(--mono); font-size: 12px; font-weight: 600; padding: 5px 9px; border-radius: 6px; border: 1px solid transparent; }
+  .count.add { background: var(--ok-bg); color: var(--ok-ink); border-color: var(--ok-line); }
+  .count.chg { background: var(--accent-bg); color: var(--accent-ink); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+  .count.rep { background: var(--gate-bg); color: var(--gate-ink); border-color: var(--gate-line); }
+  .count.del { background: var(--danger-bg); color: var(--danger-ink); border-color: var(--danger-line); }
+  .addr { margin-top: 11px; display: flex; flex-direction: column; gap: 5px; font-family: var(--mono); font-size: 12px; color: #4E5968; }
+  :root[data-theme="dark"] .addr { color: var(--ink-2); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .addr { color: var(--ink-2); } }
+  .addr .more { color: #8B95A1; }
+  :root[data-theme="dark"] .addr .more { color: var(--ink-3); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .addr .more { color: var(--ink-3); } }
+
+  .c-actions { display: flex; gap: 8px; margin-top: 18px; }
+  .btn { font-family: var(--sans); font-size: 14px; font-weight: 600; padding: 10px 16px; border-radius: 9px; border: 1px solid transparent; cursor: default; }
+  .btn.primary { background: #0064FF; color: #fff; }
+  .btn.ghost { background: transparent; color: var(--danger-ink); border-color: var(--danger-line); }
+  .btn.slack-ok { background: #007A5A; color: #fff; }
+  .btn.slack-no { background: transparent; color: var(--danger-ink); border-color: var(--danger-line); }
+  .btn.sm { font-size: 13px; padding: 8px 13px; }
+
+  /* slack */
+  .slack { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow-md); }
+  .slack-bar { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--line); background: var(--surface-2); font-size: 13px; color: var(--ink-2); font-family: var(--sans); font-weight: 500; }
+  .slack-bar .lock { color: var(--ink-3); }
+  .slack-msg { padding: 14px; display: flex; gap: 10px; }
+  .avatar { width: 36px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, #0064FF, #0050D6); color: #fff; display: flex; align-items: center; justify-content: center; font-family: var(--sans); font-weight: 700; font-size: 15px; flex: none; }
+  .slack-body { flex: 1; min-width: 0; }
+  .slack-name { display: flex; align-items: center; gap: 6px; font-family: var(--sans); font-weight: 700; font-size: 14px; }
+  .app-tag { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .06em; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-3); padding: 1px 5px; border-radius: 4px; }
+  .slack-time { font-size: 12px; color: var(--ink-3); font-weight: 400; }
+  .slack-head { margin-top: 8px; font-family: var(--sans); font-weight: 700; font-size: 15px; }
+  .slack-fields { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; font-size: 13px; }
+  .slack-fields .f .k { color: var(--ink-3); font-size: 12px; }
+  .slack-fields .f .v { color: var(--ink-2); }
+  .slack-fields .f .v.mono { font-family: var(--mono); font-size: 12px; }
+  .slack-quote { margin-top: 11px; padding-left: 11px; border-left: 3px solid var(--line-2); color: var(--ink-2); font-size: 13px; line-height: 1.6; }
+  .slack-actions { display: flex; gap: 8px; margin-top: 14px; align-items: center; flex-wrap: wrap; }
+  .slack-expiry { font-size: 12px; color: var(--ink-3); font-family: var(--mono); }
+  .thread { border-top: 1px solid var(--line); padding: 12px 14px 14px 60px; display: flex; flex-direction: column; gap: 8px; background: var(--surface-2); }
+  .thread .t-label { font-size: 12px; color: var(--accent-ink); font-weight: 600; }
+  .thread .t-line { font-size: 13px; color: var(--ink-2); }
+  .resolved { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 8px; background: var(--ok-bg); border: 1px solid var(--ok-line); color: var(--ok-ink); font-size: 13px; font-weight: 600; margin-top: 12px; }
+
+  /* ── impact ───────────────────────────────── */
+  .impact { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .icard { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 22px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 10px; }
+  .icard .cap { font-family: var(--mono); font-size: var(--fs-cap); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+  .icard h4 { font-size: 17px; font-weight: 600; }
+  .icard p { font-size: 14px; color: var(--ink-2); line-height: 1.7; }
+  .delta { display: flex; align-items: center; gap: 9px; font-family: var(--mono); font-size: 13px; margin-top: 2px; }
+  .delta .from { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--line-2); }
+  .delta .to { color: var(--gate-ink); font-weight: 600; }
+  .delta .to.blue { color: var(--accent-ink); }
+
+  /* ── roadmap ──────────────────────────────── */
+  .road { display: flex; flex-direction: column; }
+  .road-item { display: grid; grid-template-columns: 92px 1fr; gap: 20px; padding: 18px 0; border-top: 1px solid var(--line); }
+  .road-item:last-child { border-bottom: 1px solid var(--line); }
+  .road-key { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--ink-3); padding-top: 2px; }
+  .road-item.is-phase2 .road-key { color: var(--accent-ink); }
+  .road-body h4 { font-size: 16px; font-weight: 600; margin-bottom: 5px; }
+  .road-body p { font-size: 14px; color: var(--ink-2); }
+  .road-body .dep { display: inline-block; margin-top: 8px; font-size: 12px; font-family: var(--mono); color: var(--gate-ink); background: var(--gate-bg); border: 1px solid var(--gate-line); padding: 3px 8px; border-radius: 5px; }
+
+  /* ── guardrails ───────────────────────────── */
+  .guards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .guard { background: var(--surface); padding: 18px 20px; }
+  .guard h4 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+  .guard p { font-size: 13.5px; color: var(--ink-2); line-height: 1.65; }
+
+  footer { padding: 40px 0 72px; color: var(--ink-3); font-size: 13px; line-height: 1.7; }
+  footer .src { font-family: var(--mono); font-size: 12px; }
+
+  @media (max-width: 900px) {
+    .flow { grid-template-columns: repeat(2, 1fr); }
+    .mocks, .impact, .ba, .guards { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 560px) {
+    .flow { grid-template-columns: 1fr; }
+    .slack-fields { grid-template-columns: 1fr; }
+    .road-item { grid-template-columns: 1fr; gap: 8px; }
+    section { padding: 44px 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="spine hero-inner">
+    <div>
+      <div class="eyebrow">ADR · terraform-apply-approval-gate</div>
+      <h1>인프라 변경 승인 게이트</h1>
+    </div>
+    <p class="lede">
+      지금 terraform은 <b>무엇을 만들고 무엇을 지우는지 아무도 확인하지 않은 채</b> APPLY까지 자동으로 진행된다.
+      PLAN과 APPLY 사이에 사람이 판단하는 단계를 하나 넣고, 그 판단에 필요한 정보를 콘솔과 Slack으로 함께 보낸다.
+    </p>
+    <div class="stats">
+      <div class="stat is-gate">
+        <div class="k">되돌릴 수 없는 변경 앞의 통제점</div>
+        <div class="v">0 → 1</div>
+        <div class="n">PLAN 결과를 사람이 확인해야 APPLY가 진행된다</div>
+      </div>
+      <div class="stat">
+        <div class="k">감사 기록</div>
+        <div class="v">실행 시각 → 전 구간</div>
+        <div class="n">누가·왜 요청했고 누가·언제 승인했는지가 한 행에 남는다</div>
+      </div>
+      <div class="stat">
+        <div class="k">처리량 영향</div>
+        <div class="v">없음</div>
+        <div class="n">대기 중에는 실행 슬롯도 동시 실행 캡도 쓰지 않는다</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="spine">
+    <div class="sec-head">
+      <h2>지금 무슨 일이 일어나고 있나</h2>
+    </div>
+    <div class="prose">
+      <p>레시피는 <code>*_TF_PLAN</code> task가 성공하면 곧바로 <code>*_TF_APPLY</code>를 깨운다. plan이 산출한 변경 목록을 사람이 보는 지점이 파이프라인 어디에도 없다. 인프라 변경 중에는 되돌리는 비용이 큰 것들이 있다 — 리소스 삭제, 그리고 in-place 변경이 불가능해 <strong>삭제 후 재생성</strong>되는 replace가 대표적이다.</p>
+      <p>확인 지점을 넣지 못한 이유는 두 가지였다. 첫째, plan 원문은 수백~수천 줄이고 <strong>terraform 문법에 익숙한 사람만 읽을 수 있다</strong> — 승인자에게 그대로 들이밀면 판단이 아니라 형식적 통과가 된다. 둘째, 서버가 private cluster에 있어 인터넷에서 들어오는 경로가 없다 — Slack 버튼 같은 외부 승인 수단을 붙일 방법이 없었다.</p>
+      <p>이 ADR은 두 문제를 함께 푼다. plan 로그를 <strong>집계와 리소스 목록으로 요약</strong>해 비전문가도 판단할 수 있게 만들고, Slack Socket Mode(아웃바운드 연결만 사용)로 <strong>인바운드 경로 없이</strong> 채팅에서 승인을 받는다.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="spine">
+    <div class="sec-head">
+      <h2>바뀌는 것은 단계 하나</h2>
+      <p>기존 실행 모델을 대체하지 않는다. PLAN과 APPLY 사이에 게이트 task 하나가 들어가고, 나머지 순서·재시도·취소 규칙은 그대로다.</p>
+    </div>
+    <div class="ba">
+      <div class="ba-card">
+        <h4>현재 — 설치(INSTALL)</h4>
+        <div class="track">
+          <span class="node">PLAN</span>
+          <span class="arrow">→</span>
+          <span class="node">APPLY</span>
+          <span class="arrow">→</span>
+          <span class="node">BDC PLAN</span>
+          <span class="arrow">→</span>
+          <span class="node">BDC APPLY</span>
+        </div>
+        <p class="ba-note">plan 결과는 저장되지만 아무도 읽지 않는다. 확인 없이 다음 단계로 승격된다.</p>
+      </div>
+      <div class="ba-card after">
+        <h4>이후 — 설치(INSTALL)</h4>
+        <div class="track">
+          <span class="node">PLAN</span>
+          <span class="arrow">→</span>
+          <span class="node is-gate">승인 대기</span>
+          <span class="arrow">→</span>
+          <span class="node">APPLY</span>
+          <span class="arrow">→</span>
+          <span class="node">BDC …</span>
+        </div>
+        <p class="ba-note">승인되면 즉시 APPLY로 승격, 반려되면 파이프라인 전체 취소, 기본 24시간 내 응답이 없으면 만료된다.</p>
+      </div>
+    </div>
+
+    <div class="ba" style="margin-top:16px">
+      <div class="ba-card">
+        <h4>현재 — 삭제(DELETE)</h4>
+        <div class="track">
+          <span class="node is-danger">BDC destroy</span>
+          <span class="arrow">→</span>
+          <span class="node is-danger">service destroy</span>
+        </div>
+        <p class="ba-note">plan 단계 자체가 없다. 파괴 작업이 곧바로 시작된다.</p>
+      </div>
+      <div class="ba-card after">
+        <h4>이후 — 삭제(DELETE) · 로드맵 PR 4</h4>
+        <div class="track">
+          <span class="node">destroy plan</span>
+          <span class="arrow">→</span>
+          <span class="node is-gate">승인 대기</span>
+          <span class="arrow">→</span>
+          <span class="node is-danger">BDC destroy</span>
+          <span class="arrow">→</span>
+          <span class="node is-danger">service destroy</span>
+        </div>
+        <p class="ba-note">승인은 <strong>첫 파괴 행위보다 앞</strong>에 있어야 의미가 있다. 순서를 재구성하고 destroy plan을 신설한다.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="stage">
+    <div class="sec-head">
+      <h2>다섯 단계로 본 흐름</h2>
+      <p>단계마다 누가 행동하는지를 함께 표시했다. Phase 2에서 늘어나는 것은 <strong>단계가 아니라 4단계의 행위자</strong>다.</p>
+    </div>
+    <div class="flow">
+      <div class="step">
+        <div class="idx">STEP 1</div>
+        <h4>요청</h4>
+        <span class="actor">요청자</span>
+        <p>파이프라인을 생성하면서 <strong>요청자</strong>와 <strong>확인 요청 메시지</strong>를 함께 남긴다. 승인자가 "왜 이걸 지금 하는가"를 알 수 있게 하는 유일한 입력이다.</p>
+      </div>
+      <div class="step">
+        <div class="idx">STEP 2</div>
+        <h4>PLAN 실행</h4>
+        <span class="actor">시스템</span>
+        <p>기존과 동일하게 terraform plan이 돌고 로그가 저장된다. <strong>새로운 수집 경로가 없다</strong> — 이미 저장 중인 로그를 그대로 쓴다.</p>
+      </div>
+      <div class="step is-gate">
+        <div class="idx">STEP 3</div>
+        <h4>승인 대기</h4>
+        <span class="actor">시스템</span>
+        <p>plan 로그를 <strong>집계 + 리소스 목록</strong>으로 요약해 콘솔 카드와 Slack 메시지로 동시에 띄운다. 파이프라인은 여기서 멈춘다.</p>
+      </div>
+      <div class="step">
+        <div class="idx">STEP 4</div>
+        <h4>결정</h4>
+        <span class="actor">관리자</span>
+        <p>승인 · 반려 · 만료(기본 24시간) 중 하나로 닫힌다. 콘솔 API와 Slack 버튼이 <strong>같은 처리 경로</strong>를 쓴다.</p>
+        <span class="phase2-badge">Phase 2 — 서비스 담당자로 확대</span>
+      </div>
+      <div class="step">
+        <div class="idx">STEP 5</div>
+        <h4>자동 진행</h4>
+        <span class="actor">시스템</span>
+        <p>승인 즉시 APPLY가 승격된다. 반려면 파이프라인 전체가 취소되고, 만료면 실패로 닫힌다.</p>
+      </div>
+    </div>
+    <div class="flow-legend">
+      <span><i class="swatch" style="background:var(--gate-line)"></i> 게이트 — 사람의 결정이 있어야 넘어가는 단계</span>
+      <span><i class="swatch" style="background:var(--accent)"></i> Phase 2에서 넓어지는 지점(같은 단계, 넓어진 권한과 진입 화면)</span>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="stage">
+    <div class="sec-head">
+      <h2>승인자가 실제로 보는 것</h2>
+      <p>두 표면은 <strong>같은 정보를 담는다</strong> — 대상, 요청자, 요청 메시지, 요청 시각, plan 요약, 만료까지 남은 시간. Slack이 없어도 콘솔만으로 승인이 완결되고, 반대로 콘솔을 열지 않아도 Slack에서 처리된다.</p>
+    </div>
+    <div class="mocks">
+      <div>
+        <div class="mock-label">콘솔 — 파이프라인 상세</div>
+        <div class="console">
+          <div class="c-top">
+            <div class="c-title">AWS 서비스 테라폼 Apply</div>
+            <span class="pill wait">승인 대기</span>
+          </div>
+          <div class="c-rows">
+            <div class="c-row"><span class="k">대상</span><span class="v mono">ts-10482</span></div>
+            <div class="c-row"><span class="k">요청자</span><span class="v">김서연</span></div>
+            <div class="c-row"><span class="k">요청 시각</span><span class="v mono">2026-08-22 14:02</span></div>
+            <div class="c-row"><span class="k">만료</span><span class="v mono">2026-08-23 14:02 <span style="color:var(--gate-ink);font-weight:600">(21시간 남음)</span></span></div>
+            <div class="c-row"><span class="k">요청 메시지</span><span class="v"><span class="note-quote">신규 서비스 온보딩 건입니다. 기존 인스턴스 타입 변경이 포함되어 재생성이 발생합니다.</span></span></div>
+          </div>
+          <div class="summary">
+            <h5>Plan 요약</h5>
+            <div class="counts">
+              <span class="count add">생성 3</span>
+              <span class="count chg">변경 1</span>
+              <span class="count rep">재생성 2</span>
+              <span class="count del">삭제 0</span>
+            </div>
+            <div class="addr">
+              <span>− aws_instance.web[…] &nbsp;<span class="more">재생성</span></span>
+              <span>− aws_db_instance.primary &nbsp;<span class="more">재생성</span></span>
+              <span>+ aws_security_group.app</span>
+              <span class="more">외 4건 — 콘솔에서 전체 확인</span>
+            </div>
+          </div>
+          <div class="c-actions">
+            <button class="btn primary">승인하고 진행</button>
+            <button class="btn ghost">반려</button>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="mock-label">Slack — 관리자 채널</div>
+        <div class="slack">
+          <div class="slack-bar"><span class="lock">🔒</span> infra-approvals</div>
+          <div class="slack-msg">
+            <div class="avatar">P</div>
+            <div class="slack-body">
+              <div class="slack-name">Pipeline Orchestrator <span class="app-tag">APP</span> <span class="slack-time">오후 2:02</span></div>
+              <div class="slack-head">승인 요청 · AWS 서비스 테라폼 Apply</div>
+              <div class="slack-fields">
+                <div class="f"><div class="k">대상</div><div class="v mono">ts-10482</div></div>
+                <div class="f"><div class="k">요청자</div><div class="v">김서연</div></div>
+                <div class="f"><div class="k">변경 요약</div><div class="v mono">생성 3 · 변경 1 · 재생성 2 · 삭제 0</div></div>
+                <div class="f"><div class="k">요청 시각</div><div class="v mono">2026-08-22 14:02</div></div>
+              </div>
+              <div class="slack-quote">신규 서비스 온보딩 건입니다. 기존 인스턴스 타입 변경이 포함되어 재생성이 발생합니다.</div>
+              <div class="addr" style="margin-top:11px">
+                <span>− aws_instance.web[…] &nbsp;<span class="more">재생성</span></span>
+                <span>− aws_db_instance.primary &nbsp;<span class="more">재생성</span></span>
+                <span class="more">외 5건 — 콘솔에서 전체 확인</span>
+              </div>
+              <div class="slack-actions">
+                <button class="btn slack-ok sm">승인</button>
+                <button class="btn slack-no sm">반려</button>
+                <span class="slack-expiry">21시간 후 만료</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mock-label" style="margin-top:22px">Slack — 승인 직후 같은 메시지</div>
+        <div class="slack">
+          <div class="slack-msg">
+            <div class="avatar">P</div>
+            <div class="slack-body">
+              <div class="slack-name">Pipeline Orchestrator <span class="app-tag">APP</span> <span class="slack-time">오후 2:02</span></div>
+              <div class="slack-head">승인 요청 · AWS 서비스 테라폼 Apply</div>
+              <div class="slack-fields">
+                <div class="f"><div class="k">대상</div><div class="v mono">ts-10482</div></div>
+                <div class="f"><div class="k">변경 요약</div><div class="v mono">생성 3 · 변경 1 · 재생성 2 · 삭제 0</div></div>
+              </div>
+              <div class="resolved">✅ 박준호 님이 승인 · 오후 2:11</div>
+            </div>
+          </div>
+          <div class="thread">
+            <div class="t-label">스레드 1</div>
+            <div class="t-line">APPLY를 시작합니다. 콘솔에서 진행 상황을 확인할 수 있습니다.</div>
+          </div>
+        </div>
+        <p style="margin-top:12px;font-size:13px;color:var(--ink-3);line-height:1.6">
+          결정이 나면 원 메시지의 버튼이 사라지고 결과가 고정된다. 이미 처리된 요청의 버튼을 누른 사람에게는 "이미 ○○ 님이 승인했습니다"가 본인에게만 표시된다.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="spine">
+    <div class="sec-head">
+      <h2>무엇이 좋아지는가</h2>
+    </div>
+    <div class="impact">
+      <div class="icard">
+        <div class="cap">사고 예방</div>
+        <h4>되돌릴 수 없는 변경 앞에 사람이 선다</h4>
+        <div class="delta"><span class="from">통제점 0개</span><span>→</span><span class="to">1개</span></div>
+        <p>삭제·재생성처럼 복구 비용이 큰 변경이 확인 없이 실행되는 경로가 사라진다. destroy 게이트(PR 4)까지 적용하면 파괴 작업 전체가 같은 규칙 아래로 들어온다.</p>
+      </div>
+      <div class="icard">
+        <div class="cap">감사 완결</div>
+        <h4>"누가 왜 요청했고 누가 승인했는가"가 남는다</h4>
+        <div class="delta"><span class="from">실행 시각만</span><span>→</span><span class="to">요청자 · 사유 · 승인자 · 시각</span></div>
+        <p>지금 기록되는 것은 실행 시각뿐이다. 이후에는 요청 맥락과 결정이 한 행에 남고, 콘솔·Slack 어느 경로로 승인했는지까지 구분된다. 사후 추적이 사람의 기억에 의존하지 않는다.</p>
+      </div>
+      <div class="icard">
+        <div class="cap">판단 가능성</div>
+        <h4>terraform을 모르는 사람도 판단할 수 있다</h4>
+        <div class="delta"><span class="from">plan 원문 수백 줄</span><span>→</span><span class="to blue">집계 + 리소스 목록</span></div>
+        <p>승인이 형식적 통과가 되지 않으려면 승인자가 내용을 이해해야 한다. 요약을 신뢰할 수 없을 때는 수치를 보여주지 않고 "콘솔에서 원문 확인"으로 넘긴다 — 틀린 요약으로 승인을 받는 것이 최악이기 때문이다.</p>
+      </div>
+      <div class="icard">
+        <div class="cap">운영 부담</div>
+        <h4>안전장치를 넣어도 느려지지 않는다</h4>
+        <div class="delta"><span class="from">대기 = 자원 점유</span><span>→</span><span class="to blue">점유 없음</span></div>
+        <p>승인 대기 중인 파이프라인은 terraform 실행 슬롯도, 동시 실행 캡도 쓰지 않는다. 승인을 기다리는 건이 늘어도 다른 작업의 처리량은 그대로다. 관리자는 콘솔을 열지 않고 Slack에서 바로 처리할 수 있어 대기 시간도 줄어든다.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="spine">
+    <div class="sec-head">
+      <h2>도입 순서</h2>
+      <p>설정 기본값이 꺼짐이라 배포 자체는 기존 동작을 바꾸지 않는다. 켜는 시점은 운영이 정한다.</p>
+    </div>
+    <div class="road">
+      <div class="road-item">
+        <div class="road-key">PR 1</div>
+        <div class="road-body">
+          <h4>백엔드 코어</h4>
+          <p>승인 상태·기록 테이블·게이트 task·승인 API·plan 요약 추출. 이 시점에 <strong>콘솔만으로 승인이 완결</strong>된다(Slack 없이).</p>
+        </div>
+      </div>
+      <div class="road-item">
+        <div class="road-key">PR 2</div>
+        <div class="road-body">
+          <h4>콘솔 UI</h4>
+          <p>승인 대기 상태 표시, 승인 카드와 요청 맥락 표시, 생성 화면의 확인 요청 메시지 입력.</p>
+        </div>
+      </div>
+      <div class="road-item">
+        <div class="road-key">PR 3</div>
+        <div class="road-body">
+          <h4>Slack 승인(ChatOps)</h4>
+          <p>Socket Mode 연결로 요청 발송·버튼 수신·결과 반영. private cluster에 인바운드 경로를 열지 않는다.</p>
+        </div>
+      </div>
+      <div class="road-item">
+        <div class="road-key">PR 4</div>
+        <div class="road-body">
+          <h4>삭제(destroy) 게이트</h4>
+          <p>destroy plan 신설과 순서 재구성으로, 파괴 작업 전에도 같은 게이트를 세운다.</p>
+          <span class="dep">선행 — InfraManager destroy plan API 협의</span>
+        </div>
+      </div>
+      <div class="road-item is-phase2">
+        <div class="road-key">Phase 2</div>
+        <div class="road-body">
+          <h4>서비스 담당자 승인</h4>
+          <p>같은 4단계에서 <strong>승인 주체가 담당자로 넓어진다</strong>. 진입 화면은 콘솔의 TargetSource 상세페이지이며 권한 판정은 BFF가 담당한다 — 실행 구조는 그대로다.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="spine">
+    <div class="sec-head">
+      <h2>가드레일</h2>
+      <p>승인 게이트는 새로운 정지 지점이라, 잘못 만들면 파이프라인이 멈춰 서는 원인이 된다. 아래는 그걸 막기 위해 설계에 못박은 규칙들이다.</p>
+    </div>
+    <div class="guards">
+      <div class="guard">
+        <h4>방치되지 않는다</h4>
+        <p>기본 24시간이 지나면 요청은 만료되고 파이프라인은 실패로 닫힌다. 무기한 대기가 남지 않는다.</p>
+      </div>
+      <div class="guard">
+        <h4>틀린 요약으로 승인받지 않는다</h4>
+        <p>로그가 잘렸거나 파싱이 어긋나면 수치를 보여주지 않고 원문 확인으로 넘긴다. 확신할 수 있을 때만 숫자를 낸다.</p>
+      </div>
+      <div class="guard">
+        <h4>Slack이 죽어도 승인은 된다</h4>
+        <p>Slack 메시지는 표시일 뿐이고 진실은 DB에 있다. 채팅이 실패해도 콘솔에서 그대로 승인할 수 있다.</p>
+      </div>
+      <div class="guard">
+        <h4>이중 처리가 없다</h4>
+        <p>콘솔과 Slack에서 동시에 눌러도, 여러 서버가 동시에 받아도 최초 1건만 확정된다. 나머지는 "이미 처리됨"으로 응답한다.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="spine">
+    <p>Phase 1 적용 범위는 AWS·GCP의 서비스 단위 Apply 두 종류다. 화면은 설계 확정본을 옮긴 것으로, 실제 구현 시 세부 문구는 달라질 수 있다.</p>
+    <p class="src" style="margin-top:10px">근거 문서 — docs/adr/terraform-apply-approval-gate.md (ADR-016 · 021 · 022의 후속)</p>
+  </div>
+</footer>
+</body>
+</html>
