@@ -30,7 +30,8 @@ import org.springframework.transaction.annotation.Transactional;
  * (5) claim을 해제하고 next_due_at을 전진시킨다. CAS나 {@code status=:expected} 가드는 없다 —
  * {@code FOR UPDATE}에 검증된 단일 쓰기자가 더해지므로 필요 없다(Decision 4/6). 적용할 outcome이 없는
  * 사이클(취소만 관찰했거나 잔여 비종료 task가 없는 경우)은 {@link #writeBack} 대신 {@link #convergeAndRelease}로
- * 들어와 (4)의 outcome 적용 없이 같은 순서를 밟는다.
+ * 들어와 (4)의 outcome 적용 없이 같은 순서를 밟는다. (4)와 (5) 사이에는 승인 대기 반영이 끼어든다 —
+ * 현재 task가 사람의 결정을 기다리기 시작했으면 파이프라인도 대기 상태로 내린다({@link #awaitApproval}).
  *
  * <p>현재 태스크가 DONE이 되면 같은 write-back 트랜잭션 안에서 다음 BLOCKED 후속 태스크를 READY로 승격한다(Decision 4 §152).
  * 별도 claim 사이클을 거치지 않으니 트랜잭션 중간에 불변식이 깨지는 상태가 남지 않는다.
@@ -88,10 +89,11 @@ public class StepReporter {
         });
     }
 
-    /** 스텝 마무리 — 수렴 → BLOCKED 후속 승격 → claim 해제·next_due_at 전진. */
+    /** 스텝 마무리 — 수렴 → BLOCKED 후속 승격 → 승인 대기 반영 → claim 해제·next_due_at 전진. */
     private void finishStep(Pipeline pipeline, List<Task> chain) {
         converge(pipeline, chain);
         promoteBlockedSuccessor(pipeline, chain);
+        awaitApproval(pipeline, chain);
         releaseClaim(pipeline, chain);
     }
 
@@ -161,10 +163,32 @@ public class StepReporter {
         });
     }
 
+    /**
+     * 현재 task가 승인을 기다리기 시작했으면 파이프라인도 대기 상태로 내린다(승인 게이트 ADR §결정 2).
+     * 파이프라인 행의 상태는 write-back이 소유하므로, task 전이를 맡는 상태 머신이 대신 쓸 수 없다.
+     *
+     * 대기 진입은 claim이 풀리는 쪽이지 잡히는 쪽이 아니라는 점이 중요하다. 잡을 때는 상태가 무엇이든
+     * RUNNING으로 바뀌므로 재개는 저절로 되지만, 진입은 여기서 명시적으로 내려 주지 않으면 파이프라인이
+     * RUNNING인 채 남아 "대기 중인데 실행 중으로 보이는" 상태가 된다.
+     */
+    private void awaitApproval(Pipeline pipeline, List<Task> chain) {
+        if (pipeline.getStatus() != PipelineStatus.RUNNING) return;
+        if (currentTask(chain).filter(task -> task.getStatus() == TaskStatus.AWAIT_APPROVAL).isEmpty()) return;
+        pipeline.setStatus(PipelineStatus.AWAIT_APPROVAL);
+        pipeline.setLastActivityAt(clock.instant());
+    }
+
+    /**
+     * claim을 놓고 다음 처리 시각을 현재 task가 정한 시각으로 옮긴다. 승인 대기도 실행 중과 같은 규칙을
+     * 따르는데, 이때 현재 task가 들고 있는 시각이 승인 만료 시각이라 파이프라인은 만료 때까지 잠든다 —
+     * 이 한 줄이 "승인을 기다리는 동안 자원을 쥐지 않는다"를 실제로 만든다. 여기서 빠뜨리면 앞 단계가
+     * 남긴 과거 시각이 그대로 남아 매 sweep마다 헛되이 다시 잡힌다.
+     */
     private void releaseClaim(Pipeline pipeline, List<Task> chain) {
         pipeline.setClaimedBy(null);
         pipeline.setClaimedUntil(null);
-        if (pipeline.getStatus() == PipelineStatus.RUNNING) {
+        if (pipeline.getStatus() == PipelineStatus.RUNNING
+                || pipeline.getStatus() == PipelineStatus.AWAIT_APPROVAL) {
             // nextCheckAt이 null이면 map 결과가 empty가 되므로, orElseGet이 now로 메운다.
             pipeline.setNextDueAt(currentTask(chain).map(Task::getNextCheckAt).orElseGet(clock::instant));
         }

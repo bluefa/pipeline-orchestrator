@@ -18,8 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <ul>
  *   <li><b>Case A</b>(claim이 없거나 lease가 만료됨): {@code cancelIfIdle} UPDATE 한 방으로 CANCELLED를 쓰고 claim을
- *       지운다(가드 {@code status IN ('RUNNING','PENDING') AND (claimed_by IS NULL OR claimed_until<now)}). PENDING(시작
- *       지연 대기)은 claim이 없어 언제나 이 경로로 즉시 취소된다(LIN-30). 한 행이라도 갱신되면
+ *       지운다(가드 {@code status IN ('RUNNING','PENDING','AWAIT_APPROVAL') AND (claimed_by IS NULL OR claimed_until<now)}).
+ *       PENDING(시작 지연 대기)과 AWAIT_APPROVAL(승인 대기)은 claim이 없어 언제나 이 경로로 즉시 취소된다. 한 행이라도 갱신되면
  *       비종료 task를 모두 CANCELLED로 수렴시킨다. lease가 만료된 straggler는 token이 지워져 write-back 트랜잭션의 소유권 가드에서 no-op이 된다.</li>
  *   <li><b>Case B</b>(live lease, {@code cancelIfIdle}가 0행): {@code requestCancel}이 {@code cancel_requested=true,
  *       next_due_at=now}만 쓰고 status는 건드리지 않는다. claim을 쥔 워커가 안전지점에서 이 플래그를 읽어 직접
@@ -27,9 +27,14 @@ import org.springframework.transaction.annotation.Transactional;
  * </ul>
  *
  * <p>claim과 Case A가 같은 pipeline 행을 두고 경합하면 먼저 커밋한 쪽이 이긴다. 워커가 claim을 마치면 PENDING은 이미
- * RUNNING+live lease로 전이돼 Case A는 0행이 되고 Case B로 폴백한다. Case A는 {@code IN ('RUNNING','PENDING')},
+ * RUNNING+live lease로 전이돼 Case A는 0행이 되고 Case B로 폴백한다. Case A는 {@code IN ('RUNNING','PENDING','AWAIT_APPROVAL')},
  * Case B는 {@code 'RUNNING'} 가드로 각각 종료된 행을 배제하므로(멱등 재취소도 0행), 어느 쪽도 워커의 write-back
  * 트랜잭션과 live token을 공유하지 않는다. 따라서 terminal resurrection이 불가능하고, 별도 {@code status} 가드가 필요 없다.
+ *
+ * Case B를 AWAIT_APPROVAL로 넓히지 않은 것은 빠뜨린 것이 아니라 넓힐 자리가 없기 때문이다. 승인 대기 중인
+ * pipeline은 claim을 쥐지 않고(대기 진입과 claim 해제가 같은 트랜잭션에서 커밋된다), 다시 잡히는 순간 claim
+ * UPDATE가 같은 문장에서 status를 RUNNING으로 바꾼다. 즉 AWAIT_APPROVAL과 live lease는 공존할 수 없어 언제나
+ * Case A가 이긴다.
  */
 @Service
 @RequiredArgsConstructor

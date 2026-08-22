@@ -15,7 +15,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * claim 트랜잭션 — 외부 호출(run 단계) 직전에 처리할 pipeline 하나를 잡는다. admission soft-cap(Decision 7)을 통과하면
  * due pipeline 한 행을 원자적으로 claim하면서 fencing token과 lease를 찍는다(Decision 2). 이때 status도 RUNNING으로
- * 함께 써 PENDING(시작 지연 대기)을 RUNNING으로 전이시킨다(LIN-30). lease와 같은 UPDATE에 실려 원자적이라, claim
+ * 함께 써 PENDING(시작 지연 대기)과 AWAIT_APPROVAL(승인 대기)을 RUNNING으로 전이시킨다(LIN-30 / 승인 게이트
+ * ADR §결정 2 — 대기에서 돌아오는 방향은 이 무조건 flip이 그대로 흡수한다). lease와 같은 UPDATE에 실려 원자적이라, claim
  * holder가 유일한 status writer라는 불변식이 유지되고 "live claim인데 아직 PENDING"인 창(취소 유실 위험)이 생기지
  * 않는다. 이미 RUNNING이면 값 no-op이다. next_due_at은 여기서 건드리지 않는다 — 전진은 report 트랜잭션(tx2)의 몫이다.
  *
@@ -44,7 +45,7 @@ public class PipelineClaimer {
         return pipelineRepository.findNextClaimableDuePipeline(now)
                 .map(pipeline -> {
                     String token = UUID.randomUUID().toString();
-                    pipeline.setStatus(PipelineStatus.RUNNING);   // LIN-30: PENDING→RUNNING을 lease와 같은 tx1 UPDATE에 실어 원자 전이(이미 RUNNING이면 no-op)
+                    pipeline.setStatus(PipelineStatus.RUNNING);   // LIN-30: PENDING/AWAIT_APPROVAL→RUNNING을 lease와 같은 tx1 UPDATE에 실어 원자 전이(이미 RUNNING이면 no-op)
                     pipeline.setClaimedBy(token);
                     pipeline.setClaimedUntil(now.plus(executionSettings.leaseDuration()));
                     return new Claim(pipeline.getId(), token);

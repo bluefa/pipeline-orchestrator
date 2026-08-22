@@ -32,9 +32,10 @@ import org.springframework.data.repository.query.Param;
  * 즉시 종료하고 claim을 지운다. {@code requestCancel}은 Case B로, 플래그만 세우고 워커를 깨운다.
  * {@code countByClaimedUntilAfter}는 admission soft-cap 카운트에, {@code findNearestClaimableDueAt}은
  * idle-sleep 상한 계산에 쓴다. claim 술어와 {@code cancelIfIdle}(Case A), {@code findNearestClaimableDueAt}은
- * RUNNING과 PENDING(시작 지연 대기)을 함께 본다 — PENDING은 지연 경과 후 claim되고 그 트랜잭션에서 RUNNING으로
- * 전이한다(LIN-30). {@code requestCancel}(Case B)은 live-lease 전용이라 RUNNING만 본다(PENDING은 미claim이라 항상
- * Case A로 취소됨).
+ * RUNNING·PENDING(시작 지연 대기)·AWAIT_APPROVAL(승인 대기)을 함께 본다 — 뒤의 둘은 미래 시각까지 잠자다
+ * 그 시각이 오면 claim되고, 그 트랜잭션에서 RUNNING으로 전이한다(LIN-30 / 승인 게이트 ADR §결정 2).
+ * {@code requestCancel}(Case B)은 live-lease 전용이라 RUNNING만 본다(나머지 둘은 미claim이라 항상 Case A로
+ * 취소됨).
  */
 public interface PipelineRepository extends JpaRepository<Pipeline, Long> {
 
@@ -50,7 +51,8 @@ public interface PipelineRepository extends JpaRepository<Pipeline, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
     @Query("select p from Pipeline p where p.status in "
-            + "(com.bff.pipeline.enums.PipelineStatus.RUNNING, com.bff.pipeline.enums.PipelineStatus.PENDING) "
+            + "(com.bff.pipeline.enums.PipelineStatus.RUNNING, com.bff.pipeline.enums.PipelineStatus.PENDING, "
+            + "com.bff.pipeline.enums.PipelineStatus.AWAIT_APPROVAL) "
             + "and p.nextDueAt <= :now and (p.claimedUntil is null or p.claimedUntil < :now) "
             + "order by p.nextDueAt")
     List<Pipeline> lockClaimableDuePipelines(@Param("now") Instant now, Limit limit);
@@ -63,7 +65,8 @@ public interface PipelineRepository extends JpaRepository<Pipeline, Long> {
     @Query("update Pipeline p set p.status = com.bff.pipeline.enums.PipelineStatus.CANCELLED, "
             + "p.activeTarget = null, p.claimedBy = null, p.claimedUntil = null, p.lastActivityAt = :now "
             + "where p.id = :id and p.status in "
-            + "(com.bff.pipeline.enums.PipelineStatus.RUNNING, com.bff.pipeline.enums.PipelineStatus.PENDING) "
+            + "(com.bff.pipeline.enums.PipelineStatus.RUNNING, com.bff.pipeline.enums.PipelineStatus.PENDING, "
+            + "com.bff.pipeline.enums.PipelineStatus.AWAIT_APPROVAL) "
             + "and (p.claimedBy is null or p.claimedUntil < :now)")
     int cancelIfIdle(@Param("id") Long id, @Param("now") Instant now);
 
@@ -75,7 +78,8 @@ public interface PipelineRepository extends JpaRepository<Pipeline, Long> {
     int countByClaimedUntilAfter(Instant now);
 
     @Query("select min(p.nextDueAt) from Pipeline p where p.status in "
-            + "(com.bff.pipeline.enums.PipelineStatus.RUNNING, com.bff.pipeline.enums.PipelineStatus.PENDING) "
+            + "(com.bff.pipeline.enums.PipelineStatus.RUNNING, com.bff.pipeline.enums.PipelineStatus.PENDING, "
+            + "com.bff.pipeline.enums.PipelineStatus.AWAIT_APPROVAL) "
             + "and (p.claimedUntil is null or p.claimedUntil < :now)")
     Optional<Instant> findNearestClaimableDueAt(@Param("now") Instant now);
 

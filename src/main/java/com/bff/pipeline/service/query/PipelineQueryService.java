@@ -92,6 +92,7 @@ public class PipelineQueryService {
         return LivePipelineStatistics.builder()
                 .runningPipelineCount(pipelines.countByStatus(PipelineStatus.RUNNING))
                 .pendingPipelineCount(pipelines.countByStatus(PipelineStatus.PENDING))
+                .awaitApprovalPipelineCount(pipelines.countByStatus(PipelineStatus.AWAIT_APPROVAL))
                 .inProgressTerraformTaskCount(tasks.countByConsumesTerraformSlotIsTrueAndStatus(TaskStatus.IN_PROGRESS))
                 .terraformSlotCap(executionSettings.terraformSlotCap())
                 .runningPipelineCap(executionSettings.runningPipelineCap())
@@ -107,6 +108,7 @@ public class PipelineQueryService {
         }
         long pending = byStatus.getOrDefault(PipelineStatus.PENDING, 0L);
         long running = byStatus.getOrDefault(PipelineStatus.RUNNING, 0L);
+        long awaitingApproval = byStatus.getOrDefault(PipelineStatus.AWAIT_APPROVAL, 0L);
         long failed = byStatus.getOrDefault(PipelineStatus.FAILED, 0L);
         long done = byStatus.getOrDefault(PipelineStatus.DONE, 0L);
         long cancelled = byStatus.getOrDefault(PipelineStatus.CANCELLED, 0L);
@@ -115,10 +117,11 @@ public class PipelineQueryService {
                 .since(since)
                 .pendingCount(pending)
                 .runningCount(running)
+                .awaitApprovalCount(awaitingApproval)
                 .failedCount(failed)
                 .doneCount(done)
                 .cancelledCount(cancelled)
-                .totalCount(pending + running + failed + done + cancelled)
+                .totalCount(pending + running + awaitingApproval + failed + done + cancelled)
                 .build();
     }
 
@@ -352,9 +355,12 @@ public class PipelineQueryService {
                                 TaskProgressCount::new)));
     }
 
+    /** 현재 task — 승인 대기도 "지금 이 실행이 서 있는 자리"라 READY/IN_PROGRESS와 같이 다룬다. */
     private static Optional<Task> currentTask(List<Task> chain) {
         return chain.stream()   // 체인은 sequence 오름차순이라 첫 매칭이 최저 순번이다
-                .filter(task -> task.getStatus() == TaskStatus.READY || task.getStatus() == TaskStatus.IN_PROGRESS)
+                .filter(task -> task.getStatus() == TaskStatus.READY
+                        || task.getStatus() == TaskStatus.IN_PROGRESS
+                        || task.getStatus() == TaskStatus.AWAIT_APPROVAL)
                 .findFirst();
     }
 
