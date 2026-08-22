@@ -55,6 +55,12 @@ public class Pipeline {
 
     public static final String ACTIVE_TARGET_CONSTRAINT = "uq_pipeline_active_target";
 
+    /** 요청자 컬럼 길이. 넘는 값은 자르지 않고 요청 자체를 거절한다(사람이 쓴 값을 말없이 훼손하지 않는다). */
+    public static final int REQUESTED_BY_LENGTH = 64;
+
+    /** 요청 사유 컬럼 길이. custom task 설명(100자)과 같은 축에서 잡은 값이다. */
+    public static final int REQUEST_NOTE_LENGTH = 200;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -97,6 +103,22 @@ public class Pipeline {
 
     @Column(name = "active_target")
     private String activeTarget;
+
+    // ── 요청 맥락: 누가 왜 이 실행을 요청했는가. 생성 시 한 번 채우고 바꾸지 않는다. ──
+
+    /**
+     * 이 실행을 요청한 사람. 검증된 계정에서 BFF가 채워 보내며 오케스트레이터는 기록만 한다. 실행 기록만으로는
+     * 무엇이 돌았는지까지만 알 수 있어, 시킨 사람을 행에 함께 남긴다.
+     */
+    @Column(name = "requested_by", updatable = false, length = REQUESTED_BY_LENGTH)
+    private String requestedBy;
+
+    /**
+     * 요청자가 이 실행에 남기는 사유. 자유 텍스트라 길이를 경계에서 검증하고(초과는 거절),
+     * 저장 후에는 바꾸지 않는다.
+     */
+    @Column(name = "request_note", updatable = false, length = REQUEST_NOTE_LENGTH)
+    private String requestNote;
 
     /**
      * 이 실행이 재시작한 원본 파이프라인 id. 재시작이 아니면 null. 표시용 계보 메타데이터라 엔진(claim·전이·

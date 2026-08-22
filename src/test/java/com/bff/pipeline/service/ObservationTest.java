@@ -30,6 +30,7 @@ import com.bff.pipeline.service.task.TaskTypeRegistry;
 import com.bff.pipeline.service.task.terraform.TerraformJobStateRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformResultRecorder;
 import com.bff.pipeline.service.task.terraform.TerraformTask;
+import com.bff.pipeline.model.RequestContext;
 import java.time.Duration;
 import java.time.Instant;
 import org.junit.jupiter.api.AfterEach;
@@ -89,7 +90,7 @@ class ObservationTest {
 
     @Test
     void aHappyTerraformTaskRecordsOneDoneAttemptWithItsResponse() {
-        Pipeline pipeline = creator.create("obs-happy", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("obs-happy", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
         pipelineWorker.pollOnce();
         pipelineWorker.pollOnce();
@@ -105,7 +106,7 @@ class ObservationTest {
 
     @Test
     void aRetryingTaskRecordsOneAttemptRowPerAttemptWithIncreasingAttemptNo() {
-        Pipeline pipeline = creator.create("obs-retry", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("obs-retry", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onPoll(() -> TerraformPoll.failure("FAILED", null));
 
         runUntilTerminal(pipeline);
@@ -120,7 +121,7 @@ class ObservationTest {
 
     @Test
     void aTerraformPolledRunningUpdatesOneCheckRowInPlace() {
-        Pipeline pipeline = creator.create("obs-tf-running", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("obs-tf-running", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onPoll(() -> TerraformPoll.running("RUNNING"));
         pipelineWorker.pollOnce();                  // dispatch terraform → IN_PROGRESS (attempt 1)
         for (int i = 0; i < 3; i++) {
@@ -183,7 +184,7 @@ class ObservationTest {
     }
 
     private Pipeline createInstallAtConditionInProgress() {
-        Pipeline pipeline = creator.create("obs-cond", PipelineType.INSTALL);
+        Pipeline pipeline = creator.create("obs-cond", PipelineType.INSTALL, RequestContext.none());
         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
         pipelineWorker.pollOnce();   // dispatch plan terraform
         pipelineWorker.pollOnce();   // poll plan → DONE + promote apply READY

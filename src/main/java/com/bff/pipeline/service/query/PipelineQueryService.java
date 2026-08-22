@@ -156,6 +156,8 @@ public class PipelineQueryService {
                 .targetSourceId(pipeline.getTarget())
                 .cloudProvider(pipeline.getCloudProvider())
                 .recipeDefinition(pipeline.getRecipeDefinition())
+                .requestedBy(pipeline.getRequestedBy())
+                .requestNote(pipeline.getRequestNote())
                 .status(pipeline.getStatus())
                 .createdAt(pipeline.getCreatedAt())
                 .lastActivityAt(pipeline.getLastActivityAt())
