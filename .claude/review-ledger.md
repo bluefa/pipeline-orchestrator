@@ -350,3 +350,59 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
   label/binding/success-states), every contract that parses the name — and DO scan the schema
   section for stale wording after changing a validation contract in the body (truncate vs reject
   drifted between sections).**
+
+- R17 (승인 게이트 PR 1 — 백엔드 코어 구현, 79 files). 자체 리뷰 + codex(gpt-5.6-sol xhigh) 1라운드
+  병행. 자체 리뷰가 커밋 전에 잡은 둘: (a) `@Modifying(clearAutomatically = true)`를 CAS 질의에 달면
+  write-back 트랜잭션의 영속 컨텍스트가 비워져 이미 잡아 둔 `Pipeline`이 분리되고, 그 뒤의
+  `terminalize(FAILED/CANCELLED)`가 조용히 유실된다(만료·반려 e2e 테스트가 "task는 FAILED인데 pipeline은
+  RUNNING"으로 드러냄); (b) "도달 불가"로 주석 달아 둔 REJECTED 분기가 만료 시각이 이미 지난 요청으로
+  대기를 이어 가게 해, 매 sweep마다 재claim되는 끝나지 않는 맴돎이 됐다 — 도달 불가면 대기가 아니라
+  예외여야 한다. codex 1라운드: P0 0 / P1 2 / P2 1, 셋 다 수용해 수정. P1 둘은 같은 뿌리다 —
+  **fail-closed 계약을 문서에만 쓰고 타입·근거로 강제하지 않았다**: (a) "던진 job이 전부 몇 개였나"의 근거를
+  저장 실패를 삼키는 관찰 테이블(`terraform_job_state`)에서 가져와, 어떤 job의 관찰과 로그가 함께 빠지면
+  그 job의 존재 자체가 사라져 반쪽짜리 요약이 `verified=true`로 나간다 — 근거를 상태 전이와 같은
+  트랜잭션에 저장되는 dispatch 응답으로 옮김; (b) 요약 수치가 원시 타입이라 "검증 불가" 요약도
+  `create_count: 0`을 실어, 모른다는 사실이 "0건 생성"이라는 주장으로 뒤바뀐다 — nullable + NON_NULL로
+  키 자체를 뺌. P2는 `channel`만 `@Enumerated(STRING)`이라 같은 엔티티 안에서 저장소 규칙(네이티브 enum
+  회피용 변환기)을 어긴 것.
+  2라운드: 1라운드 수정 셋 모두 검증 통과, 새로 P1 1 / P2 3. P1은 또 같은 뿌리다 — 중복 결정을 409로
+  거절했는데, ADR §결정 4는 "기존 결정을 반환한다"로 정해 뒀다. 같은 결정이 두 번 도착하는 것은 예외가
+  아니라 정상(두 번 누르기·응답 유실 재전송·Slack 중복 배달)이라, 이미 커밋된 승인에 오류를 돌려주면
+  호출자가 성공한 결정을 실패로 처리한다. 기한 경과만 예외로 남김(돌려줄 결정이 없고 재호출도 같은 결과).
+  부수 효과로 안전성이 하나 더 생긴다: 진 쪽이 `wakeUp`을 타지 않으므로 **진 반려가 승인된 실행을 취소하지
+  못한다**(회귀 테스트로 고정). P2 셋은 전부 이 원장에 이미 승격돼 있던 규칙 위반이었다 —
+  `optional-idiom` 2곳, `no-html-javadoc` 65곳(이번 diff가 추가한 것), `list-get-first` 1곳.
+  3라운드는 codex 사용량 한도로 못 돌려 자체 검증으로 대체(호출자 계약·삭제된 error code 잔여 참조·
+  중복 경로 wakeUp 생략의 안전성). **DO 관찰 테이블(저장 실패를 삼키는 best-effort 계약)을 "전부인지"의
+  근거로 삼지 말 것 — 완전성 판정의 근거는 상태 전이와 같은 트랜잭션에 커밋되는 값이어야 한다. "확신이
+  없으면 수치를 내보내지 않는다" 같은 계약은 원시 타입으로는 표현되지 않는다: 0은 침묵이 아니라 주장이다.
+  그리고 at-least-once 경로의 "중복 요청"은 오류가 아니라 정상 입력이다 — 이미 커밋된 결과를 돌려주는 것이
+  멱등이고, 409는 호출자에게 롤백을 지시하는 것과 같다. 이 PR의 P1 넷 중 셋이 "ADR에는 쓰여 있는데 코드가
+  강제하지 않는" 종류였다: 구현 후 ADR의 계약 문장을 한 줄씩 코드에 대조하는 패스를 따로 둘 것.**
+
+- R18 (승인 게이트 PR 1 — Opus 리뷰 2인, 전면 + 반복결함). codex 한도 소진으로 3라운드를 못 돌려 Opus
+  리뷰어 둘을 백지 상태(앞 라운드 결과 비공개)로 병렬 투입. **서로 다른 P1을 하나씩 찾았다** — 같은 diff를
+  한 관점으로만 보면 둘 중 하나는 남았다는 뜻이다.
+  P1 (a) **멱등 수정이 만든 회귀**: 2라운드에서 "중복 결정은 기존 결정을 반환"으로 고치면서 판정을
+  `isDecided()`(= `!= REQUESTED`)로 썼는데, 이 술어가 **사람의 결정(APPROVED/REJECTED)과 시스템의 정리
+  (EXPIRED/CANCELLED)를 뭉갠다**. 결과: 기한 지난 승인 클릭이 워커의 만료 기록 **전**이면 409, **후**면
+  승인자 null인 200 — 같은 사용자 행동이 sweep 타이밍으로 성공/실패를 오간다. 취소된 실행도 승인된 것처럼
+  보인다. 수정: 행위자가 담긴 두 상태만 반환하고 나머지는 각자의 409로, 뭉뚱그린 술어 대신 exhaustive
+  switch(값이 늘면 컴파일러가 "이건 사람의 결정인가"를 다시 묻게).
+  P1 (b) **표시용 읽기가 엔진 메모리를 위협**: 요약 추출이 시도의 모든 terraform_result를 본문째 읽었다
+  (본문 상한 4백만 자). 게이트 진입은 트랜잭션 밖 워커 스레드라 여러 파이프라인이 같은 sweep에 진입하면
+  `워커수 × job수 × 8MB`가 동시 상주하고, 터지면 claim 미반납 → lease 만료 → 재진입 → 재폭발. R9가 기록한
+  "본문 컬럼은 다중 행 조회에서 제외" 불변식의 재발이기도 하다. 수정: job별 단건 조회로 읽고 본문을 즉시
+  버린다 — 다중 행 조회 메서드 자체가 사라지고 완전성 검사도 루프의 자연스러운 결과가 됐다.
+  P2 수용: 설정에 따라 달라지던 RecipeCatalog 중복 부팅 검사(종류별로 나눠 세도록), 인접 int 둘의 위치 인자
+  (@Builder), plan_summary 바이트 상한을 엔티티 상수로, plan 판별의 표시 라벨 문자열 비교 → `isTerraformPlan()`,
+  이모지 한가운데를 자르던 `clampApprover`(짝 잃은 반쪽 → 그 승인자는 매번 트랜잭션 롤백), dispatch 응답
+  파서 이원화 → `utils/TerraformDispatchResponse`, 죽은 `TerraformPlan.count`, 코드와 어긋난 javadoc 2건,
+  그리고 **live 대시보드에 승인 대기 미노출**(RUNNING도 PENDING도 아니고 claim도 없어 최대 24시간 멈춘
+  실행이 현황에서 통째로 사라졌다). 반려: `RequestContext.of`/`approve(...)`의 인접 String 인자 빌더화 —
+  호출부가 `of(request.requestedBy(), request.requestNote())` 꼴이라 인자 식이 이름을 말하고, 빌더는 `of()`의
+  길이 검증을 우회할 길을 연다. `TaskStatus.isCurrent()` 추출도 반려 — 리뷰어가 같다고 본 세 술어 중 조회
+  쪽은 BLOCKED를 일부러 빼고 있어 합치면 틀린다.
+  **DO 리뷰어를 하나만 쓰지 말 것 — 이 라운드에서 둘이 겹치는 지적 없이 각자 P1을 하나씩 냈다. 그리고
+  기존 술어를 재사용해 새 분기를 만들 때는 그 술어의 정의가 아니라 이름을 믿고 있지 않은지 확인할 것:
+  `isDecided()`는 "결정됐다"고 읽히지만 실제로는 "REQUESTED가 아니다"였고, 그 간극이 P1이 됐다.**

@@ -18,6 +18,7 @@ import lombok.Builder;
  * definition은 task_definition 이름을 카탈로그에서 해석한 실행 계약 뷰이며, 미해석(삭제/rename된 옛 이름)이면 null이다.
  * description은 custom recipe 실행에서 운영자가 이 task에 붙인 설명이고(LIN-18), 카탈로그 recipe task면 null이다.
  * terraformAction은 operation에서 파생한 표시용 액션 라벨(PLAN/APPLY/DESTROY)이고 terraform이 아닌 task면 null이다.
+ * approval은 승인 게이트 task의 승인 요청 블록이며(상태·기한·승인자·plan 요약), 게이트가 아닌 task면 null이다.
  * 와이어 필드는 snake_case로 직렬화한다. 인접 동형 인자가 많아 위치 기반 생성 대신 {@code @Builder}로 만든다.
  */
 @Builder
@@ -43,5 +44,6 @@ public record TaskDetail(
         @JsonProperty("effective_max_fail_count") int effectiveMaxFailCount,
         @JsonProperty("attempts") List<TaskAttemptView> attempts,
         @JsonProperty("description") String description,
-        @JsonProperty("origin_task_id") Long originTaskId) {
+        @JsonProperty("origin_task_id") Long originTaskId,
+        @JsonProperty("approval") TaskApprovalView approval) {
 }

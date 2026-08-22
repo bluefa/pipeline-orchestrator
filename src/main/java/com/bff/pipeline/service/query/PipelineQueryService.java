@@ -7,6 +7,7 @@ import com.bff.pipeline.dto.pipeline.PipelineDetail;
 import com.bff.pipeline.dto.pipeline.PipelineStatistics;
 import com.bff.pipeline.dto.pipeline.PipelineSummary;
 import com.bff.pipeline.dto.pipeline.RestartOriginView;
+import com.bff.pipeline.dto.pipeline.TaskApprovalView;
 import com.bff.pipeline.dto.pipeline.TaskAttemptView;
 import com.bff.pipeline.dto.pipeline.TaskDefinitionView;
 import com.bff.pipeline.dto.pipeline.TaskDetail;
@@ -17,6 +18,7 @@ import com.bff.pipeline.dto.pipeline.TerraformResultDetail;
 import com.bff.pipeline.dto.pipeline.TerraformResultSummary;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
+import com.bff.pipeline.entity.TaskApproval;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.StatisticsPeriod;
@@ -29,6 +31,7 @@ import com.bff.pipeline.exception.TerraformResultNotFoundException;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.PipelineStatusCount;
 import com.bff.pipeline.repository.PipelineTaskStatusCount;
+import com.bff.pipeline.repository.TaskApprovalRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
 import com.bff.pipeline.repository.TaskRepository;
@@ -81,6 +84,7 @@ public class PipelineQueryService {
     private final PipelineRepository pipelines;
     private final TaskRepository tasks;
     private final TaskAttemptRepository attempts;
+    private final TaskApprovalRepository approvals;
     private final TaskCheckRepository checks;
     private final TerraformResultRepository terraformResults;
     private final TerraformJobStateRepository terraformJobStates;
@@ -176,12 +180,29 @@ public class PipelineQueryService {
                         .orElse(null))
                 .doneTaskCount(countDone(chain))
                 .totalTaskCount(chain.size())
-                .tasks(chain.stream().map(TaskSummary::from).toList())
+                .tasks(withApprovals(chain))
                 .originPipelineId(pipeline.getOriginPipelineId())
                 .origin(originView(pipeline, chain))
                 .restartedByPipelineId(pipelines.findFirstByOriginPipelineIdOrderByIdDesc(pipeline.getId())
                         .map(Pipeline::getId).orElse(null))
                 .build();
+    }
+
+    /**
+     * task 목록에 승인 블록을 붙인다. 승인 행은 게이트 task에만 있으므로 대개 한 건 이하지만, 행마다 다시
+     * 읽지 않도록 체인 전체를 한 번의 질의로 가져와 붙인다.
+     */
+    private List<TaskSummary> withApprovals(List<Task> chain) {
+        Map<Long, TaskApproval> byTaskId = approvals
+                .findByTaskIdIn(chain.stream().map(Task::getId).toList()).stream()
+                .collect(Collectors.toMap(TaskApproval::getTaskId, Function.identity()));
+        return chain.stream()
+                .map(task -> TaskSummary.from(task, approvalView(byTaskId.get(task.getId()))))
+                .toList();
+    }
+
+    private static TaskApprovalView approvalView(TaskApproval approval) {
+        return approval == null ? null : TaskApprovalView.from(approval);
     }
 
     /**
@@ -256,6 +277,7 @@ public class PipelineQueryService {
                 .attempts(attemptViews(taskId))
                 .description(task.getDescription())
                 .originTaskId(task.getOriginTaskId())
+                .approval(approvals.findByTaskId(taskId).map(TaskApprovalView::from).orElse(null))
                 .build();
     }
 
