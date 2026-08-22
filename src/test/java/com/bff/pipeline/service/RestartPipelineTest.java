@@ -60,7 +60,7 @@ import org.springframework.transaction.annotation.Transactional;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineRestarter.class, PipelineCreator.class, PipelineInserter.class, RecipeCatalog.class,
-        PipelineQueryService.class, TargetSourcePipelineController.class, RestartPipelineTest.Wiring.class})
+        PipelineQueryService.class, TargetSourcePipelineController.class, RestartPipelineTest.Wiring.class, ApprovalTestWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class RestartPipelineTest {
 
@@ -268,6 +268,48 @@ class RestartPipelineTest {
                 .isInstanceOf(PipelineNotLatestException.class);   // 최신 가드가 체인 끝만 허용
     }
 
+    /**
+     * 만료된 승인 게이트에서 재시작하면 지점이 그 앞의 Plan까지 당겨진다(승인 게이트 ADR §결정 3).
+     * 게이트만 다시 돌리면 새 실행에 Plan 단계가 없어 승인자에게 보여줄 결과가 존재하지 않는다 — 근거 없이
+     * 버튼만 보게 되는 셈이라 "승인만 다시 하기"는 허용하지 않는다.
+     */
+    @Test
+    void restartFromAnExpiredGatePullsBackToThePlanStep() {
+        Pipeline origin = seedGatedTerminal("rst-gate");
+
+        RestartPreview preview = restarter.preview("rst-gate", origin.getId(), null);
+
+        assertThat(preview.resumeFromSequence()).isZero();   // 기본 지점은 게이트(1)였지만 Plan(0)까지 당겨진다
+        assertThat(preview.warnings()).anySatisfy(warning -> assertThat(warning).contains("Plan 단계부터"));
+
+        Pipeline restarted = restarter.restart("rst-gate", origin.getId(), null,
+                RequestContext.of("admin@example.com", null));
+
+        assertThat(chainOf(restarted)).extracting(Task::getTaskDefinition).containsExactly(
+                TaskDefinition.AWS_SERVICE_PLAN_V1.name(),
+                TaskDefinition.AWS_SERVICE_APPLY_APPROVAL_V1.name(),
+                TaskDefinition.AWS_SERVICE_APPLY_V1.name());
+        assertThat(restarted.getRequestedBy()).isEqualTo("admin@example.com");
+    }
+
+    /** 호출자가 게이트를 지점으로 콕 집어도 같은 이유로 당긴다 — "게이트만 재시작"이라는 결과는 만들지 않는다. */
+    @Test
+    void anExplicitGateSequenceIsPulledBackToo() {
+        Pipeline origin = seedGatedTerminal("rst-gate-explicit");
+
+        assertThat(restarter.preview("rst-gate-explicit", origin.getId(), 1).resumeFromSequence()).isZero();
+    }
+
+    /** 승인 단계가 있는 체인은 요청자가 필수라, 재시작이 요청 맥락을 비워 두면 원본 승계가 그 자리를 메운다. */
+    @Test
+    void aGatedRestartInheritsTheRequesterFromTheOrigin() {
+        Pipeline origin = seedGatedTerminal("rst-gate-inherit", RequestContext.of("first-requester", null));
+
+        Pipeline restarted = restarter.restart("rst-gate-inherit", origin.getId(), null, RequestContext.none());
+
+        assertThat(restarted.getRequestedBy()).isEqualTo("first-requester");
+    }
+
     /** 재시작 요청이 요청 맥락을 비워 두면 원본 실행에서 승계한다 — 재시작했다고 요청자가 사라지지 않는다. */
     @Test
     void anEmptyRequestContextIsInheritedFromTheOrigin() {
@@ -294,6 +336,23 @@ class RestartPipelineTest {
 
         assertThat(restarted.getRequestedBy()).isEqualTo("second-requester");
         assertThat(restarted.getRequestNote()).isNull();   // 실어 보낸 맥락이 통째로 이긴다(필드별 병합이 아니다)
+    }
+
+    /** 승인 만료로 끝난 실행 시딩 — Plan은 성공했고 게이트에서 실패했다. */
+    private Pipeline seedGatedTerminal(String target) {
+        return seedGatedTerminal(target, RequestContext.none());
+    }
+
+    private Pipeline seedGatedTerminal(String target, RequestContext request) {
+        List<PlannedStep> steps = List.of(
+                new PlannedStep(TaskDefinition.AWS_SERVICE_PLAN_V1, null),
+                new PlannedStep(TaskDefinition.AWS_SERVICE_APPLY_APPROVAL_V1, null),
+                new PlannedStep(TaskDefinition.AWS_SERVICE_APPLY_V1, null));
+        Pipeline pipeline = inserter.insert(new PipelinePlan(target, PipelineType.INSTALL, CloudProvider.AWS,
+                "AWS_INSTALL_WITH_ADMIN_CONSENT_V1", request, null, steps));
+        terminalize(pipeline, PipelineStatus.FAILED,
+                TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED);
+        return pipeline;
     }
 
     /** 원본 시딩: INSTALL 분류의 4-task 실행을 삽입한 뒤 주어진 상태로 종료시킨다. */

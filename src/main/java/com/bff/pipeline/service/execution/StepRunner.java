@@ -78,10 +78,10 @@ public class StepRunner {
             case BLOCKED -> StepOutcome.unblock();
             case READY -> runExternalCall(task, true, () -> StepOutcome.dispatched(type.execute(target, task)));
             case IN_PROGRESS -> runExternalCall(task, false, () -> mapProgress(checkProgress(target, task, attempt, type)));
-            // 이 상태로 태스크를 옮기는 코드는 아직 없다(승인 게이트가 들어오면서 여기가 채워진다).
-            // 그때까지 도달하면 데이터가 손상된 것이므로 조용히 넘기지 않고 멈춘다.
-            case AWAIT_APPROVAL ->
-                    throw new IllegalStateException("nothing produces AWAIT_APPROVAL yet: task " + task.getId());
+            // 승인 대기 중인 게이트는 폴링하지 않는다 — 무엇으로 전이할지는 승인 행을 잠근 write-back
+            // 트랜잭션이 정한다(승인 게이트 ADR §결정 2). 여기서 읽으면 트랜잭션 밖이라 값이 이미 낡았을
+            // 수 있고, 그 값으로 판정하면 승인과 만료의 경합이 원자적으로 갈리지 않는다.
+            case AWAIT_APPROVAL -> StepOutcome.approvalPoll();
             case DONE, FAILED, CANCELLED ->
                     throw new IllegalStateException("runStep on a terminal task " + task.getId());
         };

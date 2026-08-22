@@ -15,12 +15,16 @@ import com.bff.pipeline.service.task.TaskTypeRegistry;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-/** StepRunner가 외부 호출 전에 행을 진실원(task_definition)으로 검증하는 부분을 다룬다. */
+/**
+ * StepRunner가 외부 호출 전에 행을 진실원(task_definition)으로 검증하는 부분을 다룬다. 승인 대기 분기도
+ * 여기서 함께 고정한다 — 그 분기의 요점이 "task type을 아예 부르지 않는다"이기 때문이다.
+ */
 class StepRunnerTest {
 
     private final StepRunner stepRunner = new StepRunner(new TaskTypeRegistry(List.of(
             fake(TaskOperation.Mechanism.TERRAFORM_JOB),
-            fake(TaskOperation.Mechanism.CONDITION_CHECK))));
+            fake(TaskOperation.Mechanism.CONDITION_CHECK),
+            fake(TaskOperation.Mechanism.APPROVAL))));
 
     @Test
     void dispatchesWhenTheRowAgreesWithItsDefinition() {
@@ -59,6 +63,19 @@ class StepRunnerTest {
         task.setConsumesTerraformSlot(false);                       // 캐시가 어긋남 → slot 게이트 우회 위험
 
         assertThat(stepRunner.runStep("t", task, null)).isInstanceOf(StepOutcome.UnknownTask.class);
+    }
+
+    /**
+     * 승인 대기 중인 게이트는 폴링하지 않는다. 무엇으로 전이할지는 승인 행을 잠근 마무리 트랜잭션이 정해야
+     * 하므로, run 단계는 판정을 미루는 결과만 돌려주고 task type은 건드리지 않는다 — 여기 있는 가짜
+     * task type은 check가 불리면 성공을 돌려주므로, 결과가 ApprovalPoll이라는 것이 곧 안 불렸다는 증거다.
+     */
+    @Test
+    void anAwaitingGateDefersTheDecisionInsteadOfPolling() {
+        Task gate = readyTaskOf(TaskDefinition.AWS_SERVICE_APPLY_APPROVAL_V1);
+        gate.setStatus(TaskStatus.AWAIT_APPROVAL);
+
+        assertThat(stepRunner.runStep("t", gate, null)).isInstanceOf(StepOutcome.ApprovalPoll.class);
     }
 
     private static Task readyTaskOf(TaskDefinition definition) {

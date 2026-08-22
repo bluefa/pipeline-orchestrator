@@ -2,6 +2,7 @@ package com.bff.pipeline.service;
 
 import com.bff.pipeline.config.ApprovalSettings;
 import com.bff.pipeline.service.task.ApprovalGateTask;
+import java.time.Clock;
 import java.time.Duration;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -24,7 +25,7 @@ public class ApprovalTestWiring {
     }
 
     @Bean
-    public ApprovalGateTask approvalGateTask() {
-        return new ApprovalGateTask();
+    public ApprovalGateTask approvalGateTask(ApprovalSettings approvalSettings, Clock clock) {
+        return new ApprovalGateTask(approvalSettings, clock);
     }
 }

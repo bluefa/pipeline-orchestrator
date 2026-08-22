@@ -14,6 +14,7 @@ import java.util.Optional;
  * {@code CHECK_ERROR} — dispatch/poll 호출이 오류를 반환(잡 실패가 아닌 읽기 실패).
  * {@code CALL_TIMEOUT} — InfraManager 호출 한 번이 호출별 타임아웃을 넘김.
  * {@code UNKNOWN_TASK} — 태스크에 저장된 이름에 맞는 {@code TaskType}이 등록돼 있지 않아 더는 정의된 태스크가 아님.
+ * {@code APPROVAL_EXPIRED} — 승인 게이트가 만료 시각까지 결정을 받지 못함.
  */
 public enum ErrorCode {
     /** TERRAFORM_JOB 폴링에서 잡이 FAILED로 보고된 경우. */
@@ -27,7 +28,9 @@ public enum ErrorCode {
     /** InfraManager 호출 한 번이 호출별 타임아웃을 넘긴 경우. */
     CALL_TIMEOUT,
     /** 저장된 태스크 이름에 맞는 {@code TaskType}이 등록돼 있지 않은 경우. */
-    UNKNOWN_TASK;
+    UNKNOWN_TASK,
+    /** 승인 게이트가 만료 시각까지 아무 결정도 받지 못한 경우(승인 게이트 ADR §결정 3). 재시도하지 않는다. */
+    APPROVAL_EXPIRED;
 
     /**
      * 저장된 error_code 이름(String)을 상수로 해석한다. 미해석(카탈로그에서 제거/rename된 옛 값)은 예외 대신

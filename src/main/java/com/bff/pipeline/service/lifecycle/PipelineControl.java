@@ -34,7 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
  * Case B를 AWAIT_APPROVAL로 넓히지 않은 것은 빠뜨린 것이 아니라 넓힐 자리가 없기 때문이다. 승인 대기 중인
  * pipeline은 claim을 쥐지 않고(대기 진입과 claim 해제가 같은 트랜잭션에서 커밋된다), 다시 잡히는 순간 claim
  * UPDATE가 같은 문장에서 status를 RUNNING으로 바꾼다. 즉 AWAIT_APPROVAL과 live lease는 공존할 수 없어 언제나
- * Case A가 이긴다.
+ * Case A가 이긴다. 승인 대기가 취소되면 열려 있던 승인 요청도 {@code TaskCanceller}가 함께 닫는다.
  */
 @Service
 @RequiredArgsConstructor
