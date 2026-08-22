@@ -29,6 +29,23 @@ public enum RecipeDefinition {
                     TaskDefinition.AWS_BDC_COMMON_PLAN_V1, TaskDefinition.AWS_BDC_COMMON_APPLY_V1,
                     TaskDefinition.AWS_BDC_SERVICE_LEVEL_PLAN_V1, TaskDefinition.AWS_BDC_SERVICE_LEVEL_APPLY_V1)),
 
+    /**
+     * 승인 게이트가 포함된 AWS 설치 레시피(승인 게이트 ADR §결정 1). AWS_INSTALL_V1과 같은 순서에 서비스
+     * Plan과 서비스 Apply 사이 승인 단계 하나만 더 있다 — 게이트 유무는 "다음 버전"이 아니라 병렬 변형이라
+     * 이름에 의미를 싣고 _V1을 유지한다. 활성 등록은 (provider, type)당 하나이며 pipeline.approval.enabled가
+     * 어느 쪽을 쓸지 정한다(RecipeCatalog).
+     */
+    AWS_INSTALL_WITH_ADMIN_CONSENT_V1(CloudProvider.AWS, PipelineType.INSTALL,
+            "AWS 인프라 설치(관리자 승인)",
+            "AWS 서비스, BDC common, BDC service level 인프라를 단위별 Terraform plan·apply로 구성한다."
+                    + " 서비스 Plan 결과를 관리자가 승인해야 서비스 Apply로 넘어가며, 그 뒤 순서는 승인 없는"
+                    + " 레시피와 같다.",
+            List.of(TaskDefinition.AWS_SERVICE_PLAN_V1, TaskDefinition.AWS_SERVICE_APPLY_APPROVAL_V1,
+                    TaskDefinition.AWS_SERVICE_APPLY_V1,
+                    TaskDefinition.NETWORK_READY_V1,
+                    TaskDefinition.AWS_BDC_COMMON_PLAN_V1, TaskDefinition.AWS_BDC_COMMON_APPLY_V1,
+                    TaskDefinition.AWS_BDC_SERVICE_LEVEL_PLAN_V1, TaskDefinition.AWS_BDC_SERVICE_LEVEL_APPLY_V1)),
+
     AWS_DELETE_V1(CloudProvider.AWS, PipelineType.DELETE,
             "AWS 인프라 삭제",
             "AWS BDC service level, BDC common, 서비스 인프라를 설치의 역순으로 Terraform destroy로 제거한다.",
@@ -38,6 +55,15 @@ public enum RecipeDefinition {
     GCP_INSTALL_V1(CloudProvider.GCP, PipelineType.INSTALL,
             "GCP 인프라 설치", "GCP 서비스와 BDC 인프라를 단위별 Terraform plan·apply로 구성한다. apply 순서는 서비스 → BDC(서버 강제).",
             List.of(TaskDefinition.GCP_SERVICE_PLAN_V1, TaskDefinition.GCP_SERVICE_APPLY_V1,
+                    TaskDefinition.GCP_BDC_PLAN_V1, TaskDefinition.GCP_BDC_APPLY_V1)),
+
+    /** 승인 게이트가 포함된 GCP 설치 레시피 — {@link #AWS_INSTALL_WITH_ADMIN_CONSENT_V1}와 같은 규약이다. */
+    GCP_INSTALL_WITH_ADMIN_CONSENT_V1(CloudProvider.GCP, PipelineType.INSTALL,
+            "GCP 인프라 설치(관리자 승인)",
+            "GCP 서비스와 BDC 인프라를 단위별 Terraform plan·apply로 구성한다. 서비스 Plan 결과를 관리자가"
+                    + " 승인해야 서비스 Apply로 넘어간다. apply 순서는 서비스 → BDC(서버 강제).",
+            List.of(TaskDefinition.GCP_SERVICE_PLAN_V1, TaskDefinition.GCP_SERVICE_APPLY_APPROVAL_V1,
+                    TaskDefinition.GCP_SERVICE_APPLY_V1,
                     TaskDefinition.GCP_BDC_PLAN_V1, TaskDefinition.GCP_BDC_APPLY_V1)),
 
     GCP_DELETE_V1(CloudProvider.GCP, PipelineType.DELETE,
@@ -94,6 +120,15 @@ public enum RecipeDefinition {
 
     public List<TaskDefinition> steps() {
         return steps;
+    }
+
+    /**
+     * 승인 게이트가 들어간 변형인가. 별도 플래그를 두지 않고 step 목록에서 파생한다 — 게이트 step의 존재가
+     * 곧 두 변형의 차이라, 값을 따로 들면 이름·step·플래그 셋이 어긋날 여지만 생긴다. RecipeCatalog가
+     * (provider, type)당 활성 변형을 고를 때 이 값을 본다.
+     */
+    public boolean hasApprovalGate() {
+        return steps.stream().anyMatch(TaskDefinition::isApprovalGate);
     }
 
     /** 저장된 recipe 이름(String)을 상수로 해석한다 — 미해석은 예외 대신 empty(카탈로그 삭제/rename에 관대). */

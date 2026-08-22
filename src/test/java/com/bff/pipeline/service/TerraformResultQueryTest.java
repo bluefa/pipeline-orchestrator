@@ -62,7 +62,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
         TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, TerraformJobStateRecorder.class,
         ConditionCheckTask.class, ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class,
-        PipelineInserter.class, RecipeCatalog.class, PipelineQueryService.class, PipelineExecutionTest.Wiring.class})
+        PipelineInserter.class, RecipeCatalog.class, PipelineQueryService.class, PipelineExecutionTest.Wiring.class, ApprovalTestWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class TerraformResultQueryTest {
 

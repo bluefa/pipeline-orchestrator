@@ -45,7 +45,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineCreator.class, PipelineInserter.class, RecipeCatalog.class, PipelineUniquenessTest.Wiring.class})
+@Import({PipelineCreator.class, PipelineInserter.class, RecipeCatalog.class, PipelineUniquenessTest.Wiring.class, ApprovalTestWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineUniquenessTest {
 

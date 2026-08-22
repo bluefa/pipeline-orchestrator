@@ -194,7 +194,20 @@ public enum TaskDefinition {
 
     NETWORK_READY_V1(CloudProvider.AWS, TaskOperation.NETWORK_READY,
             "네트워크 준비 확인", "네트워크가 준비 완료 상태가 될 때까지 조건을 확인한다.",
-            TaskExecutionSpec.conditionCheck("GET /infra/network/ready?target={target} (실제 API 미확정 — 가정 엔드포인트)"));
+            TaskExecutionSpec.conditionCheck("GET /infra/network/ready?target={target} (실제 API 미확정 — 가정 엔드포인트)")),
+
+    // ══ APPROVAL — apply 승인 게이트(승인 게이트 ADR §결정 1) ══
+    // operation은 실행 단위와 무관한 단일 값이지만, RecipeCatalog가 recipe와 step의 provider 일치를 부팅에서
+    // 검증하므로 정의는 provider별로 하나씩 필요하다. 표시명이 "무엇에 대한 승인인가"를 담는다.
+
+    AWS_SERVICE_APPLY_APPROVAL_V1(CloudProvider.AWS, TaskOperation.TF_APPLY_APPROVAL,
+            "AWS Service Level 테라폼 Apply 승인",
+            "직전 Plan 결과를 관리자가 확인하고 승인해야 AWS service level Apply로 넘어간다.",
+            TaskExecutionSpec.approvalGate()),
+    GCP_SERVICE_APPLY_APPROVAL_V1(CloudProvider.GCP, TaskOperation.TF_APPLY_APPROVAL,
+            "GCP Service 테라폼 Apply 승인",
+            "직전 Plan 결과를 관리자가 확인하고 승인해야 GCP 서비스 Apply로 넘어간다.",
+            TaskExecutionSpec.approvalGate());
 
     private final CloudProvider provider;
     private final TaskOperation operation;
@@ -227,6 +240,11 @@ public enum TaskDefinition {
     /** terraform slot 소비 여부. operation이 결정한다. */
     public boolean consumesTerraformSlot() {
         return operation.consumesTerraformSlot();
+    }
+
+    /** 승인 게이트 정의인가. operation이 결정한다 — custom 배치 금지·카탈로그 노출 제외가 이 값을 본다. */
+    public boolean isApprovalGate() {
+        return operation.isApprovalGate();
     }
 
     public String displayName() {

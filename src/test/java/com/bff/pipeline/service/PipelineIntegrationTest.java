@@ -76,7 +76,7 @@ import org.springframework.transaction.annotation.Transactional;
         TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, TerraformJobStateRecorder.class,
         ConditionCheckTask.class, ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class,
         PipelineInserter.class, PipelineRestarter.class, PipelineControl.class, RecipeCatalog.class,
-        PipelineQueryService.class, TargetSourcePipelineController.class, PipelineIntegrationTest.Wiring.class})
+        PipelineQueryService.class, TargetSourcePipelineController.class, PipelineIntegrationTest.Wiring.class, ApprovalTestWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineIntegrationTest {
 

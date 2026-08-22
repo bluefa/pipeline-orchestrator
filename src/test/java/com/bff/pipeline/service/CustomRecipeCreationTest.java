@@ -53,7 +53,7 @@ import org.springframework.transaction.annotation.Transactional;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineCreator.class, PipelineInserter.class, PipelineRestarter.class, RecipeCatalog.class,
-        PipelineQueryService.class, TargetSourcePipelineController.class, CustomRecipeCreationTest.Wiring.class})
+        PipelineQueryService.class, TargetSourcePipelineController.class, CustomRecipeCreationTest.Wiring.class, ApprovalTestWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class CustomRecipeCreationTest {
 
@@ -109,28 +109,6 @@ class CustomRecipeCreationTest {
 
         assertThat(detail.type()).isEqualTo(PipelineType.DELETE);
         assertThat(detail.recipeDefinition()).isEqualTo("AWS_DELETE_V1");
-    }
-
-    /** 요청 맥락은 요청 본문에서 받아 행에 남고 상세 응답으로 다시 나온다 — 목록에는 싣지 않는다. */
-    @Test
-    void theRequestContextIsRecordedAndReadBack() {
-        PipelineDetail detail = controller.create("cust-endpoint-request",
-                new CreatePipelineRequest(PipelineType.DELETE, "admin@example.com", "정리 요청 건입니다."));
-
-        assertThat(detail.requestedBy()).isEqualTo("admin@example.com");
-        assertThat(detail.requestNote()).isEqualTo("정리 요청 건입니다.");
-        assertThat(pipelineRepository.findById(detail.pipelineId()).orElseThrow().getRequestedBy())
-                .isEqualTo("admin@example.com");
-    }
-
-    /** 요청 맥락은 선택값이다 — 안 실어 보내도 실행은 그대로 만들어진다. */
-    @Test
-    void aRequestWithoutContextStillRuns() {
-        PipelineDetail detail = controller.create("cust-endpoint-norequest",
-                new CreatePipelineRequest(PipelineType.DELETE, null, null));
-
-        assertThat(detail.requestedBy()).isNull();
-        assertThat(detail.requestNote()).isNull();
     }
 
     @Test

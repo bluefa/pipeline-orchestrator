@@ -72,7 +72,7 @@ import com.bff.pipeline.model.RequestContext;
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
         TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, TerraformJobStateRecorder.class, ConditionCheckTask.class,
         ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class, PipelineInserter.class,
-        PipelineControl.class, RecipeCatalog.class, PipelineExecutionTest.Wiring.class})
+        PipelineControl.class, RecipeCatalog.class, PipelineExecutionTest.Wiring.class, ApprovalTestWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineExecutionTest {
 

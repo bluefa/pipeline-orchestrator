@@ -2,6 +2,7 @@ package com.bff.pipeline.model;
 
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.exception.RequestNoteTooLongException;
+import com.bff.pipeline.exception.RequestedByRequiredException;
 import com.bff.pipeline.exception.RequestedByTooLongException;
 
 /**
@@ -13,8 +14,8 @@ import com.bff.pipeline.exception.RequestedByTooLongException;
  * 감사 기록이 다른 사람을 가리킬 수 있고, 요청 사유를 자르면 하려던 말이 훼손된다. 저장이 깨질까
  * 걱정해 자르는 것보다, 경계에서 되돌려 보내 다시 쓰게 하는 편이 정직하다.
  *
- * 지금은 둘 다 선택값이다 — 있으면 기록하고 없으면 그만이다. 필수로 걸어야 하는 경로(승인 게이트)는 그
- * 규칙을 쓰는 코드와 함께 들어온다.
+ * 요청자는 승인 게이트가 있는 레시피에서만 필수다({@link #requireRequestedBy()}) — 요청자를 모르는 승인
+ * 요청은 감사가 성립하지 않는다. 게이트가 없는 실행에서는 있으면 기록하고 없으면 그만인 선택값이다.
  */
 public record RequestContext(String requestedBy, String requestNote) {
 
@@ -39,6 +40,14 @@ public record RequestContext(String requestedBy, String requestNote) {
     /** 요청 맥락이 없는 경로(재시작 승계 전 기본값 등)를 위한 빈 값. */
     public static RequestContext none() {
         return NONE;
+    }
+
+    /** 승인 게이트가 있는 레시피에서 부른다 — 요청자가 없으면 400으로 거절한다. */
+    public RequestContext requireRequestedBy() {
+        if (requestedBy == null) {
+            throw new RequestedByRequiredException();
+        }
+        return this;
     }
 
     /**

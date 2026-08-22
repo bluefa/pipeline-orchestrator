@@ -38,15 +38,16 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 새로 생긴 대기 상태가 상태를 열거하는 모든 자리에 반영됐는지 확인한다. 아직 이 상태로 실행을 옮기는
- * 코드는 없어서 행을 직접 세워 두고 보지만, 확인하려는 것은 "만드는 쪽"이 아니라 "읽는 쪽"이다 —
- * 하나라도 빠뜨리면 대기 중인 실행이 그 화면에서 사라지거나 영영 다시 잡히지 않는다.
+ * 대기 상태가 상태를 열거하는 모든 자리에 반영됐는지 확인한다. 승인 게이트를 거치지 않고 행을 직접
+ * 세워 두고 보는데, 확인하려는 것이 "만드는 쪽"이 아니라 "읽는 쪽"이기 때문이다 — 하나라도 빠뜨리면
+ * 대기 중인 실행이 그 화면에서 사라지거나 영영 다시 잡히지 않는다. 게이트를 실제로 거치는 검증은
+ * {@code ApprovalGateTest}에 있다.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineClaimer.class, PipelineControl.class, TaskCanceller.class, ObservationRecorder.class,
         PipelineCreator.class, PipelineInserter.class, RecipeCatalog.class, PipelineQueryService.class,
-        AwaitApprovalStatusTest.Wiring.class})
+        AwaitApprovalStatusTest.Wiring.class, ApprovalTestWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class AwaitApprovalStatusTest {
 
@@ -158,7 +159,7 @@ class AwaitApprovalStatusTest {
                 .extracting(Task::getStatus).containsOnly(TaskStatus.CANCELLED);
     }
 
-    /** 대기 상태의 실행을 세워 둔다 — 이 상태로 옮기는 코드는 다음 PR에서 들어온다. */
+    /** 대기 상태의 실행을 세워 둔다 — 게이트를 거치지 않고 읽는 쪽만 떼어 보기 위한 것이다. */
     private Pipeline park(String target) {
         Pipeline pipeline = creator.create(target, PipelineType.INSTALL, RequestContext.none());
         Task current = taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).getFirst();

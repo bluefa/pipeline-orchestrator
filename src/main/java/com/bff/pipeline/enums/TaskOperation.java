@@ -1,5 +1,6 @@
 package com.bff.pipeline.enums;
 
+import com.bff.pipeline.client.terraform.TerraformJobType;
 import java.util.Optional;
 
 /**
@@ -55,12 +56,21 @@ public enum TaskOperation {
 
     // ── CONDITION_CHECK mechanism ──
     /** 네트워크가 준비됐는지 확인(condition check)하는 액션. (실제 API 미확정 — 가정 엔드포인트) */
-    NETWORK_READY(Mechanism.CONDITION_CHECK);
+    NETWORK_READY(Mechanism.CONDITION_CHECK),
+
+    // ── APPROVAL mechanism (승인 게이트 ADR §결정 1) ──
+    /**
+     * terraform apply 직전에 사람의 확인을 받는 승인 게이트 액션. 실행 단위와 무관한 단일 값이다 — 외부 API를
+     * 부르지 않으므로 실행 단위별로 나눌 이유가 없고, "무엇에 동의하는가"의 구분은 apply/destroy 축뿐이다.
+     * terraform slot을 쓰지 않으며 표시명은 TaskDefinition이 provider별로 담는다.
+     */
+    TF_APPLY_APPROVAL(Mechanism.APPROVAL);
 
     /** mechanism 이름 리터럴 — 값은 각 TaskType.NAME과 일치해야 하며 부팅 시 검증된다. */
     public static final class Mechanism {
         public static final String TERRAFORM_JOB = "TERRAFORM_JOB";
         public static final String CONDITION_CHECK = "CONDITION_CHECK";
+        public static final String APPROVAL = "APPROVAL";
 
         private Mechanism() {
         }
@@ -92,11 +102,28 @@ public enum TaskOperation {
     }
 
     /**
+     * 이 operation이 terraform Plan을 던지는지. 분기가 {@link #terraformAction()}이 돌려주는 표시 문자열을
+     * 직접 비교하지 않게 하려고 둔다 — 그 문자열은 이름 접미사에서 파생되므로, 비교로 분기하면 접미사
+     * 규칙이 바뀔 때 컴파일도 테스트도 아무 말 없이 분기만 조용히 어긋난다.
+     */
+    public boolean isTerraformPlan() {
+        return terraformAction().filter(TerraformJobType.PLAN.name()::equals).isPresent();
+    }
+
+    /**
      * terraform slot 소비 여부의 단일 authority다. slot 소비는 operation이 아니라 mechanism의 속성이라, 값을 op마다
      * 두지 않고 mechanism으로 판별한다. insert 때 이 값이 task 행(consumes_terraform_slot)에 캐시돼 slot 게이트가 쓴다.
      */
     public boolean consumesTerraformSlot() {
         return Mechanism.TERRAFORM_JOB.equals(mechanism);
+    }
+
+    /**
+     * 이 operation이 승인 게이트인가. 게이트는 여러 경계에서 일반 task와 다르게 다뤄지므로(custom recipe 배치
+     * 금지, task catalog 노출 제외, 재시작 지점 당김) 판별을 mechanism 비교 리터럴로 흩지 않고 여기 모은다.
+     */
+    public boolean isApprovalGate() {
+        return Mechanism.APPROVAL.equals(mechanism);
     }
 
     /**

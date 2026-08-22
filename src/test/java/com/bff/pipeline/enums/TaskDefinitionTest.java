@@ -55,7 +55,7 @@ class TaskDefinitionTest {
     @Test
     void conditionCheckDefinitionsHaveNoDispatchAndNoResult() {
         for (TaskDefinition definition : TaskDefinition.values()) {
-            if (definition.operation().consumesTerraformSlot()) {
+            if (definition.operation().consumesTerraformSlot() || definition.isApprovalGate()) {
                 continue;
             }
             TaskExecutionSpec spec = definition.spec();
@@ -63,6 +63,27 @@ class TaskDefinitionTest {
             assertThat(spec.resultApi()).as("%s result", definition).isNull();
             assertThat(spec.statusApi()).as("%s check", definition).isNotBlank();
             assertThat(spec.resultStorage()).as("%s storage", definition).contains("task_check");
+        }
+    }
+
+    /**
+     * 승인 게이트 정의는 부르는 API가 하나도 없다 — 기다리는 대상이 외부 시스템이 아니라 사람이기 때문이다.
+     * 세 API 필드가 모두 비어 있어야 하고, 남는 기록은 terraform 로그도 폴 관찰도 아닌 승인 요청 행이다.
+     */
+    @Test
+    void approvalGateDefinitionsCallNoApiAndRecordIntoTheApprovalRow() {
+        Set<TaskDefinition> gates = Arrays.stream(TaskDefinition.values())
+                .filter(TaskDefinition::isApprovalGate)
+                .collect(Collectors.toSet());
+
+        assertThat(gates).isNotEmpty();
+        for (TaskDefinition definition : gates) {
+            TaskExecutionSpec spec = definition.spec();
+            assertThat(spec.dispatchApi()).as("%s dispatch", definition).isNull();
+            assertThat(spec.statusApi()).as("%s status", definition).isNull();
+            assertThat(spec.resultApi()).as("%s result", definition).isNull();
+            assertThat(spec.successPolicy()).as("%s policy", definition).isNotBlank();
+            assertThat(spec.resultStorage()).as("%s storage", definition).contains("task_approval");
         }
     }
 
