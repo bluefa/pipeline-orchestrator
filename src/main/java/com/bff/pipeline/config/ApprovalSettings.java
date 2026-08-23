@@ -17,12 +17,19 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * {@code timeout}은 승인을 기다리는 상한이다. 이 시간 안에 아무도 결정하지 않으면 게이트는 만료로
  * 실패하고, 다시 하려면 파이프라인을 재시작한다. 관리자 근무 시간·교대를 감안해 운영이 조정할 값이라
  * 코드 상수가 아니라 설정으로 둔다.
+ *
+ * {@code slackWebhookUrl}은 승인 요청 알림이 갈 Slack 채널의 Incoming Webhook 주소다. 종단 알림 채널
+ * ({@code pipeline.notify.slack-webhook-url})과 별도로 둔다 — 승인 요청은 관리자가 응답해야 하는 요청이라,
+ * 끝난 실행을 보고하는 알림 채널에 섞이면 묻힌다. 아직 읽는 곳이 없는 선언만 된 값이며, 승인 요청 알림
+ * 기능이 이 값을 소비하게 되면 그 기능의 켜짐 조건에서 필수 검증이 함께 붙는다. 종단 알림의 webhook과
+ * 같은 비밀값 취급이라 env로만 주입하고 로그나 API 응답에 원문을 남기지 않는다.
  */
 @Builder
 @ConfigurationProperties(prefix = "pipeline.approval")
 public record ApprovalSettings(
         boolean enabled,
-        @DefaultValue("PT24H") Duration timeout) {
+        @DefaultValue("PT24H") Duration timeout,
+        String slackWebhookUrl) {
 
     public ApprovalSettings {
         if (timeout == null || !timeout.isPositive()) {
