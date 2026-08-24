@@ -42,14 +42,13 @@ public record TaskSummary(
     }
 
     public static TaskSummary from(Task task, TaskApprovalView approval) {
-        TaskOperation operation = task.getOperation();
         return TaskSummary.builder()
                 .taskId(task.getId())
                 .sequence(task.getSequence())
                 .kind(task.getTaskName())
                 .taskDefinition(task.getTaskDefinition())
-                .operation(operation)
-                .terraformAction(operation == null ? null : operation.terraformAction().orElse(null))
+                .operation(task.getOperation())
+                .terraformAction(task.terraformActionLabel())
                 .status(task.getStatus())
                 .failCount(task.getFailCount())
                 .errorCode(task.getErrorCode())

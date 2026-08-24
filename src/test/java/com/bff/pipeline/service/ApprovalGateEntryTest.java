@@ -17,6 +17,7 @@ import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.TaskDefinition;
 import com.bff.pipeline.enums.TaskStatus;
+import com.bff.pipeline.exception.CallFailedException;
 import com.bff.pipeline.exception.RequestedByRequiredException;
 import com.bff.pipeline.model.RequestContext;
 import com.bff.pipeline.repository.PipelineRepository;
@@ -25,6 +26,7 @@ import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.repository.TerraformJobStateRepository;
 import com.bff.pipeline.repository.TerraformResultRepository;
+import com.bff.pipeline.service.approval.PlanLogEvidence;
 import com.bff.pipeline.service.approval.PlanSummaryExtractor;
 import com.bff.pipeline.service.execution.PipelineClaimer;
 import com.bff.pipeline.service.execution.PipelineWorker;
@@ -73,7 +75,8 @@ import org.springframework.transaction.annotation.Transactional;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
-        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class,
+        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class,
+        PlanLogEvidence.class, TerraformResultRecorder.class,
         TerraformJobStateRecorder.class, ConditionCheckTask.class, ApprovalGateTask.class,
         PlanSummaryExtractor.class, ObservationRecorder.class, TaskCanceller.class,
         PipelineCreator.class, PipelineInserter.class,
@@ -227,6 +230,52 @@ class ApprovalGateEntryTest {
                 .doesNotContain("create_count");
     }
 
+
+    /**
+     * 로그가 아예 남지 않았으면 게이트로 넘기지 않고 Plan을 다시 돌린다. 이 경우엔 요약도 없고 콘솔에서 볼
+     * 원문도 없어, 승인자가 무엇에 동의하는지 모르는 채 버튼만 보게 된다 — 게이트가 막으려던 상황이 게이트
+     * 안에서 생기는 셈이다. Plan은 인프라를 바꾸지 않으므로 다시 돌리는 데 부작용이 없다.
+     */
+    @Test
+    void aPlanThatLeftNoLogIsRetriedInsteadOfHandedToTheGate() {
+        infraManagerClient.onResult(() -> {
+            throw new CallFailedException("infra-manager result API down");
+        });
+
+        Pipeline pipeline = creator.create("gate-nolog", PipelineType.INSTALL, REQUEST);
+        worker.pollOnce();   // Plan dispatch
+        worker.pollOnce();   // job은 COMPLETED지만 본문이 남지 않았다 → 재시도 가능한 실패
+
+        Task planStep = chainOf(pipeline).getFirst();
+        assertThat(planStep.getStatus()).isEqualTo(TaskStatus.READY);
+        assertThat(planStep.getFailCount()).isEqualTo(1);
+        assertThat(taskAttemptRepository.findByTaskIdOrderByAttemptNumberAsc(planStep.getId()).getFirst().getErrorCode())
+                .isEqualTo(ErrorCode.PLAN_LOG_UNAVAILABLE);
+        // 게이트는 열리지도 않았다 — 근거 없는 승인 요청이 나가는 일이 없다.
+        assertThat(reload(pipeline).getStatus()).isNotEqualTo(PipelineStatus.AWAIT_APPROVAL);
+        assertThat(approvalRepository.count()).isZero();
+    }
+
+    /** 실패의 목적은 근거를 다시 만드는 것이다 — 로그가 돌아오면 다음 시도가 게이트까지 그대로 간다. */
+    @Test
+    void theRetryProducesTheLogTheGateNeeded() {
+        infraManagerClient.onResult(() -> {
+            throw new CallFailedException("infra-manager result API down");
+        });
+        Pipeline pipeline = creator.create("gate-nolog-heals", PipelineType.INSTALL, REQUEST);
+        worker.pollOnce();
+        worker.pollOnce();
+
+        infraManagerClient.onResult(() -> PLAN_LOG);
+        clock.advance(Duration.ofMinutes(11));
+        worker.pollOnce();   // Plan 재dispatch(attempt 2)
+        worker.pollOnce();   // 성공 판정 — 이번엔 본문이 남았다
+        worker.pollOnce();   // 게이트 진입
+
+        assertThat(reload(pipeline).getStatus()).isEqualTo(PipelineStatus.AWAIT_APPROVAL);
+        assertThat(approvalRepository.findByTaskId(gateTask(pipeline).getId()).orElseThrow().getPlanSummary())
+                .contains("\"verified\":true");
+    }
 
     /** 기한이 지나면 실행이 실패로 닫히고, 재시도하지 않는다 — 승인은 다시 시도해 결과가 달라지지 않는다. */
     @Test

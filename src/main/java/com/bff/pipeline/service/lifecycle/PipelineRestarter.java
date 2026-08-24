@@ -131,7 +131,7 @@ public class PipelineRestarter {
     private static boolean isApprovalGate(List<Task> originChain, int sequence) {
         return originChain.stream()
                 .filter(task -> task.getSequence() == sequence)
-                .anyMatch(task -> task.getOperation() != null && task.getOperation().isApprovalGate());
+                .anyMatch(Task::isApprovalGate);
     }
 
     /** 원본 로드(404) + 결정 5 허용표(409) + 최신 실행 검증(409). */
@@ -200,8 +200,7 @@ public class PipelineRestarter {
                 .sequence(task.getSequence())
                 .taskDefinition(task.getTaskDefinition())
                 .kind(task.getTaskName())
-                .terraformAction(task.getOperation() == null
-                        ? null : task.getOperation().terraformAction().orElse(null))
+                .terraformAction(task.terraformActionLabel())
                 .originTaskId(task.getId())
                 .originStatus(task.getStatus())
                 .originErrorCode(task.getErrorCode())

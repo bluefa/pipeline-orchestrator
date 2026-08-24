@@ -19,6 +19,12 @@ public interface TerraformResultRepository extends JpaRepository<TerraformResult
     /** 본문 조회는 유니크 키 전체 지정의 행 하나만 — task 상세와 달리 여기서만 MEDIUMTEXT를 지불한다. */
     Optional<TerraformResult> findByTaskIdAndAttemptNumberAndJobId(Long taskId, int attemptNumber, String jobId);
 
+    /**
+     * 한 시도에서 본문까지 남은 행의 수. 승인 게이트 앞 Plan이 근거를 다 남겼는지 세는 데 쓴다
+     * ({@code PlanLogEvidence}) — 본문을 읽지 않고 결손만 알아내려는 것이라 count다.
+     */
+    long countByTaskIdAndAttemptNumberAndResultIsNotNull(Long taskId, int attemptNumber);
+
     /** P5 attempt 인라인용 메타 투영 — 본문({@code result})은 존재 여부({@code hasBody})로만 접는다. */
     @Query("""
             select r.attemptNumber as attemptNumber, r.jobId as jobId, r.succeeded as succeeded,

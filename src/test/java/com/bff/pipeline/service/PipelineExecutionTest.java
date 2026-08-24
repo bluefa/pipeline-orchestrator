@@ -23,6 +23,7 @@ import com.bff.pipeline.repository.TerraformResultRepository;
 import com.bff.pipeline.entity.TerraformJobState;
 import com.bff.pipeline.entity.TerraformResult;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.service.approval.PlanLogEvidence;
 import com.bff.pipeline.service.execution.PipelineClaimer;
 import com.bff.pipeline.service.execution.PipelineWorker;
 import com.bff.pipeline.service.execution.StepReporter;
@@ -70,7 +71,8 @@ import com.bff.pipeline.model.RequestContext;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
-        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, TerraformJobStateRecorder.class, ConditionCheckTask.class,
+        TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class,
+        PlanLogEvidence.class, TerraformResultRecorder.class, TerraformJobStateRecorder.class, ConditionCheckTask.class,
         ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class, PipelineInserter.class,
         PipelineControl.class, RecipeCatalog.class, PipelineExecutionTest.Wiring.class, ApprovalTestWiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)

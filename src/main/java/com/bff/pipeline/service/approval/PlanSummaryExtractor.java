@@ -39,6 +39,11 @@ import org.springframework.stereotype.Component;
  * 나간다. 승인자는 그때 콘솔에서 원문을 직접 본다. 얼추 맞는 요약을 보여 주는 것보다 못 읽었다고 말하는
  * 편이 낫다는 판단이다.
  *
+ * 여기까지 오는 "검증 불가"는 대개 다시 돌려도 그대로인 것들이다. 본문 자체가 남지 않은 결손은 그 앞에서
+ * 걸러지기 때문이다 — Plan을 끝내는 쪽이 근거를 남기지 못한 시도를 성공으로 닫지 않고 다시 돌린다
+ * ({@link PlanLogEvidence}). 원문도 요약도 없는 화면을 승인자에게 내미는 것은 그쪽에서 막고, 이쪽은 읽을
+ * 원문은 있으나 해석이 안 되는 경우를 맡는다.
+ *
  * 결과 JSON은 승인 행의 컬럼 한도 안으로 맞춘다. 큰 plan의 주소 목록이 컬럼을 넘겨 저장이 깨지면 게이트
  * 진입 자체가 롤백되고 같은 파이프라인이 계속 다시 잡히므로, 한도를 넘으면 목록을 줄여서라도 집계 수치와
  * 잘림 표식은 반드시 살린다.
@@ -81,7 +86,9 @@ public class PlanSummaryExtractor {
     }
 
     private Extraction build(Task gate) {
-        Task planTask = previousPlanTask(gate, tasks.findByPipelineIdOrderBySequenceAsc(gate.getPipelineId()));
+        Task planTask = ApprovalPlanSource
+                .forGate(gate, tasks.findByPipelineIdOrderBySequenceAsc(gate.getPipelineId()))
+                .orElse(null);
         if (planTask == null) {
             return new Extraction.Unverified("직전 Plan 단계를 찾지 못했습니다");
         }
@@ -167,20 +174,6 @@ public class PlanSummaryExtractor {
             return new Extraction.Unverified("Plan 로그의 변경 목록과 합계가 맞지 않습니다");
         }
         return new Extraction.Changes(parsed.changes());
-    }
-
-    /** 체인에서 게이트 바로 앞의 Plan 단계를 찾는다 — 게이트보다 순번이 낮은 terraform Plan 중 가장 뒤엣것. */
-    private static Task previousPlanTask(Task gate, List<Task> chain) {
-        Task found = null;
-        for (Task candidate : chain) {
-            if (candidate.getSequence() >= gate.getSequence()) {
-                break;   // 체인은 순번 오름차순이다
-            }
-            if (candidate.getOperation() != null && candidate.getOperation().isTerraformPlan()) {
-                found = candidate;
-            }
-        }
-        return found;
     }
 
     /**

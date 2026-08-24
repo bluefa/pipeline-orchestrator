@@ -12,6 +12,7 @@ import com.bff.pipeline.model.DispatchResult;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TerraformJobRef;
 import com.bff.pipeline.model.TaskType;
+import com.bff.pipeline.service.approval.PlanLogEvidence;
 import com.bff.pipeline.utils.TaskSettingsResolver;
 import com.bff.pipeline.utils.TerraformDispatchResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -47,6 +48,10 @@ import com.bff.pipeline.exception.CallTimeoutException;
  * job들의 result(= terraform log)를 {@code terraform_result}에 남긴다 — 전원 terminal 대기 덕에 정상 종결에서는
  * 모든 job이 행을 얻는다. 기록 실패는 관찰 결손일 뿐 판정을 바꾸지 않는다.
  *
+ * 예외는 승인 게이트 앞 Plan 하나다({@link PlanLogEvidence}). 그 로그는 승인자가 볼 유일한 근거라, 본문이
+ * 남지 않았으면 성공 대신 재시도 가능한 {@code PLAN_LOG_UNAVAILABLE}로 닫아 Plan을 다시 돌린다 — Plan은
+ * 인프라를 바꾸지 않으므로 다시 돌리는 데 부작용이 없다.
+ *
  * response 유실(ADR §3 invariant 3). dispatch는 됐지만 {@code response}가 최신 attempt에 남지 않은 경우(dispatch
  * 뒤 DB 기록 실패나 크래시)에는 곧바로 실패시키지 않는다. 사유를 정확히 로그로 남기고 executionTimeout까지 기다렸다가 재시도
  * 가능한 {@code EXECUTION_TIMEOUT}으로 fallthrough해 멱등 재dispatch한다(failCount 예산을 함께 쓴다). attempt 행
@@ -72,6 +77,7 @@ public class TerraformTask implements TaskType {
     private final InfraManagerClient infraManagerClient;
     private final TerraformResultRecorder resultRecorder;
     private final TerraformJobStateRecorder jobStateRecorder;
+    private final PlanLogEvidence planLogEvidence;
     private final PipelineSettings pipelineSettings;
     private final Clock clock;
 
@@ -163,6 +169,10 @@ public class TerraformTask implements TaskType {
         resultRecorder.recordFinishedJobs(task, attempt, finished);
         if (anyFailed) {
             return TaskProgress.failedRetryable(ErrorCode.JOB_FAILED, describeFailedJobs(finished));
+        }
+        if (allFinished && planLogEvidence.missingForApprovalGate(task, attempt, finished.keySet())) {
+            return TaskProgress.failedRetryable(ErrorCode.PLAN_LOG_UNAVAILABLE,
+                    "approval gate would have no plan log to show; re-planning to produce it");
         }
         if (allFinished) {
             return TaskProgress.SUCCEEDED;

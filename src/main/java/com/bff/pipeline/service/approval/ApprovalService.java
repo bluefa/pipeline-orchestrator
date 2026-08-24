@@ -81,7 +81,7 @@ public class ApprovalService {
         Task task = tasks.findById(taskId)
                 .filter(candidate -> candidate.getPipelineId().equals(pipelineId))
                 .orElseThrow(() -> new TaskNotFoundException(pipelineId, taskId));
-        if (task.getOperation() == null || !task.getOperation().isApprovalGate()) {
+        if (!task.isApprovalGate()) {
             throw new TaskNotAwaitingApprovalException(taskId);
         }
     }
