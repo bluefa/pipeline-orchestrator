@@ -1,7 +1,13 @@
 package com.bff.pipeline.service;
 
 import com.bff.pipeline.config.ApprovalSettings;
+import com.bff.pipeline.repository.TaskAttemptRepository;
+import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.repository.TerraformResultRepository;
+import com.bff.pipeline.service.approval.PlanSummaryExtractor;
 import com.bff.pipeline.service.task.ApprovalGateTask;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Clock;
 import java.time.Duration;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -24,7 +30,19 @@ public class ApprovalTestWiring {
     }
 
     @Bean
-    public ApprovalGateTask approvalGateTask() {
-        return new ApprovalGateTask();
+    public ObjectMapper approvalObjectMapper() {
+        return new ObjectMapper();
+    }
+
+    @Bean
+    public PlanSummaryExtractor planSummaryExtractor(TaskRepository tasks, TaskAttemptRepository taskAttempts,
+            TerraformResultRepository terraformResults, ObjectMapper objectMapper) {
+        return new PlanSummaryExtractor(tasks, taskAttempts, terraformResults, objectMapper);
+    }
+
+    @Bean
+    public ApprovalGateTask approvalGateTask(PlanSummaryExtractor planSummaryExtractor,
+            ApprovalSettings approvalSettings, Clock clock) {
+        return new ApprovalGateTask(planSummaryExtractor, approvalSettings, clock);
     }
 }

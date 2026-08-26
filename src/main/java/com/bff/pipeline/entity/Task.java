@@ -145,4 +145,28 @@ public class Task {
 
     @Version
     private Long version;
+
+    /**
+     * 이 태스크가 승인 게이트인가. operation을 직접 묻지 않고 여기를 거치는 이유는 열화 규약 때문이다 —
+     * 카탈로그에서 사라진 옛 이름은 converter가 null로 읽으므로, 묻는 쪽마다 null 검사를 달아야 한다.
+     * 그 검사가 한 곳이라도 빠지면 옛 행 하나에 조회가 통째로 터진다.
+     */
+    public boolean isApprovalGate() {
+        return operation != null && operation.isApprovalGate();
+    }
+
+    /** 이 태스크가 terraform Plan을 던지는가. null 열화 규약은 {@link #isApprovalGate()}와 같다. */
+    public boolean isTerraformPlan() {
+        return operation != null && operation.isTerraformPlan();
+    }
+
+    /** 이 태스크가 terraform slot을 쓰는 종류인가. null 열화 규약은 {@link #isApprovalGate()}와 같다. */
+    public boolean isTerraformJob() {
+        return operation != null && operation.consumesTerraformSlot();
+    }
+
+    /** 운영 UI에 붙는 terraform 액션 라벨(PLAN/APPLY/DESTROY). terraform 태스크가 아니거나 미해석이면 null. */
+    public String terraformActionLabel() {
+        return operation == null ? null : operation.terraformAction().orElse(null);
+    }
 }

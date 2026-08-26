@@ -23,7 +23,9 @@ import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -53,6 +55,10 @@ public class PipelineRestarter {
     private static final String IN_FLIGHT_JOB_WARNING =
             "원본 실행이 최근에 종료되었습니다. 이전에 dispatch된 Terraform job이 아직 실행 중일 수 있습니다(멱등이므로 무해).";
 
+    private static final String GATE_PULLED_BACK_WARNING =
+            "재시작 지점이 승인 단계라 바로 앞의 Plan 단계부터 다시 실행합니다. 승인자에게 보여줄 Plan 결과가"
+                    + " 새 실행에 있어야 하기 때문입니다.";
+
     private final PipelineRepository pipelines;
     private final TaskRepository tasks;
     private final PipelineCreator pipelineCreator;
@@ -61,13 +67,20 @@ public class PipelineRestarter {
 
     /**
      * 재시작 실행 — 검증·suffix 계산 후 새 파이프라인을 삽입한다. fromSequence는 선택적 오버라이드(더 앞으로만).
-     * 요청 맥락은 요청이 실어 보낸 값을 쓰고, 비어 있으면 원본 실행에서 승계한다 — 재시작했다는 이유만으로
-     * 요청자가 비면 계보를 따라가도 시킨 사람을 찾을 수 없다.
+     * 요청 맥락은 요청이 실어 보낸 값을 쓰고, 비어 있으면 원본 실행에서 승계한다 — 승인 단계가 포함된 체인은
+     * 요청자가 필수라, 승계 없이 두면 재시작이 400으로 막히거나 요청자 없는 승인 요청이 나간다.
      */
     public Pipeline restart(String target, Long pipelineId, Integer fromSequence, RequestContext request) {
         RestartComputation computation = compute(target, pipelineId, fromSequence);
+        RequestContext inherited = request.orInheritFrom(computation.origin());
         return pipelineCreator.insert(PipelinePlan.restartOf(computation.origin(), computation.provider(),
-                computation.steps(), request.orInheritFrom(computation.origin())), target);
+                computation.steps(), requireRequesterIfGated(inherited, computation.steps())), target);
+    }
+
+    /** 새 체인에 승인 단계가 들어 있으면 요청자를 필수로 건다(승인 게이트 ADR §결정 4의 생성 규칙과 같은 조건). */
+    private static RequestContext requireRequesterIfGated(RequestContext request, List<PlannedStep> steps) {
+        boolean gated = steps.stream().anyMatch(step -> step.definition().isApprovalGate());
+        return gated ? request.requireRequestedBy() : request;
     }
 
     /** 재시작 미리보기 — 실행과 동일한 검증을 수행하고(불가 상태는 여기서부터 409/400) 아무것도 저장하지 않는다. */
@@ -79,7 +92,8 @@ public class PipelineRestarter {
     private RestartComputation compute(String target, Long pipelineId, Integer fromSequence) {
         Pipeline origin = loadRestartableOrigin(target, pipelineId);
         List<Task> originChain = tasks.findByPipelineIdOrderBySequenceAsc(origin.getId());
-        int resumeFromSequence = resolveResumeSequence(origin, originChain, fromSequence);
+        int requestedResume = resolveResumeSequence(origin, originChain, fromSequence);
+        int resumeFromSequence = pullBackPastApprovalGate(originChain, requestedResume);
         // suffix는 여기서 한 번만 계산하고 preview 렌더와 restart step이 같은 리스트를 쓴다(필터 중복 금지).
         List<Task> suffix = originChain.stream()
                 .filter(task -> task.getSequence() >= resumeFromSequence)
@@ -89,7 +103,35 @@ public class PipelineRestarter {
         CloudProvider provider = origin.getCloudProvider() != null
                 ? origin.getCloudProvider()
                 : pipelineCreator.resolveProvider(target);
-        return new RestartComputation(origin, originChain, resumeFromSequence, provider, suffix, steps);
+        return RestartComputation.builder()
+                .origin(origin)
+                .originChain(originChain)
+                .requestedResumeSequence(requestedResume)
+                .resumeFromSequence(resumeFromSequence)
+                .provider(provider)
+                .suffix(suffix)
+                .steps(steps)
+                .build();
+    }
+
+    /**
+     * 재시작 지점이 승인 단계면 그 앞까지 당긴다(승인 게이트 ADR §결정 3). 만료된 게이트는 첫 non-DONE
+     * task라 기본 지점이 게이트 자신이 되는데, 그대로 두면 새 실행에 Plan 단계가 없어 승인자에게 보여줄
+     * 결과가 존재하지 않는다 — 근거 없이 버튼만 보게 되는 셈이라 "승인만 다시 하기"는 허용하지 않는다.
+     * 호출자가 지점을 직접 지정한 경우에도 같은 이유로 당긴다.
+     */
+    private static int pullBackPastApprovalGate(List<Task> originChain, int resume) {
+        int adjusted = resume;
+        while (adjusted > 0 && isApprovalGate(originChain, adjusted)) {
+            adjusted--;
+        }
+        return adjusted;
+    }
+
+    private static boolean isApprovalGate(List<Task> originChain, int sequence) {
+        return originChain.stream()
+                .filter(task -> task.getSequence() == sequence)
+                .anyMatch(Task::isApprovalGate);
     }
 
     /** 원본 로드(404) + 결정 5 허용표(409) + 최신 실행 검증(409). */
@@ -149,7 +191,7 @@ public class PipelineRestarter {
                         .map(task -> new SkippedTask(task.getSequence(), task.getTaskDefinition(), task.getStatus()))
                         .toList())
                 .tasksToRun(computation.suffix().stream().map(PipelineRestarter::toTaskToRun).toList())
-                .warnings(warnings(origin))
+                .warnings(warnings(computation))
                 .build();
     }
 
@@ -158,8 +200,7 @@ public class PipelineRestarter {
                 .sequence(task.getSequence())
                 .taskDefinition(task.getTaskDefinition())
                 .kind(task.getTaskName())
-                .terraformAction(task.getOperation() == null
-                        ? null : task.getOperation().terraformAction().orElse(null))
+                .terraformAction(task.terraformActionLabel())
                 .originTaskId(task.getId())
                 .originStatus(task.getStatus())
                 .originErrorCode(task.getErrorCode())
@@ -172,18 +213,30 @@ public class PipelineRestarter {
      * 아직 InfraManager에서 돌고 있을 수 있다 — 멱등이라 무해하지만 운영자에게 알린다. 끝난 행은 갱신되지
      * 않으므로 lastActivityAt이 곧 끝난 시각이다.
      */
-    private List<String> warnings(Pipeline origin) {
+    private List<String> warnings(RestartComputation computation) {
+        List<String> warnings = new ArrayList<>();
         Instant inFlightHorizon = clock.instant().minus(pipelineSettings.executionTimeout());
-        return origin.getLastActivityAt().isAfter(inFlightHorizon) ? List.of(IN_FLIGHT_JOB_WARNING) : List.of();
+        if (computation.origin().getLastActivityAt().isAfter(inFlightHorizon)) {
+            warnings.add(IN_FLIGHT_JOB_WARNING);
+        }
+        if (computation.resumeFromSequence() != computation.requestedResumeSequence()) {
+            warnings.add(GATE_PULLED_BACK_WARNING);
+        }
+        return List.copyOf(warnings);
     }
 
     private static long countDone(List<Task> chain) {
         return chain.stream().filter(task -> task.getStatus() == TaskStatus.DONE).count();
     }
 
-    /** 검증·suffix 계산 결과 — preview 렌더와 restart 삽입이 같은 값을 쓴다(suffix/steps는 compute가 한 번만 만든다). */
-    private record RestartComputation(Pipeline origin, List<Task> originChain, int resumeFromSequence,
-            CloudProvider provider, List<Task> suffix, List<PlannedStep> steps) {
+    /**
+     * 검증·suffix 계산 결과 — preview 렌더와 restart 삽입이 같은 값을 쓴다(suffix/steps는 compute가 한 번만 만든다).
+     * 순번 둘이 나란히 있어 위치 인자로 만들면 서로 바뀌어도 컴파일되고, 그러면 건너뛴 단계 계산과 게이트
+     * 경고가 동시에 뒤집힌다 — 이름을 붙여 만든다.
+     */
+    @Builder
+    private record RestartComputation(Pipeline origin, List<Task> originChain, int requestedResumeSequence,
+            int resumeFromSequence, CloudProvider provider, List<Task> suffix, List<PlannedStep> steps) {
 
         List<Task> skipped() {
             return originChain.stream().filter(task -> task.getSequence() < resumeFromSequence).toList();

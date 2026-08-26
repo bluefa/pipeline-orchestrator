@@ -2,7 +2,10 @@ package com.bff.pipeline.dto.pipeline;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.bff.pipeline.enums.ApprovalChannel;
+import com.bff.pipeline.enums.ApprovalStatus;
 import com.bff.pipeline.enums.CloudProvider;
+import com.bff.pipeline.enums.TerraformChangeKind;
 import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
@@ -203,5 +206,60 @@ class DtoSnakeCaseSerializationTest {
                 "\"last_response\":", "\"poll_count\":3", "\"last_polled_at\":");
         assertThat(json).doesNotContain("taskId", "attemptNumber", "jobId", "lastState", "lastFailReason",
                 "lastError", "lastResponse", "pollCount", "lastPolledAt");
+    }
+
+    @Test
+    void taskApprovalViewSerializesSnakeCaseAndInlinesTheStoredSummary() throws Exception {
+        TaskApprovalView approval = TaskApprovalView.builder()
+                .status(ApprovalStatus.APPROVED)
+                .requestedAt(Instant.parse("2026-08-22T00:00:00Z"))
+                .expiresAt(Instant.parse("2026-08-23T00:00:00Z"))
+                .decidedAt(Instant.parse("2026-08-22T05:11:00Z"))
+                .approverId("reviewer-1").approverName("박준호").channel(ApprovalChannel.CONSOLE)
+                .planSummary("{\"verified\":true,\"destroy_count\":2}")
+                .build();
+
+        String json = mapper.writeValueAsString(approval);
+
+        assertThat(json).contains("\"requested_at\":", "\"expires_at\":", "\"decided_at\":",
+                "\"approver_id\":\"reviewer-1\"", "\"approver_name\":\"박준호\"",
+                "\"channel\":\"CONSOLE\"");
+        assertThat(json).doesNotContain("requestedAt", "expiresAt", "decidedAt", "approverId", "approverName");
+        // 저장된 요약은 문자열로 한 번 더 감싸지 않고 그대로 펼쳐진다 — 콘솔이 JSON 안의 JSON을 풀 일이 없다.
+        assertThat(json).contains("\"plan_summary\":{\"verified\":true,\"destroy_count\":2}");
+    }
+
+    @Test
+    void planSummarySerializesSnakeCase() throws Exception {
+        PlanSummary summary = PlanSummary.builder()
+                .verified(true).createCount(1L).updateCount(0L).destroyCount(2L).replaceCount(1L)
+                .importCount(0L).forgetCount(0L).moveCount(0L)
+                .changes(List.of(new PlanSummary.ChangeView("aws_db_instance.main", TerraformChangeKind.REPLACE)))
+                .addressesTruncated(true).omittedCount(7)
+                .build();
+
+        String json = mapper.writeValueAsString(summary);
+
+        assertThat(json).contains("\"verified\":true", "\"create_count\":1", "\"destroy_count\":2",
+                "\"replace_count\":1", "\"addresses_truncated\":true", "\"omitted_count\":7",
+                "\"address\":\"aws_db_instance.main\"", "\"kind\":\"REPLACE\"");
+        assertThat(json).doesNotContain("createCount", "destroyCount", "addressesTruncated", "omittedCount");
+    }
+
+    /**
+     * 검증에 실패한 요약은 수치 키를 아예 싣지 않는다. 0을 실으면 "0건 생성"이라는 주장이 되는데, 우리가
+     * 아는 것은 0건이 아니라 모른다는 사실이라 승인자가 정반대로 읽게 된다.
+     */
+    @Test
+    void anUnverifiedPlanSummaryCarriesNoNumbers() throws Exception {
+        PlanSummary summary = PlanSummary.builder()
+                .verified(false).unverifiedReason("Plan 로그가 잘려 저장됐습니다").changes(List.of())
+                .build();
+
+        String json = mapper.writeValueAsString(summary);
+
+        assertThat(json).contains("\"verified\":false", "\"unverified_reason\":\"Plan 로그가 잘려 저장됐습니다\"");
+        assertThat(json).doesNotContain("create_count", "update_count", "destroy_count", "replace_count",
+                "import_count", "forget_count", "move_count", "addresses_truncated", "omitted_count");
     }
 }

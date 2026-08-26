@@ -14,14 +14,20 @@ import com.bff.pipeline.enums.ErrorCode;
  * <p>{@link Dispatched}는 dispatch가 돌려준 {@link DispatchResult}를 담는다. 원시 response를 해석 없이 실어 나를
  * 뿐이고, 형식 해석은 task type 몫이며 write-back 트랜잭션은 {@code task_attempt.response}에 그대로 기록한다(ADR-016 ed97ec0).
  *
+ * {@link ApprovalPoll}만 규약이 다르다. 나머지 변형은 run 단계가 내린 판정을 write-back이 그대로
+ * 적용하지만, 이 변형은 "판정을 write-back 안에서 내려라"는 위임이다(승인 게이트 ADR §결정 2의 명시적 예외).
+ * 승인·만료 경합의 승자는 조건부 UPDATE로 갈리는데, run 단계는 트랜잭션 밖이라 거기서 읽은 값은 이미
+ * 낡았을 수 있기 때문이다. 그래서 값에 담을 payload가 없다 — 판정 입력이 DB 행 자체다.
+ *
  * <p>정적 팩토리({@code unblock}, {@code dispatched}, {@code pending}, {@code succeeded},
  * {@code failed}, {@code callTimeout}, {@code callFailed}, {@code conditionMet},
- * {@code conditionNotMet}, {@code unknownTask})로 만든다.
+ * {@code conditionNotMet}, {@code approvalPoll}, {@code unknownTask})로 만든다.
  */
 public sealed interface StepOutcome
         permits StepOutcome.Unblock, StepOutcome.Dispatched, StepOutcome.Pending,
                 StepOutcome.Succeeded, StepOutcome.Failed, StepOutcome.CallFailure,
-                StepOutcome.ConditionMet, StepOutcome.ConditionNotMet, StepOutcome.UnknownTask {
+                StepOutcome.ConditionMet, StepOutcome.ConditionNotMet, StepOutcome.ApprovalPoll,
+                StepOutcome.UnknownTask {
 
     /** write-back 트랜잭션이 applyOutcome에 앞서 beginAttempt를 기록해야 하는가. */
     boolean dispatchPhase();
@@ -62,6 +68,11 @@ public sealed interface StepOutcome
         public boolean dispatchPhase() { return false; }
     }
 
+    /** APPROVAL 전용: 승인 대기 중인 게이트를 깨웠다 — 어떻게 할지는 write-back 트랜잭션이 승인 행을 보고 정한다. */
+    record ApprovalPoll() implements StepOutcome {
+        public boolean dispatchPhase() { return false; }
+    }
+
     record UnknownTask() implements StepOutcome {
         public boolean dispatchPhase() { return false; }
     }
@@ -75,5 +86,6 @@ public sealed interface StepOutcome
     static StepOutcome callFailed(boolean dispatch, String detail) { return new CallFailure(ErrorCode.CHECK_ERROR, CheckSignal.API_ERROR, dispatch, detail); }
     static StepOutcome conditionMet(String response) { return new ConditionMet(response); }
     static StepOutcome conditionNotMet(String response) { return new ConditionNotMet(response); }
+    static StepOutcome approvalPoll() { return new ApprovalPoll(); }
     static StepOutcome unknownTask() { return new UnknownTask(); }
 }
