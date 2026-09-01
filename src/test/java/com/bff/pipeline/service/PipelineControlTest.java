@@ -20,6 +20,7 @@ import com.bff.pipeline.service.lifecycle.PipelineInserter;
 import com.bff.pipeline.service.lifecycle.RecipeCatalog;
 import com.bff.pipeline.service.task.ObservationRecorder;
 import com.bff.pipeline.service.task.TaskCanceller;
+import com.bff.pipeline.model.RequestContext;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -64,7 +65,7 @@ class PipelineControlTest {
 
     @Test
     void cancelTerminalizesEveryNonTerminalTaskAndFreesTheTarget() {
-        Pipeline pipeline = creator.create("c-1", PipelineType.INSTALL);
+        Pipeline pipeline = creator.create("c-1", PipelineType.INSTALL, RequestContext.none());
 
         Pipeline cancelled = control.cancel(pipeline.getId());
 
@@ -95,7 +96,7 @@ class PipelineControlTest {
 
     @Test
     void cancelIsIdempotentOnAnAlreadyTerminalPipeline() {
-        Pipeline pipeline = creator.create("c-2", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("c-2", PipelineType.DELETE, RequestContext.none());
         control.cancel(pipeline.getId());
 
         Pipeline again = control.cancel(pipeline.getId());
@@ -105,17 +106,17 @@ class PipelineControlTest {
 
     @Test
     void aNewRunIsAllowedForTheTargetAfterCancel() {
-        Pipeline first = creator.create("c-3", PipelineType.INSTALL);
+        Pipeline first = creator.create("c-3", PipelineType.INSTALL, RequestContext.none());
         control.cancel(first.getId());
 
-        Pipeline second = creator.create("c-3", PipelineType.INSTALL);
+        Pipeline second = creator.create("c-3", PipelineType.INSTALL, RequestContext.none());
 
         assertThat(second.getId()).isNotEqualTo(first.getId());
     }
 
     @Test
     void cancelDoesNotResurrectAPipelineThatAlreadyConvergedToTerminal() {
-        Pipeline pipeline = creator.create("c-4", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("c-4", PipelineType.DELETE, RequestContext.none());
         Pipeline converged = pipelineRepository.findById(pipeline.getId()).orElseThrow();
         converged.setStatus(PipelineStatus.DONE);
         converged.setActiveTarget(null);

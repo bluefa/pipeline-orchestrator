@@ -59,6 +59,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import com.bff.pipeline.exception.CallFailedException;
+import com.bff.pipeline.model.RequestContext;
 
 /**
  * ADR-021 claim-pull 실행 모델의 엔드-투-엔드 테스트이다. {@link PipelineWorker#pollOnce}가 due pipeline 하나를
@@ -115,7 +116,7 @@ class PipelineExecutionTest {
     @Test
     void terraformHappyPathReachesDoneAndRecordsTheResponse() {
         // AWS delete recipe = destroy 3단계(BDC service level → BDC common → 서비스), 단계마다 dispatch + poll.
-        Pipeline pipeline = creator.create("e-happy", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-happy", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
 
         pipelineWorker.pollOnce();   // dispatch (BDC service level destroy) → IN_PROGRESS
@@ -136,7 +137,7 @@ class PipelineExecutionTest {
 
     @Test
     void recordsATerraformResultRowPerJobOnTheConcludingTurn() {
-        Pipeline pipeline = creator.create("e-postcheck", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-postcheck", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
         infraManagerClient.onResult(() -> "Destroy complete! Resources: 3 destroyed.");
 
@@ -156,7 +157,7 @@ class PipelineExecutionTest {
     @Test
     void aFailedJobWaitsForItsSiblingsBeforeConcludingJobFailed() {
         // 집계 정책(전원 terminal 대기): FAILED job을 봤어도 형제 job이 인프라에서 손을 뗄 때까지 판정을 미룬다.
-        Pipeline pipeline = creator.create("e-wait", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-wait", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
         Map<String, TerraformPoll> polls = new HashMap<>();
         polls.put("job-1", TerraformPoll.failure("FAILED", null));
@@ -182,7 +183,7 @@ class PipelineExecutionTest {
 
     @Test
     void aDeadlineWithAFailedJobConcludesJobFailedAndRecordsOnlyFinishedJobs() {
-        Pipeline pipeline = creator.create("e-deadline", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-deadline", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
         Map<String, TerraformPoll> polls = new HashMap<>();
         polls.put("job-1", TerraformPoll.failure("FAILED", null));
@@ -204,7 +205,7 @@ class PipelineExecutionTest {
     void aTransientPollErrorRidesExecutionTimeoutWithoutBurningFailCountAndKeepsPollingSiblings() {
         // 폴 전송 실패는 즉시 실패가 아니다: 임계 미만이면 미종결로 두고, 형제 job은 abort 없이 계속 관측되며,
         // task.failCount는 이 경로로 오르지 않는다. 기본 설정에선 임계(10)에 닿기 전에 execution-timeout이 먼저 종결한다.
-        Pipeline pipeline = creator.create("e-poll-transient", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-poll-transient", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onDispatch(() -> "[\"job-err\",\"job-ok\"]");   // err를 먼저 둬 abort-on-first 회귀를 잡는다
         infraManagerClient.onPollByJob(jobId -> {
             if (jobId.equals("job-ok")) {
@@ -239,7 +240,7 @@ class PipelineExecutionTest {
         // 연속 전송 실패가 임계(10)에 닿으면 그 job을 관측 불능으로 확정한다 → JOB_FAILED. onPoll이 매번 실패하므로
         // 사이에 정상 관측이 없어 연속이 곧 총합이다. execution-timeout이 먼저 끊지 않도록 task별 타임아웃을 크게
         // 오버라이드해 임계 발화 경로만 격리한다.
-        Pipeline pipeline = creator.create("e-poll-budget", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-poll-budget", PipelineType.DELETE, RequestContext.none());
         Task terraform = task(pipeline, 0);
         terraform.setExecutionTimeout(Duration.ofHours(100));
         taskRepository.save(terraform);
@@ -281,7 +282,7 @@ class PipelineExecutionTest {
     void anExhaustedJobStaysFailedAndIsNotRepolledWhileASiblingIsStillRunning() {
         // 임계를 넘긴 job은 형제 대기로 판정이 미뤄지는 turn에도 실패로 남고 다시 폴되지 않는다(sticky).
         // 재폴로 일시 회복이 확정된 실패를 뒤집으면 안 된다(codex P1 회귀 가드).
-        Pipeline pipeline = creator.create("e-sticky", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-sticky", PipelineType.DELETE, RequestContext.none());
         Task terraform = task(pipeline, 0);
         terraform.setExecutionTimeout(Duration.ofHours(100));   // 임계 발화 경로만 격리(timeout 배제)
         taskRepository.save(terraform);
@@ -322,7 +323,7 @@ class PipelineExecutionTest {
     @Test
     void aNullPollStatusCountsTowardThePerJobErrorBudget() {
         // 상태 없음(null poll)도 전송 실패와 같은 관측 불능이라 연속 카운트에 반영된다(임계 미만이라 미종결).
-        Pipeline pipeline = creator.create("e-null-poll", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-null-poll", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onPoll(() -> null);
 
         pipelineWorker.pollOnce();   // dispatch
@@ -340,7 +341,7 @@ class PipelineExecutionTest {
     void scatteredPollErrorsWithRecoveriesNeverExhaustTheConsecutiveBudget() {
         // 산발적 전송 오류라도 사이에 정상 관측이 있으면 연속 카운트가 0으로 리셋돼 관측 불능으로 오판되지 않는다.
         // 누적 시맨틱이라면 임계(10)를 훨씬 넘는 폴 수에서 이미 죽었을 것이다(Fable 회귀 가드).
-        Pipeline pipeline = creator.create("e-poll-reset", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-poll-reset", PipelineType.DELETE, RequestContext.none());
         Task terraform = task(pipeline, 0);
         terraform.setExecutionTimeout(Duration.ofHours(100));   // 임계 발화 경로만 격리(timeout 배제)
         taskRepository.save(terraform);
@@ -367,7 +368,7 @@ class PipelineExecutionTest {
     @Test
     void installPromotesTheSuccessorInTheSameReportAndFinishes() {
         // AWS install recipe = 서비스 plan·apply → 네트워크 준비 확인 → BDC common plan·apply → BDC service level plan·apply.
-        Pipeline pipeline = creator.create("e-install", PipelineType.INSTALL);
+        Pipeline pipeline = creator.create("e-install", PipelineType.INSTALL, RequestContext.none());
         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
         infraManagerClient.onCheck(() -> true);
         for (int sequence = 1; sequence <= 6; sequence++) {
@@ -398,7 +399,7 @@ class PipelineExecutionTest {
 
     @Test
     void conditionNotMetRetriesThenFailsAtMaxWithConditionNotMet() {
-        Pipeline pipeline = creator.create("e-cond-fail", PipelineType.INSTALL);
+        Pipeline pipeline = creator.create("e-cond-fail", PipelineType.INSTALL, RequestContext.none());
         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
         infraManagerClient.onCheck(() -> false);   // condition never met → each poll is a failed poll
 
@@ -415,7 +416,7 @@ class PipelineExecutionTest {
 
     @Test
     void terraformFailureRetriesThenFailsAtMaxAndCascadeCancels() {
-        Pipeline pipeline = creator.create("e-fail", PipelineType.INSTALL);
+        Pipeline pipeline = creator.create("e-fail", PipelineType.INSTALL, RequestContext.none());
         infraManagerClient.onPoll(() -> TerraformPoll.failure("FAILED", null));
 
         runUntilTerminal(pipeline);
@@ -429,7 +430,7 @@ class PipelineExecutionTest {
 
     @Test
     void aLostDispatchResponseRidesExecutionTimeoutThenSharesTheFailCount() {
-        Pipeline pipeline = creator.create("e-lost", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-lost", PipelineType.DELETE, RequestContext.none());
         pipelineWorker.pollOnce();   // dispatch → IN_PROGRESS, response recorded
 
         TaskAttempt attempt = attempt(pipeline, 0);
@@ -446,7 +447,7 @@ class PipelineExecutionTest {
 
     @Test
     void aMissingAttemptRowRidesExecutionTimeoutViaTheTypeRecoveryPolicy() {
-        Pipeline pipeline = creator.create("e-lost-attempt", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-lost-attempt", PipelineType.DELETE, RequestContext.none());
         pipelineWorker.pollOnce();   // dispatch → IN_PROGRESS, attempt 행 기록됨
 
         taskAttemptRepository.delete(attempt(pipeline, 0));   // 관찰 유실 — attempt 행 자체가 사라짐
@@ -470,7 +471,7 @@ class PipelineExecutionTest {
 
     @Test
     void aThrowingDispatchIsCheckErrorAndRetries() {
-        Pipeline pipeline = creator.create("e-throw", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-throw", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onDispatch(() -> { throw new CallFailedException("503"); });
 
         pipelineWorker.pollOnce();
@@ -484,7 +485,7 @@ class PipelineExecutionTest {
 
     @Test
     void aRawRuntimeExceptionFromTheClientPropagatesOutOfProcess() {
-        Pipeline pipeline = creator.create("e-bug", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-bug", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onDispatch(() -> { throw new IllegalStateException("a real bug"); });
         Claim claim = pipelineClaimer.claimOneDue().orElseThrow();
 
@@ -496,7 +497,7 @@ class PipelineExecutionTest {
 
     @Test
     void aMalformedDispatchResponseFailsTheTaskOutright() {
-        Pipeline pipeline = creator.create("e-malformed", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-malformed", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onDispatch(() -> "not-json");
 
         pipelineWorker.pollOnce();   // dispatch records "not-json"
@@ -513,7 +514,7 @@ class PipelineExecutionTest {
     @ParameterizedTest
     @ValueSource(strings = {"null", "[]", "[null]", "[\"\"]"})
     void aResponseWithNoUsableJobIdsFailsTheTaskOutright(String response) {
-        Pipeline pipeline = creator.create("e-no-jobs", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-no-jobs", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onDispatch(() -> response);
 
         pipelineWorker.pollOnce();
@@ -525,7 +526,7 @@ class PipelineExecutionTest {
 
     @Test
     void nJobsCompleteOnlyWhenAllSucceed() {
-        Pipeline pipeline = creator.create("e-n", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-n", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\",\"job-3\"]");
         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
 
@@ -538,7 +539,7 @@ class PipelineExecutionTest {
 
     @Test
     void anUnknownTaskNameFailsAsUnknownTask() {
-        Pipeline pipeline = creator.create("e-unknown", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-unknown", PipelineType.DELETE, RequestContext.none());
         Task task = task(pipeline, 0);
         task.setTaskName("NO_SUCH_TYPE");
         taskRepository.save(task);
@@ -554,7 +555,7 @@ class PipelineExecutionTest {
     void aLegacyOperationValueFailsAsUnknownTaskInsteadOfCrashingTheRead() {
         // 카탈로그에서 제거된 옛 operation 값 — converter가 null로 열화하고, StepRunner의 row 캐시 대조가
         // 정의 불일치로 보고 외부 호출 없이 UNKNOWN_TASK로 끊는다(@Enumerated였다면 조회 자체가 터진다).
-        Pipeline pipeline = creator.create("e-legacy-op", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("e-legacy-op", PipelineType.DELETE, RequestContext.none());
         jdbcTemplate.update("update task set operation = 'DESTROY_NETWORK' where id = ?", task(pipeline, 0).getId());
 
         pipelineWorker.pollOnce();
@@ -568,14 +569,14 @@ class PipelineExecutionTest {
 
     @Test
     void creationSeedsNextDueAtSoThePipelineIsImmediatelyClaimable() {
-        Pipeline pipeline = creator.create("c-seed", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("c-seed", PipelineType.DELETE, RequestContext.none());
         assertThat(pipelineRepository.findById(pipeline.getId()).orElseThrow().getNextDueAt()).isEqualTo(START);
         assertThat(pipelineClaimer.claimOneDue()).isPresent();
     }
 
     @Test
     void aClaimStampsAFreshTokenAndLeaseAndBlocksASecondClaim() {
-        creator.create("c-claim", PipelineType.DELETE);
+        creator.create("c-claim", PipelineType.DELETE, RequestContext.none());
 
         Claim claim = pipelineClaimer.claimOneDue().orElseThrow();
 
@@ -587,7 +588,7 @@ class PipelineExecutionTest {
 
     @Test
     void anExpiredLeaseIsReclaimedWithADifferentToken() {
-        creator.create("c-reclaim", PipelineType.DELETE);
+        creator.create("c-reclaim", PipelineType.DELETE, RequestContext.none());
         String first = pipelineClaimer.claimOneDue().orElseThrow().token();
 
         clock.advance(LEASE.plusSeconds(1));
@@ -598,7 +599,7 @@ class PipelineExecutionTest {
 
     @Test
     void aSuccessfulDispatchReleasesTheClaimAndAdvancesNextDueAt() {
-        Pipeline pipeline = creator.create("c-release", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("c-release", PipelineType.DELETE, RequestContext.none());
 
         pipelineWorker.pollOnce();   // dispatch + report
 
@@ -610,7 +611,7 @@ class PipelineExecutionTest {
 
     @Test
     void aStaleTokenReportNoOpsAfterReclaim() {
-        Pipeline pipeline = creator.create("c-stale", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("c-stale", PipelineType.DELETE, RequestContext.none());
         String stale = pipelineClaimer.claimOneDue().orElseThrow().token();
         clock.advance(LEASE.plusSeconds(1));
         String fresh = pipelineClaimer.claimOneDue().orElseThrow().token();
@@ -625,7 +626,7 @@ class PipelineExecutionTest {
 
     @Test
     void aMatchingTokenReportStillAppliesAfterLeaseExpiryWhenNobodyReclaimed() {
-        Pipeline pipeline = creator.create("c-token-only", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("c-token-only", PipelineType.DELETE, RequestContext.none());
         Claim claim = pipelineClaimer.claimOneDue().orElseThrow();
         clock.advance(LEASE.plusSeconds(1));   // lease expired, but token unchanged and nobody reclaimed
 
@@ -638,7 +639,7 @@ class PipelineExecutionTest {
 
     @Test
     void cancelCaseAIdleTerminatesImmediatelyAndClearsTheClaim() {
-        Pipeline pipeline = creator.create("x-idle", PipelineType.INSTALL);
+        Pipeline pipeline = creator.create("x-idle", PipelineType.INSTALL, RequestContext.none());
 
         Pipeline cancelled = control.cancel(pipeline.getId());
 
@@ -651,7 +652,7 @@ class PipelineExecutionTest {
 
     @Test
     void cancelCaseAExpiredLeaseStillTerminatesImmediately() {
-        Pipeline pipeline = creator.create("x-expired", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("x-expired", PipelineType.DELETE, RequestContext.none());
         pipelineClaimer.claimOneDue();
         clock.advance(LEASE.plusSeconds(1));
 
@@ -664,7 +665,7 @@ class PipelineExecutionTest {
 
     @Test
     void cancelCaseBLiveLeaseOnlyRaisesTheFlagThenTheClaimHolderTerminalizes() {
-        Pipeline pipeline = creator.create("x-live", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("x-live", PipelineType.DELETE, RequestContext.none());
         Claim claim = pipelineClaimer.claimOneDue().orElseThrow();
 
         control.cancel(pipeline.getId());
@@ -683,7 +684,7 @@ class PipelineExecutionTest {
 
     @Test
     void aStaleStragglerCannotResurrectAfterCaseACancel() {
-        Pipeline pipeline = creator.create("x-resurrect", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("x-resurrect", PipelineType.DELETE, RequestContext.none());
         Claim straggler = pipelineClaimer.claimOneDue().orElseThrow();
         clock.advance(LEASE.plusSeconds(1));
         control.cancel(pipeline.getId());   // Case A clears the token
