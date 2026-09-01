@@ -16,6 +16,7 @@ import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.TaskStatus;
+import com.bff.pipeline.model.RequestContext;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TerraformJobStateRepository;
@@ -59,7 +60,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import com.bff.pipeline.exception.CallFailedException;
-import com.bff.pipeline.model.RequestContext;
 
 /**
  * ADR-021 claim-pull 실행 모델의 엔드-투-엔드 테스트이다. {@link PipelineWorker#pollOnce}가 due pipeline 하나를

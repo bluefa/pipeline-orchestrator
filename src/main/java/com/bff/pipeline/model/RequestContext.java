@@ -26,19 +26,25 @@ public record RequestContext(String requestedBy, String requestNote) {
     private static final RequestContext NONE = new RequestContext(null, null);
 
     /**
-     * 요청에서 온 두 값을 검증해 담는다. 빈 문자열은 값이 없는 것과 같게 다뤄 저장하지 않는다 —
-     * 공백만 넣어 필수 검사를 형식적으로 통과하는 길을 막는다.
+     * 길이 검증은 생성자에 있다 — of()를 지나지 않고 record를 직접 만들어도 열 길이를 넘는 값은 여기서
+     * 거절되므로, 초과 값이 insert까지 흘러가 일반 500으로 죽는 길이 없다. 내부 경로(빈 값, 이미 저장된
+     * 행에서의 승계)는 항상 한도 안이라 이 검사를 그냥 지나간다.
+     */
+    public RequestContext {
+        if (requestedBy != null && requestedBy.length() > Pipeline.REQUESTED_BY_LENGTH) {
+            throw new RequestedByTooLongException(requestedBy.length(), Pipeline.REQUESTED_BY_LENGTH);
+        }
+        if (requestNote != null && requestNote.length() > Pipeline.REQUEST_NOTE_LENGTH) {
+            throw new RequestNoteTooLongException(requestNote.length(), Pipeline.REQUEST_NOTE_LENGTH);
+        }
+    }
+
+    /**
+     * 요청에서 온 두 값을 다듬어 담는다. 빈 문자열은 값이 없는 것과 같게 다뤄 저장하지 않는다 —
+     * 공백만 넣어 필수 검사를 형식적으로 통과하는 길을 막는다. 길이 거절은 생성자가 한다.
      */
     public static RequestContext of(String requestedBy, String requestNote) {
-        String requester = blankToNull(requestedBy);
-        String note = blankToNull(requestNote);
-        if (requester != null && requester.length() > Pipeline.REQUESTED_BY_LENGTH) {
-            throw new RequestedByTooLongException(requester.length(), Pipeline.REQUESTED_BY_LENGTH);
-        }
-        if (note != null && note.length() > Pipeline.REQUEST_NOTE_LENGTH) {
-            throw new RequestNoteTooLongException(note.length(), Pipeline.REQUEST_NOTE_LENGTH);
-        }
-        return new RequestContext(requester, note);
+        return new RequestContext(blankToNull(requestedBy), blankToNull(requestNote));
     }
 
     /** 요청 맥락이 없는 경로(재시작 승계 전 기본값 등)를 위한 빈 값. */

@@ -38,6 +38,15 @@ class RequestContextTest {
         assertThat(context.requestNote()).isNull();
     }
 
+    /** of()를 지나지 않는 직접 생성도 같은 규칙이다 — 길이 거절은 생성자에 있어 우회할 길이 없다. */
+    @Test
+    void theCanonicalConstructorEnforcesTheSameBounds() {
+        assertThatThrownBy(() -> new RequestContext("x".repeat(Pipeline.REQUESTED_BY_LENGTH + 1), null))
+                .isInstanceOf(RequestedByTooLongException.class);
+        assertThatThrownBy(() -> new RequestContext(null, "y".repeat(Pipeline.REQUEST_NOTE_LENGTH + 1)))
+                .isInstanceOf(RequestNoteTooLongException.class);
+    }
+
     @Test
     void surroundingWhitespaceIsTrimmed() {
         assertThat(RequestContext.of("  admin@example.com  ", null).requestedBy())

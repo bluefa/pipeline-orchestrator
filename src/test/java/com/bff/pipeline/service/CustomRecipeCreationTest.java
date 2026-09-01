@@ -23,6 +23,7 @@ import com.bff.pipeline.exception.TaskDescriptionTooLongException;
 import com.bff.pipeline.exception.TaskProviderMismatchException;
 import com.bff.pipeline.exception.UnknownTaskException;
 import com.bff.pipeline.exception.UnsupportedRecipeException;
+import com.bff.pipeline.model.RequestContext;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
@@ -30,7 +31,6 @@ import com.bff.pipeline.service.lifecycle.PipelineInserter;
 import com.bff.pipeline.service.lifecycle.PipelineRestarter;
 import com.bff.pipeline.service.lifecycle.RecipeCatalog;
 import com.bff.pipeline.service.query.PipelineQueryService;
-import com.bff.pipeline.model.RequestContext;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -121,6 +121,21 @@ class CustomRecipeCreationTest {
         assertThat(detail.requestNote()).isEqualTo("정리 요청 건입니다.");
         assertThat(pipelineRepository.findById(detail.pipelineId()).orElseThrow().getRequestedBy())
                 .isEqualTo("admin@example.com");
+    }
+
+    /**
+     * custom 경로도 실값으로 왕복을 고정한다 — 컨트롤러가 같은 타입의 String 두 개를 넘기므로, 인자가
+     * 뒤바뀌어도 컴파일은 통과한다. 요청자가 사유 자리에 저장되면 감사 기록이 다른 사람을 가리킨다.
+     */
+    @Test
+    void theCustomEndpointRecordsItsOwnRequestContext() {
+        PipelineDetail detail = controller.createCustom("cust-endpoint-request-custom",
+                new CustomPipelineRequest(
+                        List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), null)),
+                        "operator@example.com", "커스텀 정리 실행"));
+
+        assertThat(detail.requestedBy()).isEqualTo("operator@example.com");
+        assertThat(detail.requestNote()).isEqualTo("커스텀 정리 실행");
     }
 
     /** 요청 맥락은 선택값이다 — 안 실어 보내도 실행은 그대로 만들어진다. */
