@@ -55,6 +55,14 @@
             <artifactId>spring-cloud-starter-openfeign</artifactId>
         </dependency>
 
+        <!-- 자동 설치 이벤트 수신(InstallEventSubscriber): GCP Pub/Sub 구독. Spring 자동구성 없이 클라이언트만 쓴다 —
+             구독이 꺼진 배포(기본값)와 슬라이스 테스트는 이 라이브러리를 건드리지 않는다. -->
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-pubsub</artifactId>
+            <version>1.151.0</version>
+        </dependency>
+
         <!-- Production target DB. -->
         <dependency>
             <groupId>com.mysql</groupId>

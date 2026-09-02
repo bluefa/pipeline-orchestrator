@@ -209,6 +209,19 @@ cancel is applied against a live worker is an execution concern (ADR-021).
 
 ## Schema
 
+**Trigger ledger**
+
+- `install_event(id, message_id, received_at, target, cloud_provider, outcome, pipeline_id, reason)` —
+  one append-only row per auto-install event received from the Pub/Sub subscription (the stage-4
+  entry trigger; `InstallEventSubscriber`/`InstallEventHandler`). `outcome` is `STARTED` (a catalog
+  INSTALL was opened with `requested_by = SYSTEM`; `pipeline_id` is that run), `ALREADY_ACTIVE`
+  (the target already had a non-terminal run; `pipeline_id` is the blocking run — nothing is queued,
+  the row is the only trace), `PROVIDER_HELD` (AWS/GCP auto-install is on hold) or `INVALID`
+  (unreadable body, non-INSTALL type, unknown provider, or a `cloud_provider` that disagrees with
+  the catalog lookup; `reason` says which). `cloud_provider` keeps the event's raw string so a
+  publisher bug stays visible. The engine never reads this table; a redelivered message may add a
+  second row but can never open a second run (Decision 4 carries the idempotency).
+
 **Domain state tables**
 
 - `pipeline(id, type, target, cloud_provider, recipe_definition, status, created_at,

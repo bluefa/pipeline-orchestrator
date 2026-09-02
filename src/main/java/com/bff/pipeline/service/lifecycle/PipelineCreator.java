@@ -79,7 +79,17 @@ public class PipelineCreator {
         return insert(PipelinePlan.custom(target, provider, steps, request), target);
     }
 
-    /** plan 삽입 + active-target 유니크 위반의 도메인 번역. catalog/custom/restart(PipelineRestarter) 경로가 공유한다. */
+    /**
+     * 자동 설치 이벤트 경로(InstallEventHandler). 핸들러가 provider를 이미 조회해 이벤트 값과 대조까지 마쳤으므로
+     * 다시 조회하지 않고 (provider, type) recipe만 골라 연다. 실패 계약은 create와 같다(미지원 recipe 400, 활성 존재 409).
+     */
+    Pipeline createForProvider(String target, CloudProvider provider, PipelineType type, RequestContext request) {
+        RecipeDefinition recipe = recipeCatalog.forProviderAndType(provider, type)
+                .orElseThrow(() -> new UnsupportedRecipeException(provider, type));
+        return insert(PipelinePlan.fromCatalog(target, recipe, request), target);
+    }
+
+    /** plan 삽입 + active-target 유니크 위반의 도메인 번역. catalog/custom/restart(PipelineRestarter)/이벤트 경로가 공유한다. */
     Pipeline insert(PipelinePlan plan, String target) {
         try {
             return pipelineInserter.insert(plan);
