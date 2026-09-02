@@ -56,10 +56,10 @@ public class Pipeline {
     public static final String ACTIVE_TARGET_CONSTRAINT = "uq_pipeline_active_target";
 
     /** 요청자 컬럼 길이. 넘는 값은 자르지 않고 요청 자체를 거절한다(사람이 쓴 값을 말없이 훼손하지 않는다). */
-    public static final int REQUESTED_BY_LENGTH = 64;
+    public static final int REQUESTED_BY_LENGTH = 100;
 
-    /** 요청 사유 컬럼 길이. custom task 설명(100자)과 같은 축에서 잡은 값이다. */
-    public static final int REQUEST_NOTE_LENGTH = 200;
+    /** 요청 사유 컬럼 길이. 승인자에게 남기는 한두 문단 분량을 담는다. */
+    public static final int REQUEST_NOTE_LENGTH = 512;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
