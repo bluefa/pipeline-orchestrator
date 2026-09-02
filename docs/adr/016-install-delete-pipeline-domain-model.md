@@ -213,7 +213,7 @@ cancel is applied against a live worker is an execution concern (ADR-021).
 
 - `pipeline(id, type, target, cloud_provider, recipe_definition, status, created_at,
   last_activity_at, active_target, origin_pipeline_id, requested_by, request_note)` — execution adds `next_due_at, claimed_by, claimed_until,
-  cancel_requested` (see ADR-021). `requested_by`(64)/`request_note`(200) are **write-once,
+  cancel_requested` (see ADR-021). `requested_by`(100)/`request_note`(512) are **write-once,
   display-only** request context stamped at create (nullable; over-length input is rejected with a
   typed 400, never truncated; exposed in the detail DTO only — the engine never reads them).
   `cloud_provider` is a **write-once** (`updatable=false`) cache
