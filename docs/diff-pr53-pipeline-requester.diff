@@ -1,0 +1,1706 @@
+diff --git a/docs/adr/016-install-delete-pipeline-domain-model.md b/docs/adr/016-install-delete-pipeline-domain-model.md
+index 89de907..0512ecb 100644
+--- a/docs/adr/016-install-delete-pipeline-domain-model.md
++++ b/docs/adr/016-install-delete-pipeline-domain-model.md
+@@ -212,8 +212,11 @@ cancel is applied against a live worker is an execution concern (ADR-021).
+ **Domain state tables**
+ 
+ - `pipeline(id, type, target, cloud_provider, recipe_definition, status, created_at,
+-  last_activity_at, active_target, origin_pipeline_id)` — execution adds `next_due_at, claimed_by, claimed_until,
+-  cancel_requested` (see ADR-021). `cloud_provider` is a **write-once** (`updatable=false`) cache
++  last_activity_at, active_target, origin_pipeline_id, requested_by, request_note)` — execution adds `next_due_at, claimed_by, claimed_until,
++  cancel_requested` (see ADR-021). `requested_by`(100)/`request_note`(512) are **write-once,
++  display-only** request context stamped at create (nullable; over-length input is rejected with a
++  typed 400, never truncated; exposed in the detail DTO only — the engine never reads them).
++  `cloud_provider` is a **write-once** (`updatable=false`) cache
+   of the provider looked up at create for recipe selection; `recipe_definition` is stamped at
+   create with the `RecipeDefinition` constant name the Admin API joins on (set once at insert,
+   though not annotation-immutable). `origin_pipeline_id` is a **write-once, display-only**
+diff --git a/docs/adr/terraform-apply-approval-gate.md b/docs/adr/terraform-apply-approval-gate.md
+index c11d239..b48a6c8 100644
+--- a/docs/adr/terraform-apply-approval-gate.md
++++ b/docs/adr/terraform-apply-approval-gate.md
+@@ -304,9 +304,9 @@ channel)`은 **한 트랜잭션에서** 위 CAS와 웨이크업(`pipeline.next_d
+   않는다. 비게이트 레시피에서는 선택(있으면 기록 — 일반 감사에도 유익).
+ - **두 필드의 경계 계약은 절단이 아니라 typed 400 거절이다**(사람이 쓴 값을
+   말없이 자르면 의도가 훼손된다 — R10 규칙 "bound or reject"에서 reject 선택):
+-  `requested_by`는 non-blank·최대 64자(blank·초과 400 — blank를 허용하면 필수
++  `requested_by`는 non-blank·최대 100자(blank·초과 400 — blank를 허용하면 필수
+   감사가 형식으로만 통과하고, 초과는 insert에서 500으로 새므로 경계에서 막는다),
+-  `request_note`는 최대 200자(custom task 설명 ≤100 선례와 같은 축, 초과 400).
++  `request_note`는 최대 512자(초과 400).
+   각각 안정적인 `OrchestrationErrorCode` 신규 값으로 거절한다. 수용 지점은 생성
+   두 갈래(카탈로그 `CreatePipelineRequest`·custom `CustomPipelineRequest`)
+   모두이며, `requested_by` **필수** 검증은 게이트 레시피가 활성인 카탈로그 생성
+@@ -396,7 +396,7 @@ claim으로 이어질 수 있다(원장 R10 "judgment-tx column overflow" 패턴
+ base + id로만 조립), 그리고 요청 맥락 3필드(§결정 4) — `requested_by`(BFF가
+ 검증한 **내부 계정 표시 identity**라 허용한다: 승인 결과의 `approver_name` 표시와
+ 같은 범주이고, 승인 판단에 "누가 요청했는가"가 필수 입력이다), `requested_at`,
+-`request_note`(유일한 자유 텍스트 — 상한 200자·경계 검증, 불변식 3의 예외). 속성 값(before/after), raw 연결 식별자, 예외 텍스트는 요약·
++`request_note`(유일한 자유 텍스트 — 상한 512자·경계 검증, 불변식 3의 예외). 속성 값(before/after), raw 연결 식별자, 예외 텍스트는 요약·
+ Slack 본문에 직렬화하지 않는다(MUST NOT). **리소스 주소는 "코드 식별자라 무해"라고
+ 일반화하지 않는다** — `for_each` 인덱스 키에 hostname/DB명 같은 외부 유래 값이
+ 들어올 수 있으므로, Slack 본문의 주소는 **인덱스 세그먼트를 마스킹**한다
+@@ -444,7 +444,7 @@ private cluster 제약(맥락)을 Socket Mode가 정확히 해소한다: 앱이
+   상세 링크, 승인/반려 버튼. `request_note`는 이 payload에서 유일한 자유
+   텍스트다 — 자동 추출물이 아니라 **사람(관리자/담당자)이 승인자에게 의도적으로
+   쓰는 메시지**라 PII allowlist의 닫힌-필드 원칙과 범주가 다르며, 상한
+-  200자·경계 검증(§결정 4)을 조건으로 수용한다(불변식 3에 예외 명시).
++  512자·경계 검증(§결정 4)을 조건으로 수용한다(불변식 3에 예외 명시).
+   **렌더링 안전(MUST)**: `request_note`·`requested_by`는 Block Kit
+   `plain_text`로만 렌더링한다(mrkdwn 금지) — `<!channel>` 멘션이나
+   `<url|라벨>` 링크 문자열이 해석되면 채널 소란·승인 문맥 오인이 되므로,
+@@ -712,7 +712,7 @@ decided_at, approver, channel, plan_summary)을 추가하고, **`PipelineDetail`
+ 3. 승인 요청·요약(payload)은 ADR-022의 PII 계약 + §결정 5의 allowlist를 따른다 —
+    집계·마스킹된 주소·닫힌 필드만, 속성 값·raw 연결 식별자·예외 텍스트 금지
+    (MUST NOT). 유일한 자유 텍스트 예외는 `request_note`(§결정 4·6 — 사람이
+-   승인자에게 의도적으로 쓰는 메시지, 상한 200자·경계 검증)다.
++   승인자에게 의도적으로 쓰는 메시지, 상한 512자·경계 검증)다.
+ 4. 게이트 task는 terraform slot을 소비하지 않으며, **승인 대기 중에는** 실행
+    캡을 점유하지 않는다(§결정 2 — cap은 활성 claim 수 기준이고 대기 중엔 claim이
+    없다; 진입·결정 반영·만료 처리의 짧은 claim 순간은 일반 task와 동일하게
+diff --git a/src/main/java/com/bff/pipeline/controller/TargetSourcePipelineController.java b/src/main/java/com/bff/pipeline/controller/TargetSourcePipelineController.java
+index 8eaea36..e8dc3f2 100644
+--- a/src/main/java/com/bff/pipeline/controller/TargetSourcePipelineController.java
++++ b/src/main/java/com/bff/pipeline/controller/TargetSourcePipelineController.java
+@@ -9,6 +9,7 @@ import com.bff.pipeline.dto.pipeline.RestartPipelineRequest;
+ import com.bff.pipeline.dto.pipeline.RestartPreview;
+ import com.bff.pipeline.enums.PipelineType;
+ import com.bff.pipeline.exception.MissingPipelineTypeException;
++import com.bff.pipeline.model.RequestContext;
+ import com.bff.pipeline.service.lifecycle.PipelineCreator;
+ import com.bff.pipeline.service.lifecycle.PipelineRestarter;
+ import com.bff.pipeline.service.query.PipelineQueryService;
+@@ -65,7 +66,8 @@ public class TargetSourcePipelineController {
+         if (request == null || request.type() == null) {
+             throw new MissingPipelineTypeException();
+         }
+-        return queryService.toDetail(pipelineCreator.create(targetSourceId, request.type()));
++        return queryService.toDetail(pipelineCreator.create(targetSourceId, request.type(),
++                RequestContext.of(request.requestedBy(), request.requestNote())));
+     }
+ 
+     /**
+@@ -76,7 +78,9 @@ public class TargetSourcePipelineController {
+     public PipelineDetail createCustom(@PathVariable String targetSourceId,
+             @RequestBody CustomPipelineRequest request) {
+         return queryService.toDetail(pipelineCreator.createCustom(targetSourceId,
+-                request == null ? null : request.tasks()));
++                request == null ? null : request.tasks(),
++                request == null ? RequestContext.none()
++                        : RequestContext.of(request.requestedBy(), request.requestNote())));
+     }
+ 
+     /**
+@@ -97,6 +101,8 @@ public class TargetSourcePipelineController {
+     public PipelineDetail restart(@PathVariable String targetSourceId, @PathVariable Long pipelineId,
+             @RequestBody(required = false) RestartPipelineRequest request) {
+         return queryService.toDetail(pipelineRestarter.restart(targetSourceId, pipelineId,
+-                request == null ? null : request.fromSequence()));
++                request == null ? null : request.fromSequence(),
++                request == null ? RequestContext.none()
++                        : RequestContext.of(request.requestedBy(), request.requestNote())));
+     }
+ }
+diff --git a/src/main/java/com/bff/pipeline/dto/pipeline/CreatePipelineRequest.java b/src/main/java/com/bff/pipeline/dto/pipeline/CreatePipelineRequest.java
+index 9e8d67b..e6b52f0 100644
+--- a/src/main/java/com/bff/pipeline/dto/pipeline/CreatePipelineRequest.java
++++ b/src/main/java/com/bff/pipeline/dto/pipeline/CreatePipelineRequest.java
+@@ -3,6 +3,16 @@ package com.bff.pipeline.dto.pipeline;
+ import com.bff.pipeline.enums.PipelineType;
+ import com.fasterxml.jackson.annotation.JsonProperty;
+ 
+-/** 카탈로그 파이프라인 실행(P10) 요청 본문이다. type은 INSTALL 또는 DELETE. 와이어 필드는 snake_case 계약을 따른다. */
+-public record CreatePipelineRequest(@JsonProperty("type") PipelineType type) {
++/**
++ * 카탈로그 파이프라인 실행(P10) 요청 본문이다. type은 INSTALL 또는 DELETE.
++ *
++ * {@code requested_by}/{@code request_note}는 요청 맥락이다 — 누가 이 실행을 요청했고 무슨 말을 남겼는가.
++ * 요청자는 검증된 계정에서 BFF가 채워 보내며 오케스트레이터는 기록만 한다. 둘 다 선택값이다.
++ *
++ * 와이어 필드는 snake_case 계약을 따른다.
++ */
++public record CreatePipelineRequest(
++        @JsonProperty("type") PipelineType type,
++        @JsonProperty("requested_by") String requestedBy,
++        @JsonProperty("request_note") String requestNote) {
+ }
+diff --git a/src/main/java/com/bff/pipeline/dto/pipeline/CustomPipelineRequest.java b/src/main/java/com/bff/pipeline/dto/pipeline/CustomPipelineRequest.java
+index bfa89a3..1b7a680 100644
+--- a/src/main/java/com/bff/pipeline/dto/pipeline/CustomPipelineRequest.java
++++ b/src/main/java/com/bff/pipeline/dto/pipeline/CustomPipelineRequest.java
+@@ -7,7 +7,14 @@ import java.util.List;
+  * custom recipe 실행 요청 본문이다(LIN-18). 운영자가 구성한 task 순서를 {@code tasks}로 받아 그대로 실행한다(비영속).
+  * INSTALL/DELETE 같은 type은 받지 않는다 — custom 실행은 그 자체가 분류이며 저장 시 {@code PipelineType.CUSTOM}이
+  * 된다. tasks는 최소 한 개여야 하고(비면 400), 각 task 이름은 {@code TaskDefinition} 기준으로 해석된다.
++ *
++ * {@code requested_by}/{@code request_note}는 카탈로그 실행과 같은 요청 맥락이다 — 누가 요청했고 무슨 말을
++ * 남겼는가. 선택값이라 있으면 기록하고 없으면 그만이다.
++ *
+  * 와이어 필드는 snake_case 계약을 따른다.
+  */
+-public record CustomPipelineRequest(@JsonProperty("tasks") List<CustomTaskRequest> tasks) {
++public record CustomPipelineRequest(
++        @JsonProperty("tasks") List<CustomTaskRequest> tasks,
++        @JsonProperty("requested_by") String requestedBy,
++        @JsonProperty("request_note") String requestNote) {
+ }
+diff --git a/src/main/java/com/bff/pipeline/dto/pipeline/PipelineDetail.java b/src/main/java/com/bff/pipeline/dto/pipeline/PipelineDetail.java
+index df9e9cc..db931db 100644
+--- a/src/main/java/com/bff/pipeline/dto/pipeline/PipelineDetail.java
++++ b/src/main/java/com/bff/pipeline/dto/pipeline/PipelineDetail.java
+@@ -13,6 +13,8 @@ import lombok.Builder;
+  * + 현재·최종 task 파생값 + task 흐름 목록을 담는다. claimedBy fencing 토큰은 보안상 노출하지 않고 leased(boolean)로만
+  * 표시한다. currentTaskSequence는 최저 순번의 READY/IN_PROGRESS task이며, 그런 task가 없으면(모두 종료) null이다.
+  * dueLagMillis는 now 기준 지연(now - nextDueAt)을 ms로 준 값으로, 아직 due가 아니거나 종료 상태면 0으로 클램프한다.
++ * requestedBy/requestNote는 요청 맥락이다 — 누가 이 실행을 요청했고 무슨 말을 남겼는가. 상세에만 싣고
++ * 목록 응답에는 넣지 않는다(자유 텍스트를 모든 목록으로 퍼뜨리지 않는다).
+  * 재시작 계보 3필드: originPipelineId(이 실행이 재시작한 원본), origin(원본 요약 블록 — 원본이 있을 때만),
+  * restartedByPipelineId(역링크 — 이 실행을 재시작한 최신 실행). 셋 다 해당 없으면 null이다.
+  * 와이어 필드는 BFF swagger 계약에 맞춰 snake_case로 직렬화한다. 인접 동형 인자가 많아 위치 기반 생성 대신
+@@ -25,6 +27,8 @@ public record PipelineDetail(
+         @JsonProperty("target_source_id") String targetSourceId,
+         @JsonProperty("cloud_provider") CloudProvider cloudProvider,
+         @JsonProperty("recipe_definition") String recipeDefinition,
++        @JsonProperty("requested_by") String requestedBy,
++        @JsonProperty("request_note") String requestNote,
+         @JsonProperty("status") PipelineStatus status,
+         @JsonProperty("created_at") Instant createdAt,
+         @JsonProperty("last_activity_at") Instant lastActivityAt,
+diff --git a/src/main/java/com/bff/pipeline/dto/pipeline/RestartPipelineRequest.java b/src/main/java/com/bff/pipeline/dto/pipeline/RestartPipelineRequest.java
+index 68bd200..cee79c2 100644
+--- a/src/main/java/com/bff/pipeline/dto/pipeline/RestartPipelineRequest.java
++++ b/src/main/java/com/bff/pipeline/dto/pipeline/RestartPipelineRequest.java
+@@ -6,6 +6,13 @@ import com.fasterxml.jackson.annotation.JsonProperty;
+  * 재시작 실행 요청 본문이다(본문 자체가 생략 가능). {@code from_sequence}는 재시작 지점 오버라이드로,
+  * null이면 서버가 계산한 기본 지점(원본 체인의 첫 non-DONE task)부터다. 0 이상 기본 지점 이하만
+  * 허용된다 — 더 뒤(실패 task 건너뛰기)는 400이다(재시작 설계 결정 3).
++ *
++ * {@code requested_by}/{@code request_note}는 이 재시작의 요청 맥락이다. 재시작 버튼을 누른 사람이 새
++ * 요청자이므로 값을 실어 보내면 그것이 쓰이고, 둘 다 비워 두면 원본 실행의 요청 맥락을 그대로 승계한다 —
++ * 재시작했다는 이유만으로 요청자가 비어 버리면 계보를 따라가도 시킨 사람을 찾을 수 없다.
+  */
+-public record RestartPipelineRequest(@JsonProperty("from_sequence") Integer fromSequence) {
++public record RestartPipelineRequest(
++        @JsonProperty("from_sequence") Integer fromSequence,
++        @JsonProperty("requested_by") String requestedBy,
++        @JsonProperty("request_note") String requestNote) {
+ }
+diff --git a/src/main/java/com/bff/pipeline/entity/Pipeline.java b/src/main/java/com/bff/pipeline/entity/Pipeline.java
+index a75e359..5cada64 100644
+--- a/src/main/java/com/bff/pipeline/entity/Pipeline.java
++++ b/src/main/java/com/bff/pipeline/entity/Pipeline.java
+@@ -55,6 +55,12 @@ public class Pipeline {
+ 
+     public static final String ACTIVE_TARGET_CONSTRAINT = "uq_pipeline_active_target";
+ 
++    /** 요청자 컬럼 길이. 넘는 값은 자르지 않고 요청 자체를 거절한다(사람이 쓴 값을 말없이 훼손하지 않는다). */
++    public static final int REQUESTED_BY_LENGTH = 100;
++
++    /** 요청 사유 컬럼 길이. 승인자에게 남기는 한두 문단 분량을 담는다. */
++    public static final int REQUEST_NOTE_LENGTH = 512;
++
+     @Id
+     @GeneratedValue(strategy = GenerationType.IDENTITY)
+     private Long id;
+@@ -98,6 +104,22 @@ public class Pipeline {
+     @Column(name = "active_target")
+     private String activeTarget;
+ 
++    // ── 요청 맥락: 누가 왜 이 실행을 요청했는가. 생성 시 한 번 채우고 바꾸지 않는다. ──
++
++    /**
++     * 이 실행을 요청한 사람. 검증된 계정에서 BFF가 채워 보내며 오케스트레이터는 기록만 한다. 실행 기록만으로는
++     * 무엇이 돌았는지까지만 알 수 있어, 시킨 사람을 행에 함께 남긴다.
++     */
++    @Column(name = "requested_by", updatable = false, length = REQUESTED_BY_LENGTH)
++    private String requestedBy;
++
++    /**
++     * 요청자가 이 실행에 남기는 사유. 자유 텍스트라 길이를 경계에서 검증하고(초과는 거절),
++     * 저장 후에는 바꾸지 않는다.
++     */
++    @Column(name = "request_note", updatable = false, length = REQUEST_NOTE_LENGTH)
++    private String requestNote;
++
+     /**
+      * 이 실행이 재시작한 원본 파이프라인 id. 재시작이 아니면 null. 표시용 계보 메타데이터라 엔진(claim·전이·
+      * reconciler)은 읽지 않고, FK 제약도 걸지 않는다 — 원본 행이 사라져도 조회가 null-safe로 계보 표시만
+diff --git a/src/main/java/com/bff/pipeline/exception/OrchestrationErrorCode.java b/src/main/java/com/bff/pipeline/exception/OrchestrationErrorCode.java
+index efebb52..a4aa487 100644
+--- a/src/main/java/com/bff/pipeline/exception/OrchestrationErrorCode.java
++++ b/src/main/java/com/bff/pipeline/exception/OrchestrationErrorCode.java
+@@ -25,6 +25,8 @@ public enum OrchestrationErrorCode {
+     TASK_PROVIDER_MISMATCH,
+     TASK_DESCRIPTION_TOO_LONG,
+     PROVIDER_LOOKUP_FAILED,
++    REQUESTED_BY_TOO_LONG,
++    REQUEST_NOTE_TOO_LONG,
+     INVALID_STATISTICS_PERIOD,
+     INVALID_PARAMETER,
+     INTERNAL_ERROR;
+diff --git a/src/main/java/com/bff/pipeline/exception/RequestNoteTooLongException.java b/src/main/java/com/bff/pipeline/exception/RequestNoteTooLongException.java
+new file mode 100644
+index 0000000..8cf7afd
+--- /dev/null
++++ b/src/main/java/com/bff/pipeline/exception/RequestNoteTooLongException.java
+@@ -0,0 +1,15 @@
++package com.bff.pipeline.exception;
++
++import org.springframework.http.HttpStatus;
++
++/**
++ * 확인 요청 메시지가 저장 가능한 길이를 넘겼다. 사람이 승인자에게 쓴 말을 말없이 자르면 의도가 훼손되므로
++ * 자르지 않고 400으로 되돌려 보낸다(승인 게이트 ADR §결정 4).
++ */
++public class RequestNoteTooLongException extends OrchestrationException {
++
++    public RequestNoteTooLongException(int length, int maxLength) {
++        super(HttpStatus.BAD_REQUEST, OrchestrationErrorCode.REQUEST_NOTE_TOO_LONG,
++                "request_note is " + length + " chars, exceeds max " + maxLength);
++    }
++}
+diff --git a/src/main/java/com/bff/pipeline/exception/RequestedByTooLongException.java b/src/main/java/com/bff/pipeline/exception/RequestedByTooLongException.java
+new file mode 100644
+index 0000000..452b704
+--- /dev/null
++++ b/src/main/java/com/bff/pipeline/exception/RequestedByTooLongException.java
+@@ -0,0 +1,15 @@
++package com.bff.pipeline.exception;
++
++import org.springframework.http.HttpStatus;
++
++/**
++ * 요청자 값이 저장 가능한 길이를 넘겼다. 잘라서 저장하면 감사 기록이 다른 사람을 가리킬 수 있으므로
++ * 자르지 않고 400으로 되돌려 보낸다(승인 게이트 ADR §결정 4).
++ */
++public class RequestedByTooLongException extends OrchestrationException {
++
++    public RequestedByTooLongException(int length, int maxLength) {
++        super(HttpStatus.BAD_REQUEST, OrchestrationErrorCode.REQUESTED_BY_TOO_LONG,
++                "requested_by is " + length + " chars, exceeds max " + maxLength);
++    }
++}
+diff --git a/src/main/java/com/bff/pipeline/model/PipelinePlan.java b/src/main/java/com/bff/pipeline/model/PipelinePlan.java
+index ca68f47..a04a506 100644
+--- a/src/main/java/com/bff/pipeline/model/PipelinePlan.java
++++ b/src/main/java/com/bff/pipeline/model/PipelinePlan.java
+@@ -21,11 +21,14 @@ import java.util.Objects;
+  * {@code originPipelineId}는 재시작 계보다 — restart 경로만 원본 파이프라인 id를 싣고, 나머지 경로는 null이다.
+  * 표시용 write-once 메타데이터로 inserter가 행에 스탬핑만 하고 엔진은 읽지 않는다.
+  *
++ * {@code request}는 누가 왜 이 실행을 요청했는지다 — 세 경로 모두 요청 본문에서 받아 채우며, 재시작은
++ * 요청이 비어 있으면 원본의 것을 승계한다.
++ *
+  * 각 {@link PlannedStep}은 실행할 TaskDefinition과 선택적 운영자 설명(custom 경로에서만 채워지고, catalog 경로는
+  * null), 그리고 재시작 계보(originTaskId — restart 경로에서만)다.
+  */
+ public record PipelinePlan(String target, PipelineType type, CloudProvider provider, String recipeDefinition,
+-        Long originPipelineId, List<PlannedStep> steps) {
++        RequestContext request, Long originPipelineId, List<PlannedStep> steps) {
+ 
+     public PipelinePlan {
+         if (target == null || target.isBlank()) {
+@@ -33,6 +36,7 @@ public record PipelinePlan(String target, PipelineType type, CloudProvider provi
+         }
+         Objects.requireNonNull(type, "type must not be null");
+         Objects.requireNonNull(provider, "provider must not be null");
++        Objects.requireNonNull(request, "request must not be null — use RequestContext.none()");
+         if (steps == null || steps.isEmpty()) {
+             throw new IllegalArgumentException("steps must not be empty");
+         }
+@@ -40,27 +44,30 @@ public record PipelinePlan(String target, PipelineType type, CloudProvider provi
+     }
+ 
+     /** 카탈로그 recipe로부터 plan을 만든다 — type/provider/recipe 이름/step은 recipe가 이미 들고 있다. step 설명은 없다(null). */
+-    public static PipelinePlan fromCatalog(String target, RecipeDefinition recipe) {
++    public static PipelinePlan fromCatalog(String target, RecipeDefinition recipe, RequestContext request) {
+         Objects.requireNonNull(recipe, "recipe must not be null");
+         List<PlannedStep> steps = recipe.steps().stream()
+                 .map(definition -> new PlannedStep(definition, null))
+                 .toList();
+-        return new PipelinePlan(target, recipe.pipelineType(), recipe.provider(), recipe.name(), null, steps);
++        return new PipelinePlan(target, recipe.pipelineType(), recipe.provider(), recipe.name(), request, null, steps);
+     }
+ 
+     /** 검증을 통과한 custom step 리스트로 plan을 만든다 — type은 {@link PipelineType#CUSTOM}, recipeDefinition은 없다(null). */
+-    public static PipelinePlan custom(String target, CloudProvider provider, List<PlannedStep> steps) {
+-        return new PipelinePlan(target, PipelineType.CUSTOM, provider, null, null, steps);
++    public static PipelinePlan custom(String target, CloudProvider provider, List<PlannedStep> steps,
++            RequestContext request) {
++        return new PipelinePlan(target, PipelineType.CUSTOM, provider, null, request, null, steps);
+     }
+ 
+     /**
+      * 재시작 plan — type/recipeDefinition을 원본에서 승계하고 계보(originPipelineId)를 실어 만든다(재시작 설계
+      * 결정 1·2). provider는 호출자(PipelineRestarter)가 원본 저장값 또는 폴백 조회로 확정해 넘긴다.
++     * 요청 맥락도 호출자가 "요청에 실려 온 값 또는 원본 승계"로 확정해 넘긴다.
+      */
+-    public static PipelinePlan restartOf(Pipeline origin, CloudProvider provider, List<PlannedStep> steps) {
++    public static PipelinePlan restartOf(Pipeline origin, CloudProvider provider, List<PlannedStep> steps,
++            RequestContext request) {
+         Objects.requireNonNull(origin, "origin must not be null");
+         return new PipelinePlan(origin.getTarget(), origin.getType(), provider,
+-                origin.getRecipeDefinition(), origin.getId(), steps);
++                origin.getRecipeDefinition(), request, origin.getId(), steps);
+     }
+ 
+     /** 체인의 한 단계 — 실행할 TaskDefinition, 운영자가 붙인 선택적 설명, 재시작 계보(원본 task 행 id). */
+diff --git a/src/main/java/com/bff/pipeline/model/RequestContext.java b/src/main/java/com/bff/pipeline/model/RequestContext.java
+new file mode 100644
+index 0000000..dab4fc5
+--- /dev/null
++++ b/src/main/java/com/bff/pipeline/model/RequestContext.java
+@@ -0,0 +1,69 @@
++package com.bff.pipeline.model;
++
++import com.bff.pipeline.entity.Pipeline;
++import com.bff.pipeline.exception.RequestNoteTooLongException;
++import com.bff.pipeline.exception.RequestedByTooLongException;
++
++/**
++ * 실행을 누가 왜 요청했는지다. 실행 기록만 보고는 "이 target에 무엇이 돌았다"까지만 알 수 있고 누가 시켰는지는
++ * 알 수 없어, 파이프라인을 만드는 시점에 요청자와 요청 사유를 함께 받아 행에 붙인다. 세 경로(카탈로그·custom·
++ * 재시작)가 같은 값을 받고, 재시작은 요청이 비어 있으면 원본에서 승계한다.
++ *
++ * 두 값 모두 사람이 쓴 값이라 길이를 넘으면 자르지 않고 거절한다. 요청자 이름을 말없이 자르면
++ * 감사 기록이 다른 사람을 가리킬 수 있고, 요청 사유를 자르면 하려던 말이 훼손된다. 저장이 깨질까
++ * 걱정해 자르는 것보다, 경계에서 되돌려 보내 다시 쓰게 하는 편이 정직하다.
++ *
++ * 지금은 둘 다 선택값이다 — 있으면 기록하고 없으면 그만이다. 필수로 걸어야 하는 경로(승인 게이트)는 그
++ * 규칙을 쓰는 코드와 함께 들어온다.
++ *
++ * 요청자 값 자체는 호출자가 정한다. 콘솔에서 시작한 실행은 BFF가 검증된 세션 계정을 채워 보내고, 대상이
++ * 4단계에 들어서 infra install worker가 스스로 여는 자동 설치는 예약값 {@code "SYSTEM"}을 보낸다. 오케스트레이터는
++ * 두 값을 구분하지 않고 기록만 하며, 콘솔이 {@code "SYSTEM"}을 "시스템"으로 그려 사람이 시킨 실행과 가른다.
++ * 어느 시스템이 왜 열었는지는 요청 사유에 적는다.
++ */
++public record RequestContext(String requestedBy, String requestNote) {
++
++    private static final RequestContext NONE = new RequestContext(null, null);
++
++    /**
++     * 길이 검증은 생성자에 있다 — of()를 지나지 않고 record를 직접 만들어도 열 길이를 넘는 값은 여기서
++     * 거절되므로, 초과 값이 insert까지 흘러가 일반 500으로 죽는 길이 없다. 내부 경로(빈 값, 이미 저장된
++     * 행에서의 승계)는 항상 한도 안이라 이 검사를 그냥 지나간다.
++     */
++    public RequestContext {
++        if (requestedBy != null && requestedBy.length() > Pipeline.REQUESTED_BY_LENGTH) {
++            throw new RequestedByTooLongException(requestedBy.length(), Pipeline.REQUESTED_BY_LENGTH);
++        }
++        if (requestNote != null && requestNote.length() > Pipeline.REQUEST_NOTE_LENGTH) {
++            throw new RequestNoteTooLongException(requestNote.length(), Pipeline.REQUEST_NOTE_LENGTH);
++        }
++    }
++
++    /**
++     * 요청에서 온 두 값을 다듬어 담는다. 빈 문자열은 값이 없는 것과 같게 다뤄 저장하지 않는다 —
++     * 공백만 넣어 필수 검사를 형식적으로 통과하는 길을 막는다. 길이 거절은 생성자가 한다.
++     */
++    public static RequestContext of(String requestedBy, String requestNote) {
++        return new RequestContext(blankToNull(requestedBy), blankToNull(requestNote));
++    }
++
++    /** 요청 맥락이 없는 경로(재시작 승계 전 기본값 등)를 위한 빈 값. */
++    public static RequestContext none() {
++        return NONE;
++    }
++
++    /**
++     * 이 맥락이 비어 있으면 원본의 것을 승계한다 — 재시작이 쓴다. 재시작 요청이 자기 요청자를 실어 보내면
++     * 그 사람이 새 요청자이고, 안 실어 보내면 원본 실행의 요청 맥락을 그대로 이어받는다.
++     */
++    public RequestContext orInheritFrom(Pipeline origin) {
++        if (requestedBy != null || requestNote != null) {
++            return this;
++        }
++        return new RequestContext(origin.getRequestedBy(), origin.getRequestNote());
++    }
++
++    private static String blankToNull(String value) {
++        return value == null || value.isBlank() ? null : value.trim();
++    }
++}
+diff --git a/src/main/java/com/bff/pipeline/service/lifecycle/PipelineCreator.java b/src/main/java/com/bff/pipeline/service/lifecycle/PipelineCreator.java
+index 639a51d..27f626d 100644
+--- a/src/main/java/com/bff/pipeline/service/lifecycle/PipelineCreator.java
++++ b/src/main/java/com/bff/pipeline/service/lifecycle/PipelineCreator.java
+@@ -19,6 +19,7 @@ import com.bff.pipeline.exception.UnknownTaskException;
+ import com.bff.pipeline.exception.UnsupportedRecipeException;
+ import com.bff.pipeline.model.PipelinePlan;
+ import com.bff.pipeline.model.PipelinePlan.PlannedStep;
++import com.bff.pipeline.model.RequestContext;
+ import java.util.List;
+ import java.util.Locale;
+ import lombok.RequiredArgsConstructor;
+@@ -50,11 +51,12 @@ public class PipelineCreator {
+     private final InfraManagerClient infraManagerClient;
+ 
+     /** 카탈로그 recipe 실행(P10). (provider, type)으로 고정 recipe를 골라 실행한다. */
+-    public Pipeline create(String target, PipelineType type) {
++    public Pipeline create(String target, PipelineType type, RequestContext request) {
+         if (type == null) {
+             throw new MissingPipelineTypeException();
+         }
+-        return insert(PipelinePlan.fromCatalog(target, resolveRecipe(target, type)), target);   // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
++        // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
++        return insert(PipelinePlan.fromCatalog(target, resolveRecipe(target, type), request), target);
+     }
+ 
+     /**
+@@ -63,7 +65,7 @@ public class PipelineCreator {
+      * 이름 존재·provider 일치·설명 길이(≤100)를 검사해 하나라도 어기면 400이다. plan 구성은 트랜잭션 밖에서 입력 검증 +
+      * provider 조회를 마치고 삽입만 inserter의 트랜잭션에 맡긴다 — 유니크 위반은 {@link #insert}가 도메인 응답으로 번역한다.
+      */
+-    public Pipeline createCustom(String target, List<CustomTaskRequest> tasks) {
++    public Pipeline createCustom(String target, List<CustomTaskRequest> tasks, RequestContext request) {
+         if (target == null || target.isBlank()) {
+             throw new MissingTargetException();
+         }
+@@ -74,7 +76,7 @@ public class PipelineCreator {
+         List<PlannedStep> steps = tasks.stream().map(PipelineCreator::resolveNameAndDescription).toList();
+         CloudProvider provider = resolveProvider(target);   // 트랜잭션 밖 외부 조회(§3)
+         steps.forEach(step -> requireProviderMatch(step.definition(), provider));
+-        return insert(PipelinePlan.custom(target, provider, steps), target);
++        return insert(PipelinePlan.custom(target, provider, steps, request), target);
+     }
+ 
+     /** plan 삽입 + active-target 유니크 위반의 도메인 번역. catalog/custom/restart(PipelineRestarter) 경로가 공유한다. */
+diff --git a/src/main/java/com/bff/pipeline/service/lifecycle/PipelineInserter.java b/src/main/java/com/bff/pipeline/service/lifecycle/PipelineInserter.java
+index fb78117..6379bbc 100644
+--- a/src/main/java/com/bff/pipeline/service/lifecycle/PipelineInserter.java
++++ b/src/main/java/com/bff/pipeline/service/lifecycle/PipelineInserter.java
+@@ -51,6 +51,8 @@ public class PipelineInserter {
+                 .target(target)
+                 .cloudProvider(plan.provider())
+                 .recipeDefinition(plan.recipeDefinition())
++                .requestedBy(plan.request().requestedBy())
++                .requestNote(plan.request().requestNote())
+                 .originPipelineId(plan.originPipelineId())
+                 .status(delayed ? PipelineStatus.PENDING : PipelineStatus.RUNNING)
+                 .activeTarget(target)
+diff --git a/src/main/java/com/bff/pipeline/service/lifecycle/PipelineRestarter.java b/src/main/java/com/bff/pipeline/service/lifecycle/PipelineRestarter.java
+index dd46670..2e0f935 100644
+--- a/src/main/java/com/bff/pipeline/service/lifecycle/PipelineRestarter.java
++++ b/src/main/java/com/bff/pipeline/service/lifecycle/PipelineRestarter.java
+@@ -18,6 +18,7 @@ import com.bff.pipeline.exception.PipelineNotRestartableException;
+ import com.bff.pipeline.exception.UnknownTaskException;
+ import com.bff.pipeline.model.PipelinePlan;
+ import com.bff.pipeline.model.PipelinePlan.PlannedStep;
++import com.bff.pipeline.model.RequestContext;
+ import com.bff.pipeline.repository.PipelineRepository;
+ import com.bff.pipeline.repository.TaskRepository;
+ import java.time.Clock;
+@@ -58,11 +59,15 @@ public class PipelineRestarter {
+     private final PipelineSettings pipelineSettings;
+     private final Clock clock;
+ 
+-    /** 재시작 실행 — 검증·suffix 계산 후 새 파이프라인을 삽입한다. fromSequence는 선택적 오버라이드(더 앞으로만). */
+-    public Pipeline restart(String target, Long pipelineId, Integer fromSequence) {
++    /**
++     * 재시작 실행 — 검증·suffix 계산 후 새 파이프라인을 삽입한다. fromSequence는 선택적 오버라이드(더 앞으로만).
++     * 요청 맥락은 요청이 실어 보낸 값을 쓰고, 비어 있으면 원본 실행에서 승계한다 — 재시작했다는 이유만으로
++     * 요청자가 비면 계보를 따라가도 시킨 사람을 찾을 수 없다.
++     */
++    public Pipeline restart(String target, Long pipelineId, Integer fromSequence, RequestContext request) {
+         RestartComputation computation = compute(target, pipelineId, fromSequence);
+-        return pipelineCreator.insert(
+-                PipelinePlan.restartOf(computation.origin(), computation.provider(), computation.steps()), target);
++        return pipelineCreator.insert(PipelinePlan.restartOf(computation.origin(), computation.provider(),
++                computation.steps(), request.orInheritFrom(computation.origin())), target);
+     }
+ 
+     /** 재시작 미리보기 — 실행과 동일한 검증을 수행하고(불가 상태는 여기서부터 409/400) 아무것도 저장하지 않는다. */
+diff --git a/src/main/java/com/bff/pipeline/service/query/PipelineQueryService.java b/src/main/java/com/bff/pipeline/service/query/PipelineQueryService.java
+index 894930e..607d7b4 100644
+--- a/src/main/java/com/bff/pipeline/service/query/PipelineQueryService.java
++++ b/src/main/java/com/bff/pipeline/service/query/PipelineQueryService.java
+@@ -156,6 +156,8 @@ public class PipelineQueryService {
+                 .targetSourceId(pipeline.getTarget())
+                 .cloudProvider(pipeline.getCloudProvider())
+                 .recipeDefinition(pipeline.getRecipeDefinition())
++                .requestedBy(pipeline.getRequestedBy())
++                .requestNote(pipeline.getRequestNote())
+                 .status(pipeline.getStatus())
+                 .createdAt(pipeline.getCreatedAt())
+                 .lastActivityAt(pipeline.getLastActivityAt())
+diff --git a/src/test/java/com/bff/pipeline/model/RequestContextTest.java b/src/test/java/com/bff/pipeline/model/RequestContextTest.java
+new file mode 100644
+index 0000000..4479760
+--- /dev/null
++++ b/src/test/java/com/bff/pipeline/model/RequestContextTest.java
+@@ -0,0 +1,64 @@
++package com.bff.pipeline.model;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.assertj.core.api.Assertions.assertThatThrownBy;
++
++import com.bff.pipeline.entity.Pipeline;
++import com.bff.pipeline.exception.RequestNoteTooLongException;
++import com.bff.pipeline.exception.RequestedByTooLongException;
++import org.junit.jupiter.api.Test;
++
++/** 요청 맥락의 경계 규칙 — 무엇을 없는 값으로 볼지, 길면 자를지 거절할지, 재시작이 언제 승계하는지. */
++class RequestContextTest {
++
++    /** 사람이 쓴 값은 자르지 않고 되돌려 보낸다 — 잘린 요청자는 다른 사람을 가리킬 수 있다. */
++    @Test
++    void anOverlongValueIsRejectedNotTruncated() {
++        assertThatThrownBy(() -> RequestContext.of("x".repeat(Pipeline.REQUESTED_BY_LENGTH + 1), null))
++                .isInstanceOf(RequestedByTooLongException.class);
++        assertThatThrownBy(() -> RequestContext.of("admin", "x".repeat(Pipeline.REQUEST_NOTE_LENGTH + 1)))
++                .isInstanceOf(RequestNoteTooLongException.class);
++    }
++
++    @Test
++    void theLengthLimitItselfIsAccepted() {
++        RequestContext context = RequestContext.of("x".repeat(Pipeline.REQUESTED_BY_LENGTH),
++                "y".repeat(Pipeline.REQUEST_NOTE_LENGTH));
++
++        assertThat(context.requestedBy()).hasSize(Pipeline.REQUESTED_BY_LENGTH);
++        assertThat(context.requestNote()).hasSize(Pipeline.REQUEST_NOTE_LENGTH);
++    }
++
++    /** 공백만 넣어 값이 있는 척하는 길을 막는다 — 없는 것과 같게 다뤄 저장하지 않는다. */
++    @Test
++    void aBlankValueIsTheSameAsNoValue() {
++        RequestContext context = RequestContext.of("   ", "\t\n");
++
++        assertThat(context.requestedBy()).isNull();
++        assertThat(context.requestNote()).isNull();
++    }
++
++    /** of()를 지나지 않는 직접 생성도 같은 규칙이다 — 길이 거절은 생성자에 있어 우회할 길이 없다. */
++    @Test
++    void theCanonicalConstructorEnforcesTheSameBounds() {
++        assertThatThrownBy(() -> new RequestContext("x".repeat(Pipeline.REQUESTED_BY_LENGTH + 1), null))
++                .isInstanceOf(RequestedByTooLongException.class);
++        assertThatThrownBy(() -> new RequestContext(null, "y".repeat(Pipeline.REQUEST_NOTE_LENGTH + 1)))
++                .isInstanceOf(RequestNoteTooLongException.class);
++    }
++
++    @Test
++    void surroundingWhitespaceIsTrimmed() {
++        assertThat(RequestContext.of("  admin@example.com  ", null).requestedBy())
++                .isEqualTo("admin@example.com");
++    }
++
++    /** 승계는 맥락이 통째로 비었을 때만이다 — 필드별로 섞으면 요청자와 사유가 서로 다른 사람의 것이 된다. */
++    @Test
++    void inheritanceIsAllOrNothing() {
++        Pipeline origin = Pipeline.builder().requestedBy("first").requestNote("먼저 요청한 건").build();
++
++        assertThat(RequestContext.none().orInheritFrom(origin).requestedBy()).isEqualTo("first");
++        assertThat(RequestContext.of("second", null).orInheritFrom(origin).requestNote()).isNull();
++    }
++}
+diff --git a/src/test/java/com/bff/pipeline/service/CustomRecipeCreationTest.java b/src/test/java/com/bff/pipeline/service/CustomRecipeCreationTest.java
+index 22a3f53..a5ec1a7 100644
+--- a/src/test/java/com/bff/pipeline/service/CustomRecipeCreationTest.java
++++ b/src/test/java/com/bff/pipeline/service/CustomRecipeCreationTest.java
+@@ -23,6 +23,7 @@ import com.bff.pipeline.exception.TaskDescriptionTooLongException;
+ import com.bff.pipeline.exception.TaskProviderMismatchException;
+ import com.bff.pipeline.exception.UnknownTaskException;
+ import com.bff.pipeline.exception.UnsupportedRecipeException;
++import com.bff.pipeline.model.RequestContext;
+ import com.bff.pipeline.repository.PipelineRepository;
+ import com.bff.pipeline.repository.TaskRepository;
+ import com.bff.pipeline.service.lifecycle.PipelineCreator;
+@@ -75,7 +76,7 @@ class CustomRecipeCreationTest {
+                 new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply first"),
+                 new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "then plan"));
+ 
+-        Pipeline pipeline = creator.createCustom("cust-order", tasks);
++        Pipeline pipeline = creator.createCustom("cust-order", tasks, RequestContext.none());
+ 
+         assertThat(pipeline.getType()).isEqualTo(PipelineType.CUSTOM);   // 분류는 type이 진다
+         assertThat(pipeline.getRecipeDefinition()).isNull();              // 백킹 RecipeDefinition이 없다
+@@ -90,7 +91,7 @@ class CustomRecipeCreationTest {
+     void customRecipeRunsThroughTheCustomEndpoint() {
+         CustomPipelineRequest request = new CustomPipelineRequest(List.of(
+                 new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply first"),
+-                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "then plan")));
++                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "then plan")), null, null);
+ 
+         PipelineDetail detail = controller.createCustom("cust-endpoint", request);
+ 
+@@ -104,16 +105,53 @@ class CustomRecipeCreationTest {
+     @Test
+     void catalogEndpointStaysTypedInstallOrDelete() {
+         PipelineDetail detail = controller.create("cust-endpoint-catalog",
+-                new CreatePipelineRequest(PipelineType.DELETE));
++                new CreatePipelineRequest(PipelineType.DELETE, null, null));
+ 
+         assertThat(detail.type()).isEqualTo(PipelineType.DELETE);
+         assertThat(detail.recipeDefinition()).isEqualTo("AWS_DELETE_V1");
+     }
+ 
++    /** 요청 맥락은 요청 본문에서 받아 행에 남고 상세 응답으로 다시 나온다 — 목록에는 싣지 않는다. */
++    @Test
++    void theRequestContextIsRecordedAndReadBack() {
++        PipelineDetail detail = controller.create("cust-endpoint-request",
++                new CreatePipelineRequest(PipelineType.DELETE, "admin@example.com", "정리 요청 건입니다."));
++
++        assertThat(detail.requestedBy()).isEqualTo("admin@example.com");
++        assertThat(detail.requestNote()).isEqualTo("정리 요청 건입니다.");
++        assertThat(pipelineRepository.findById(detail.pipelineId()).orElseThrow().getRequestedBy())
++                .isEqualTo("admin@example.com");
++    }
++
++    /**
++     * custom 경로도 실값으로 왕복을 고정한다 — 컨트롤러가 같은 타입의 String 두 개를 넘기므로, 인자가
++     * 뒤바뀌어도 컴파일은 통과한다. 요청자가 사유 자리에 저장되면 감사 기록이 다른 사람을 가리킨다.
++     */
++    @Test
++    void theCustomEndpointRecordsItsOwnRequestContext() {
++        PipelineDetail detail = controller.createCustom("cust-endpoint-request-custom",
++                new CustomPipelineRequest(
++                        List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), null)),
++                        "operator@example.com", "커스텀 정리 실행"));
++
++        assertThat(detail.requestedBy()).isEqualTo("operator@example.com");
++        assertThat(detail.requestNote()).isEqualTo("커스텀 정리 실행");
++    }
++
++    /** 요청 맥락은 선택값이다 — 안 실어 보내도 실행은 그대로 만들어진다. */
++    @Test
++    void aRequestWithoutContextStillRuns() {
++        PipelineDetail detail = controller.create("cust-endpoint-norequest",
++                new CreatePipelineRequest(PipelineType.DELETE, null, null));
++
++        assertThat(detail.requestedBy()).isNull();
++        assertThat(detail.requestNote()).isNull();
++    }
++
+     @Test
+     void nullDescriptionIsAllowed() {
+         Pipeline pipeline = creator.createCustom("cust-nodesc",
+-                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), null)));
++                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), null)), RequestContext.none());
+ 
+         assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).getFirst().getDescription())
+                 .isNull();
+@@ -122,7 +160,7 @@ class CustomRecipeCreationTest {
+     @Test
+     void unknownTaskNameIsRejected() {
+         assertThatThrownBy(() -> creator.createCustom("cust-unknown",
+-                List.of(new CustomTaskRequest("NOT_A_REAL_TASK", null))))
++                List.of(new CustomTaskRequest("NOT_A_REAL_TASK", null)), RequestContext.none()))
+                 .isInstanceOf(UnknownTaskException.class);
+     }
+ 
+@@ -131,7 +169,7 @@ class CustomRecipeCreationTest {
+         infraManager.onCloudProvider(CloudProvider.AWS);   // target is AWS, task is GCP
+ 
+         assertThatThrownBy(() -> creator.createCustom("cust-mismatch",
+-                List.of(new CustomTaskRequest(TaskDefinition.GCP_SERVICE_PLAN_V1.name(), null))))
++                List.of(new CustomTaskRequest(TaskDefinition.GCP_SERVICE_PLAN_V1.name(), null)), RequestContext.none()))
+                 .isInstanceOf(TaskProviderMismatchException.class);
+     }
+ 
+@@ -140,7 +178,7 @@ class CustomRecipeCreationTest {
+         String tooLong = "x".repeat(CustomTaskRequest.MAX_DESCRIPTION_LENGTH + 1);
+ 
+         assertThatThrownBy(() -> creator.createCustom("cust-long",
+-                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), tooLong))))
++                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), tooLong)), RequestContext.none()))
+                 .isInstanceOf(TaskDescriptionTooLongException.class);
+     }
+ 
+@@ -149,7 +187,7 @@ class CustomRecipeCreationTest {
+         String maxLen = "x".repeat(CustomTaskRequest.MAX_DESCRIPTION_LENGTH);
+ 
+         Pipeline pipeline = creator.createCustom("cust-max",
+-                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), maxLen)));
++                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), maxLen)), RequestContext.none());
+ 
+         assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).getFirst().getDescription())
+                 .hasSize(CustomTaskRequest.MAX_DESCRIPTION_LENGTH);
+@@ -157,9 +195,9 @@ class CustomRecipeCreationTest {
+ 
+     @Test
+     void emptyTaskListIsRejected() {
+-        assertThatThrownBy(() -> creator.createCustom("cust-empty", List.of()))
++        assertThatThrownBy(() -> creator.createCustom("cust-empty", List.of(), RequestContext.none()))
+                 .isInstanceOf(EmptyCustomRecipeException.class);
+-        assertThatThrownBy(() -> creator.createCustom("cust-null", null))
++        assertThatThrownBy(() -> creator.createCustom("cust-null", null, RequestContext.none()))
+                 .isInstanceOf(EmptyCustomRecipeException.class);
+     }
+ 
+@@ -167,7 +205,7 @@ class CustomRecipeCreationTest {
+     void catalogEndpointRejectsCustomTypeBeforeProviderLookup() {
+         infraManager.onCloudProvider(null);   // provider 조회가 503을 낼 상황
+ 
+-        assertThatThrownBy(() -> creator.create("cat-custom", PipelineType.CUSTOM))
++        assertThatThrownBy(() -> creator.create("cat-custom", PipelineType.CUSTOM, RequestContext.none()))
+                 .isInstanceOf(UnsupportedRecipeException.class);   // 503이 아니라 400 — CUSTOM을 먼저 거절
+     }
+ 
+@@ -176,7 +214,7 @@ class CustomRecipeCreationTest {
+         infraManager.onCloudProvider(null);   // provider 조회가 503을 낼 상황
+ 
+         assertThatThrownBy(() -> creator.createCustom("cust-badname",
+-                List.of(new CustomTaskRequest("NOT_A_REAL_TASK", null))))
++                List.of(new CustomTaskRequest("NOT_A_REAL_TASK", null)), RequestContext.none()))
+                 .isInstanceOf(UnknownTaskException.class);   // 이름 검증이 provider 조회보다 먼저라 400 유지
+     }
+ 
+diff --git a/src/test/java/com/bff/pipeline/service/ObservationTest.java b/src/test/java/com/bff/pipeline/service/ObservationTest.java
+index 26896cc..e2e8ae7 100644
+--- a/src/test/java/com/bff/pipeline/service/ObservationTest.java
++++ b/src/test/java/com/bff/pipeline/service/ObservationTest.java
+@@ -10,6 +10,7 @@ import com.bff.pipeline.enums.ErrorCode;
+ import com.bff.pipeline.enums.PipelineStatus;
+ import com.bff.pipeline.enums.PipelineType;
+ import com.bff.pipeline.enums.TaskStatus;
++import com.bff.pipeline.model.RequestContext;
+ import com.bff.pipeline.repository.PipelineRepository;
+ import com.bff.pipeline.repository.TaskAttemptRepository;
+ import com.bff.pipeline.repository.TaskCheckRepository;
+@@ -89,7 +90,7 @@ class ObservationTest {
+ 
+     @Test
+     void aHappyTerraformTaskRecordsOneDoneAttemptWithItsResponse() {
+-        Pipeline pipeline = creator.create("obs-happy", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("obs-happy", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
+         pipelineWorker.pollOnce();
+         pipelineWorker.pollOnce();
+@@ -105,7 +106,7 @@ class ObservationTest {
+ 
+     @Test
+     void aRetryingTaskRecordsOneAttemptRowPerAttemptWithIncreasingAttemptNo() {
+-        Pipeline pipeline = creator.create("obs-retry", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("obs-retry", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onPoll(() -> TerraformPoll.failure("FAILED", null));
+ 
+         runUntilTerminal(pipeline);
+@@ -120,7 +121,7 @@ class ObservationTest {
+ 
+     @Test
+     void aTerraformPolledRunningUpdatesOneCheckRowInPlace() {
+-        Pipeline pipeline = creator.create("obs-tf-running", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("obs-tf-running", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onPoll(() -> TerraformPoll.running("RUNNING"));
+         pipelineWorker.pollOnce();                  // dispatch terraform → IN_PROGRESS (attempt 1)
+         for (int i = 0; i < 3; i++) {
+@@ -183,7 +184,7 @@ class ObservationTest {
+     }
+ 
+     private Pipeline createInstallAtConditionInProgress() {
+-        Pipeline pipeline = creator.create("obs-cond", PipelineType.INSTALL);
++        Pipeline pipeline = creator.create("obs-cond", PipelineType.INSTALL, RequestContext.none());
+         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
+         pipelineWorker.pollOnce();   // dispatch plan terraform
+         pipelineWorker.pollOnce();   // poll plan → DONE + promote apply READY
+diff --git a/src/test/java/com/bff/pipeline/service/PipelineControlTest.java b/src/test/java/com/bff/pipeline/service/PipelineControlTest.java
+index 0fe96e8..4c33c14 100644
+--- a/src/test/java/com/bff/pipeline/service/PipelineControlTest.java
++++ b/src/test/java/com/bff/pipeline/service/PipelineControlTest.java
+@@ -6,12 +6,13 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
+ import com.bff.pipeline.client.FakeInfraManagerClient;
+ import com.bff.pipeline.config.PipelineSettings;
+ import com.bff.pipeline.entity.Pipeline;
+-import com.bff.pipeline.exception.MissingPipelineIdException;
+-import com.bff.pipeline.exception.PipelineNotFoundException;
+ import com.bff.pipeline.entity.Task;
+ import com.bff.pipeline.enums.PipelineStatus;
+ import com.bff.pipeline.enums.PipelineType;
+ import com.bff.pipeline.enums.TaskStatus;
++import com.bff.pipeline.exception.MissingPipelineIdException;
++import com.bff.pipeline.exception.PipelineNotFoundException;
++import com.bff.pipeline.model.RequestContext;
+ import com.bff.pipeline.repository.PipelineRepository;
+ import com.bff.pipeline.repository.TaskRepository;
+ import com.bff.pipeline.service.lifecycle.PipelineControl;
+@@ -64,7 +65,7 @@ class PipelineControlTest {
+ 
+     @Test
+     void cancelTerminalizesEveryNonTerminalTaskAndFreesTheTarget() {
+-        Pipeline pipeline = creator.create("c-1", PipelineType.INSTALL);
++        Pipeline pipeline = creator.create("c-1", PipelineType.INSTALL, RequestContext.none());
+ 
+         Pipeline cancelled = control.cancel(pipeline.getId());
+ 
+@@ -95,7 +96,7 @@ class PipelineControlTest {
+ 
+     @Test
+     void cancelIsIdempotentOnAnAlreadyTerminalPipeline() {
+-        Pipeline pipeline = creator.create("c-2", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("c-2", PipelineType.DELETE, RequestContext.none());
+         control.cancel(pipeline.getId());
+ 
+         Pipeline again = control.cancel(pipeline.getId());
+@@ -105,17 +106,17 @@ class PipelineControlTest {
+ 
+     @Test
+     void aNewRunIsAllowedForTheTargetAfterCancel() {
+-        Pipeline first = creator.create("c-3", PipelineType.INSTALL);
++        Pipeline first = creator.create("c-3", PipelineType.INSTALL, RequestContext.none());
+         control.cancel(first.getId());
+ 
+-        Pipeline second = creator.create("c-3", PipelineType.INSTALL);
++        Pipeline second = creator.create("c-3", PipelineType.INSTALL, RequestContext.none());
+ 
+         assertThat(second.getId()).isNotEqualTo(first.getId());
+     }
+ 
+     @Test
+     void cancelDoesNotResurrectAPipelineThatAlreadyConvergedToTerminal() {
+-        Pipeline pipeline = creator.create("c-4", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("c-4", PipelineType.DELETE, RequestContext.none());
+         Pipeline converged = pipelineRepository.findById(pipeline.getId()).orElseThrow();
+         converged.setStatus(PipelineStatus.DONE);
+         converged.setActiveTarget(null);
+diff --git a/src/test/java/com/bff/pipeline/service/PipelineExecutionTest.java b/src/test/java/com/bff/pipeline/service/PipelineExecutionTest.java
+index 87bed33..aa929a0 100644
+--- a/src/test/java/com/bff/pipeline/service/PipelineExecutionTest.java
++++ b/src/test/java/com/bff/pipeline/service/PipelineExecutionTest.java
+@@ -16,6 +16,7 @@ import com.bff.pipeline.enums.ErrorCode;
+ import com.bff.pipeline.enums.PipelineStatus;
+ import com.bff.pipeline.enums.PipelineType;
+ import com.bff.pipeline.enums.TaskStatus;
++import com.bff.pipeline.model.RequestContext;
+ import com.bff.pipeline.repository.PipelineRepository;
+ import com.bff.pipeline.repository.TaskAttemptRepository;
+ import com.bff.pipeline.repository.TerraformJobStateRepository;
+@@ -115,7 +116,7 @@ class PipelineExecutionTest {
+     @Test
+     void terraformHappyPathReachesDoneAndRecordsTheResponse() {
+         // AWS delete recipe = destroy 3단계(BDC service level → BDC common → 서비스), 단계마다 dispatch + poll.
+-        Pipeline pipeline = creator.create("e-happy", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-happy", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
+ 
+         pipelineWorker.pollOnce();   // dispatch (BDC service level destroy) → IN_PROGRESS
+@@ -136,7 +137,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void recordsATerraformResultRowPerJobOnTheConcludingTurn() {
+-        Pipeline pipeline = creator.create("e-postcheck", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-postcheck", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
+         infraManagerClient.onResult(() -> "Destroy complete! Resources: 3 destroyed.");
+ 
+@@ -156,7 +157,7 @@ class PipelineExecutionTest {
+     @Test
+     void aFailedJobWaitsForItsSiblingsBeforeConcludingJobFailed() {
+         // 집계 정책(전원 terminal 대기): FAILED job을 봤어도 형제 job이 인프라에서 손을 뗄 때까지 판정을 미룬다.
+-        Pipeline pipeline = creator.create("e-wait", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-wait", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
+         Map<String, TerraformPoll> polls = new HashMap<>();
+         polls.put("job-1", TerraformPoll.failure("FAILED", null));
+@@ -182,7 +183,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void aDeadlineWithAFailedJobConcludesJobFailedAndRecordsOnlyFinishedJobs() {
+-        Pipeline pipeline = creator.create("e-deadline", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-deadline", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
+         Map<String, TerraformPoll> polls = new HashMap<>();
+         polls.put("job-1", TerraformPoll.failure("FAILED", null));
+@@ -204,7 +205,7 @@ class PipelineExecutionTest {
+     void aTransientPollErrorRidesExecutionTimeoutWithoutBurningFailCountAndKeepsPollingSiblings() {
+         // 폴 전송 실패는 즉시 실패가 아니다: 임계 미만이면 미종결로 두고, 형제 job은 abort 없이 계속 관측되며,
+         // task.failCount는 이 경로로 오르지 않는다. 기본 설정에선 임계(10)에 닿기 전에 execution-timeout이 먼저 종결한다.
+-        Pipeline pipeline = creator.create("e-poll-transient", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-poll-transient", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onDispatch(() -> "[\"job-err\",\"job-ok\"]");   // err를 먼저 둬 abort-on-first 회귀를 잡는다
+         infraManagerClient.onPollByJob(jobId -> {
+             if (jobId.equals("job-ok")) {
+@@ -239,7 +240,7 @@ class PipelineExecutionTest {
+         // 연속 전송 실패가 임계(10)에 닿으면 그 job을 관측 불능으로 확정한다 → JOB_FAILED. onPoll이 매번 실패하므로
+         // 사이에 정상 관측이 없어 연속이 곧 총합이다. execution-timeout이 먼저 끊지 않도록 task별 타임아웃을 크게
+         // 오버라이드해 임계 발화 경로만 격리한다.
+-        Pipeline pipeline = creator.create("e-poll-budget", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-poll-budget", PipelineType.DELETE, RequestContext.none());
+         Task terraform = task(pipeline, 0);
+         terraform.setExecutionTimeout(Duration.ofHours(100));
+         taskRepository.save(terraform);
+@@ -281,7 +282,7 @@ class PipelineExecutionTest {
+     void anExhaustedJobStaysFailedAndIsNotRepolledWhileASiblingIsStillRunning() {
+         // 임계를 넘긴 job은 형제 대기로 판정이 미뤄지는 turn에도 실패로 남고 다시 폴되지 않는다(sticky).
+         // 재폴로 일시 회복이 확정된 실패를 뒤집으면 안 된다(codex P1 회귀 가드).
+-        Pipeline pipeline = creator.create("e-sticky", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-sticky", PipelineType.DELETE, RequestContext.none());
+         Task terraform = task(pipeline, 0);
+         terraform.setExecutionTimeout(Duration.ofHours(100));   // 임계 발화 경로만 격리(timeout 배제)
+         taskRepository.save(terraform);
+@@ -322,7 +323,7 @@ class PipelineExecutionTest {
+     @Test
+     void aNullPollStatusCountsTowardThePerJobErrorBudget() {
+         // 상태 없음(null poll)도 전송 실패와 같은 관측 불능이라 연속 카운트에 반영된다(임계 미만이라 미종결).
+-        Pipeline pipeline = creator.create("e-null-poll", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-null-poll", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onPoll(() -> null);
+ 
+         pipelineWorker.pollOnce();   // dispatch
+@@ -340,7 +341,7 @@ class PipelineExecutionTest {
+     void scatteredPollErrorsWithRecoveriesNeverExhaustTheConsecutiveBudget() {
+         // 산발적 전송 오류라도 사이에 정상 관측이 있으면 연속 카운트가 0으로 리셋돼 관측 불능으로 오판되지 않는다.
+         // 누적 시맨틱이라면 임계(10)를 훨씬 넘는 폴 수에서 이미 죽었을 것이다(Fable 회귀 가드).
+-        Pipeline pipeline = creator.create("e-poll-reset", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-poll-reset", PipelineType.DELETE, RequestContext.none());
+         Task terraform = task(pipeline, 0);
+         terraform.setExecutionTimeout(Duration.ofHours(100));   // 임계 발화 경로만 격리(timeout 배제)
+         taskRepository.save(terraform);
+@@ -367,7 +368,7 @@ class PipelineExecutionTest {
+     @Test
+     void installPromotesTheSuccessorInTheSameReportAndFinishes() {
+         // AWS install recipe = 서비스 plan·apply → 네트워크 준비 확인 → BDC common plan·apply → BDC service level plan·apply.
+-        Pipeline pipeline = creator.create("e-install", PipelineType.INSTALL);
++        Pipeline pipeline = creator.create("e-install", PipelineType.INSTALL, RequestContext.none());
+         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
+         infraManagerClient.onCheck(() -> true);
+         for (int sequence = 1; sequence <= 6; sequence++) {
+@@ -398,7 +399,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void conditionNotMetRetriesThenFailsAtMaxWithConditionNotMet() {
+-        Pipeline pipeline = creator.create("e-cond-fail", PipelineType.INSTALL);
++        Pipeline pipeline = creator.create("e-cond-fail", PipelineType.INSTALL, RequestContext.none());
+         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
+         infraManagerClient.onCheck(() -> false);   // condition never met → each poll is a failed poll
+ 
+@@ -415,7 +416,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void terraformFailureRetriesThenFailsAtMaxAndCascadeCancels() {
+-        Pipeline pipeline = creator.create("e-fail", PipelineType.INSTALL);
++        Pipeline pipeline = creator.create("e-fail", PipelineType.INSTALL, RequestContext.none());
+         infraManagerClient.onPoll(() -> TerraformPoll.failure("FAILED", null));
+ 
+         runUntilTerminal(pipeline);
+@@ -429,7 +430,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void aLostDispatchResponseRidesExecutionTimeoutThenSharesTheFailCount() {
+-        Pipeline pipeline = creator.create("e-lost", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-lost", PipelineType.DELETE, RequestContext.none());
+         pipelineWorker.pollOnce();   // dispatch → IN_PROGRESS, response recorded
+ 
+         TaskAttempt attempt = attempt(pipeline, 0);
+@@ -446,7 +447,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void aMissingAttemptRowRidesExecutionTimeoutViaTheTypeRecoveryPolicy() {
+-        Pipeline pipeline = creator.create("e-lost-attempt", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-lost-attempt", PipelineType.DELETE, RequestContext.none());
+         pipelineWorker.pollOnce();   // dispatch → IN_PROGRESS, attempt 행 기록됨
+ 
+         taskAttemptRepository.delete(attempt(pipeline, 0));   // 관찰 유실 — attempt 행 자체가 사라짐
+@@ -470,7 +471,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void aThrowingDispatchIsCheckErrorAndRetries() {
+-        Pipeline pipeline = creator.create("e-throw", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-throw", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onDispatch(() -> { throw new CallFailedException("503"); });
+ 
+         pipelineWorker.pollOnce();
+@@ -484,7 +485,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void aRawRuntimeExceptionFromTheClientPropagatesOutOfProcess() {
+-        Pipeline pipeline = creator.create("e-bug", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-bug", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onDispatch(() -> { throw new IllegalStateException("a real bug"); });
+         Claim claim = pipelineClaimer.claimOneDue().orElseThrow();
+ 
+@@ -496,7 +497,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void aMalformedDispatchResponseFailsTheTaskOutright() {
+-        Pipeline pipeline = creator.create("e-malformed", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-malformed", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onDispatch(() -> "not-json");
+ 
+         pipelineWorker.pollOnce();   // dispatch records "not-json"
+@@ -513,7 +514,7 @@ class PipelineExecutionTest {
+     @ParameterizedTest
+     @ValueSource(strings = {"null", "[]", "[null]", "[\"\"]"})
+     void aResponseWithNoUsableJobIdsFailsTheTaskOutright(String response) {
+-        Pipeline pipeline = creator.create("e-no-jobs", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-no-jobs", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onDispatch(() -> response);
+ 
+         pipelineWorker.pollOnce();
+@@ -525,7 +526,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void nJobsCompleteOnlyWhenAllSucceed() {
+-        Pipeline pipeline = creator.create("e-n", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-n", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\",\"job-3\"]");
+         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
+ 
+@@ -538,7 +539,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void anUnknownTaskNameFailsAsUnknownTask() {
+-        Pipeline pipeline = creator.create("e-unknown", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-unknown", PipelineType.DELETE, RequestContext.none());
+         Task task = task(pipeline, 0);
+         task.setTaskName("NO_SUCH_TYPE");
+         taskRepository.save(task);
+@@ -554,7 +555,7 @@ class PipelineExecutionTest {
+     void aLegacyOperationValueFailsAsUnknownTaskInsteadOfCrashingTheRead() {
+         // 카탈로그에서 제거된 옛 operation 값 — converter가 null로 열화하고, StepRunner의 row 캐시 대조가
+         // 정의 불일치로 보고 외부 호출 없이 UNKNOWN_TASK로 끊는다(@Enumerated였다면 조회 자체가 터진다).
+-        Pipeline pipeline = creator.create("e-legacy-op", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("e-legacy-op", PipelineType.DELETE, RequestContext.none());
+         jdbcTemplate.update("update task set operation = 'DESTROY_NETWORK' where id = ?", task(pipeline, 0).getId());
+ 
+         pipelineWorker.pollOnce();
+@@ -568,14 +569,14 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void creationSeedsNextDueAtSoThePipelineIsImmediatelyClaimable() {
+-        Pipeline pipeline = creator.create("c-seed", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("c-seed", PipelineType.DELETE, RequestContext.none());
+         assertThat(pipelineRepository.findById(pipeline.getId()).orElseThrow().getNextDueAt()).isEqualTo(START);
+         assertThat(pipelineClaimer.claimOneDue()).isPresent();
+     }
+ 
+     @Test
+     void aClaimStampsAFreshTokenAndLeaseAndBlocksASecondClaim() {
+-        creator.create("c-claim", PipelineType.DELETE);
++        creator.create("c-claim", PipelineType.DELETE, RequestContext.none());
+ 
+         Claim claim = pipelineClaimer.claimOneDue().orElseThrow();
+ 
+@@ -587,7 +588,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void anExpiredLeaseIsReclaimedWithADifferentToken() {
+-        creator.create("c-reclaim", PipelineType.DELETE);
++        creator.create("c-reclaim", PipelineType.DELETE, RequestContext.none());
+         String first = pipelineClaimer.claimOneDue().orElseThrow().token();
+ 
+         clock.advance(LEASE.plusSeconds(1));
+@@ -598,7 +599,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void aSuccessfulDispatchReleasesTheClaimAndAdvancesNextDueAt() {
+-        Pipeline pipeline = creator.create("c-release", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("c-release", PipelineType.DELETE, RequestContext.none());
+ 
+         pipelineWorker.pollOnce();   // dispatch + report
+ 
+@@ -610,7 +611,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void aStaleTokenReportNoOpsAfterReclaim() {
+-        Pipeline pipeline = creator.create("c-stale", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("c-stale", PipelineType.DELETE, RequestContext.none());
+         String stale = pipelineClaimer.claimOneDue().orElseThrow().token();
+         clock.advance(LEASE.plusSeconds(1));
+         String fresh = pipelineClaimer.claimOneDue().orElseThrow().token();
+@@ -625,7 +626,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void aMatchingTokenReportStillAppliesAfterLeaseExpiryWhenNobodyReclaimed() {
+-        Pipeline pipeline = creator.create("c-token-only", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("c-token-only", PipelineType.DELETE, RequestContext.none());
+         Claim claim = pipelineClaimer.claimOneDue().orElseThrow();
+         clock.advance(LEASE.plusSeconds(1));   // lease expired, but token unchanged and nobody reclaimed
+ 
+@@ -638,7 +639,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void cancelCaseAIdleTerminatesImmediatelyAndClearsTheClaim() {
+-        Pipeline pipeline = creator.create("x-idle", PipelineType.INSTALL);
++        Pipeline pipeline = creator.create("x-idle", PipelineType.INSTALL, RequestContext.none());
+ 
+         Pipeline cancelled = control.cancel(pipeline.getId());
+ 
+@@ -651,7 +652,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void cancelCaseAExpiredLeaseStillTerminatesImmediately() {
+-        Pipeline pipeline = creator.create("x-expired", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("x-expired", PipelineType.DELETE, RequestContext.none());
+         pipelineClaimer.claimOneDue();
+         clock.advance(LEASE.plusSeconds(1));
+ 
+@@ -664,7 +665,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void cancelCaseBLiveLeaseOnlyRaisesTheFlagThenTheClaimHolderTerminalizes() {
+-        Pipeline pipeline = creator.create("x-live", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("x-live", PipelineType.DELETE, RequestContext.none());
+         Claim claim = pipelineClaimer.claimOneDue().orElseThrow();
+ 
+         control.cancel(pipeline.getId());
+@@ -683,7 +684,7 @@ class PipelineExecutionTest {
+ 
+     @Test
+     void aStaleStragglerCannotResurrectAfterCaseACancel() {
+-        Pipeline pipeline = creator.create("x-resurrect", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("x-resurrect", PipelineType.DELETE, RequestContext.none());
+         Claim straggler = pipelineClaimer.claimOneDue().orElseThrow();
+         clock.advance(LEASE.plusSeconds(1));
+         control.cancel(pipeline.getId());   // Case A clears the token
+diff --git a/src/test/java/com/bff/pipeline/service/PipelineIntegrationTest.java b/src/test/java/com/bff/pipeline/service/PipelineIntegrationTest.java
+index 7ffeabd..c4e9c6d 100644
+--- a/src/test/java/com/bff/pipeline/service/PipelineIntegrationTest.java
++++ b/src/test/java/com/bff/pipeline/service/PipelineIntegrationTest.java
+@@ -125,7 +125,7 @@ class PipelineIntegrationTest {
+     void customRecipeUnderStartDelay_isQueriedAsCustomWithDescriptions_thenRunsAfterTheDelay() {
+         PipelineDetail created = controller.createCustom("integ-custom", new CustomPipelineRequest(List.of(
+                 new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "plan the service"),
+-                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply the service"))));
++                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply the service")), null, null));
+         long pipelineId = created.pipelineId();
+ 
+         // 생성 응답(P10) 자체가 CUSTOM 분류 + 설명 + 초기 PENDING (지연이 실제로 걸렸는지는 아래 pollOnce로 확증)
+@@ -171,7 +171,7 @@ class PipelineIntegrationTest {
+     void cancelDuringTheStartDelayWait_isQueriedAsCancelled_andDispatchesNoTask() {
+         PipelineDetail created = controller.createCustom("integ-cancel", new CustomPipelineRequest(List.of(
+                 new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "plan"),
+-                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply"))));
++                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply")), null, null));
+         long pipelineId = created.pipelineId();
+         assertThat(created.status()).isEqualTo(PipelineStatus.PENDING);
+ 
+@@ -203,11 +203,11 @@ class PipelineIntegrationTest {
+     void oneActivePerTarget_holdsWhileACustomPipelineWaits_andReleasesAfterCancel() {
+         String target = "integ-unique";
+         PipelineDetail first = controller.createCustom(target, new CustomPipelineRequest(List.of(
+-                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "plan"))));
++                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "plan")), null, null));
+         assertThat(first.status()).isEqualTo(PipelineStatus.PENDING);   // 비종단 → active_target 점유
+ 
+         // 대기 중에도 동일 target 재실행은 거절(정상 요청이므로 원인은 활성 슬롯 뿐)
+-        assertThatThrownBy(() -> controller.create(target, new CreatePipelineRequest(PipelineType.INSTALL)))
++        assertThatThrownBy(() -> controller.create(target, new CreatePipelineRequest(PipelineType.INSTALL, null, null)))
+                 .isInstanceOf(PipelineAlreadyActiveException.class);
+ 
+         // 취소로 슬롯 해제 → 조회도 CANCELLED
+@@ -215,7 +215,7 @@ class PipelineIntegrationTest {
+         assertThat(service.detail(first.pipelineId()).status()).isEqualTo(PipelineStatus.CANCELLED);
+ 
+         // 해제 후엔 동일 target 새 실행 허용(다른 id)
+-        PipelineDetail second = controller.create(target, new CreatePipelineRequest(PipelineType.INSTALL));
++        PipelineDetail second = controller.create(target, new CreatePipelineRequest(PipelineType.INSTALL, null, null));
+         assertThat(second.pipelineId()).isNotEqualTo(first.pipelineId());
+         assertThat(second.status()).isEqualTo(PipelineStatus.PENDING);
+     }
+@@ -229,7 +229,7 @@ class PipelineIntegrationTest {
+         infraManagerClient.onPoll(() -> TerraformPoll.success("COMPLETED"));
+         infraManagerClient.onCheck(() -> true);
+ 
+-        PipelineDetail created = controller.create("integ-fixed", new CreatePipelineRequest(PipelineType.INSTALL));
++        PipelineDetail created = controller.create("integ-fixed", new CreatePipelineRequest(PipelineType.INSTALL, null, null));
+         long pipelineId = created.pipelineId();
+         assertThat(created.type()).isEqualTo(PipelineType.INSTALL);
+         assertThat(created.recipeDefinition()).isEqualTo("AWS_INSTALL_V1");   // 고정 카탈로그 recipe 백킹
+diff --git a/src/test/java/com/bff/pipeline/service/PipelineSoftCapTest.java b/src/test/java/com/bff/pipeline/service/PipelineSoftCapTest.java
+index f96669b..4c9e4ae 100644
+--- a/src/test/java/com/bff/pipeline/service/PipelineSoftCapTest.java
++++ b/src/test/java/com/bff/pipeline/service/PipelineSoftCapTest.java
+@@ -2,14 +2,15 @@ package com.bff.pipeline.service;
+ 
+ import static org.assertj.core.api.Assertions.assertThat;
+ 
++import com.bff.pipeline.client.FakeInfraManagerClient;
+ import com.bff.pipeline.config.ExecutionSettings;
+ import com.bff.pipeline.config.PipelineSettings;
+-import com.bff.pipeline.client.FakeInfraManagerClient;
+ import com.bff.pipeline.entity.Pipeline;
+ import com.bff.pipeline.entity.Task;
+ import com.bff.pipeline.enums.PipelineStatus;
+ import com.bff.pipeline.enums.PipelineType;
+ import com.bff.pipeline.enums.TaskStatus;
++import com.bff.pipeline.model.RequestContext;
+ import com.bff.pipeline.repository.PipelineRepository;
+ import com.bff.pipeline.repository.TaskRepository;
+ import com.bff.pipeline.repository.TerraformJobStateRepository;
+@@ -74,8 +75,8 @@ class PipelineSoftCapTest {
+ 
+     @Test
+     void theAdmissionCapBlocksASecondConcurrentClaim() {
+-        creator.create("cap-a", PipelineType.DELETE);
+-        creator.create("cap-b", PipelineType.DELETE);
++        creator.create("cap-a", PipelineType.DELETE, RequestContext.none());
++        creator.create("cap-b", PipelineType.DELETE, RequestContext.none());
+ 
+         assertThat(pipelineClaimer.claimOneDue()).isPresent();   // 1 active claim == cap
+         assertThat(pipelineClaimer.claimOneDue()).isEmpty();      // blocked by the soft cap
+@@ -83,10 +84,10 @@ class PipelineSoftCapTest {
+ 
+     @Test
+     void creationIsNotGatedByTheCap() {
+-        creator.create("cap-c", PipelineType.DELETE);
++        creator.create("cap-c", PipelineType.DELETE, RequestContext.none());
+         pipelineClaimer.claimOneDue();   // cap reached
+ 
+-        Pipeline overCap = creator.create("cap-d", PipelineType.DELETE);
++        Pipeline overCap = creator.create("cap-d", PipelineType.DELETE, RequestContext.none());
+ 
+         assertThat(pipelineRepository.findById(overCap.getId()).orElseThrow().getStatus())
+                 .isEqualTo(PipelineStatus.RUNNING);
+@@ -94,7 +95,7 @@ class PipelineSoftCapTest {
+ 
+     @Test
+     void zeroStartDelayTakesTheFastPathToRunningWithoutEverBeingPending() {
+-        Pipeline pipeline = creator.create("cap-fast", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("cap-fast", PipelineType.DELETE, RequestContext.none());
+ 
+         // startDelay=0 → fast path: 생성 즉시 RUNNING, nextDueAt=now, PENDING을 거치지 않는다(LIN-30)
+         assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.RUNNING);
+@@ -106,7 +107,7 @@ class PipelineSoftCapTest {
+     @Test
+     void theTerraformSlotGateReschedulesAndReleasesTheClaimWhenNoSlotIsFree() {
+         occupyTheOnlyTerraformSlot();
+-        Pipeline pipeline = creator.create("cap-slot", PipelineType.DELETE);   // the only due pipeline
++        Pipeline pipeline = creator.create("cap-slot", PipelineType.DELETE, RequestContext.none());   // the only due pipeline
+ 
+         pipelineWorker.pollOnce();   // terraform READY dispatch, but the single slot is taken → reschedule
+ 
+@@ -119,7 +120,7 @@ class PipelineSoftCapTest {
+ 
+     /** terraformSlotCap=1을 채우는 IN_PROGRESS terraform task를 두되, 그 pipeline은 미래 due로 두어 claim 대상에서 제외한다. */
+     private void occupyTheOnlyTerraformSlot() {
+-        Pipeline filler = creator.create("cap-filler", PipelineType.DELETE);
++        Pipeline filler = creator.create("cap-filler", PipelineType.DELETE, RequestContext.none());
+         Task task = taskRepository.findByPipelineIdOrderBySequenceAsc(filler.getId()).getFirst();
+         task.setStatus(TaskStatus.IN_PROGRESS);
+         taskRepository.save(task);
+diff --git a/src/test/java/com/bff/pipeline/service/PipelineStartDelayTest.java b/src/test/java/com/bff/pipeline/service/PipelineStartDelayTest.java
+index 96f5fec..8ece67c 100644
+--- a/src/test/java/com/bff/pipeline/service/PipelineStartDelayTest.java
++++ b/src/test/java/com/bff/pipeline/service/PipelineStartDelayTest.java
+@@ -3,15 +3,16 @@ package com.bff.pipeline.service;
+ import static org.assertj.core.api.Assertions.assertThat;
+ import static org.assertj.core.api.Assertions.assertThatThrownBy;
+ 
++import com.bff.pipeline.client.FakeInfraManagerClient;
+ import com.bff.pipeline.config.ExecutionSettings;
+ import com.bff.pipeline.config.PipelineSettings;
+-import com.bff.pipeline.client.FakeInfraManagerClient;
+ import com.bff.pipeline.entity.Pipeline;
+ import com.bff.pipeline.entity.Task;
+ import com.bff.pipeline.enums.PipelineStatus;
+ import com.bff.pipeline.enums.PipelineType;
+ import com.bff.pipeline.enums.TaskStatus;
+ import com.bff.pipeline.exception.PipelineAlreadyActiveException;
++import com.bff.pipeline.model.RequestContext;
+ import com.bff.pipeline.repository.PipelineRepository;
+ import com.bff.pipeline.repository.TaskRepository;
+ import com.bff.pipeline.repository.TerraformJobStateRepository;
+@@ -82,7 +83,7 @@ class PipelineStartDelayTest {
+ 
+     @Test
+     void firstTaskDoesNotDispatchBeforeTheDelayElapses() {
+-        Pipeline pipeline = creator.create("delay-a", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("delay-a", PipelineType.DELETE, RequestContext.none());
+ 
+         assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.PENDING);   // LIN-30: 지연 창 동안은 PENDING(RUNNING 아님)
+         assertThat(pipeline.getNextDueAt()).isEqualTo(START.plus(DELAY));
+@@ -94,7 +95,7 @@ class PipelineStartDelayTest {
+ 
+     @Test
+     void firstTaskDispatchesAndTransitionsToRunningOnceTheDelayElapses() {
+-        Pipeline pipeline = creator.create("delay-b", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("delay-b", PipelineType.DELETE, RequestContext.none());
+ 
+         clock.set(START.plus(DELAY));
+         pipelineWorker.pollOnce();   // now due → claim transitions PENDING→RUNNING, then dispatch first destroy
+@@ -105,7 +106,7 @@ class PipelineStartDelayTest {
+ 
+     @Test
+     void claimTransitionKeepsTheNextDueAtSeedAndDoesNotResetItToNow() {
+-        Pipeline pipeline = creator.create("delay-d", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("delay-d", PipelineType.DELETE, RequestContext.none());
+         Instant seededDue = pipeline.getNextDueAt();   // START + DELAY
+ 
+         clock.set(START.plus(DELAY).plus(Duration.ofSeconds(5)));   // due, and now strictly after the seed
+@@ -118,7 +119,7 @@ class PipelineStartDelayTest {
+ 
+     @Test
+     void crashAfterTransitionResumesTheFirstTaskOnReclaim() {
+-        Pipeline pipeline = creator.create("delay-e", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("delay-e", PipelineType.DELETE, RequestContext.none());
+ 
+         clock.set(START.plus(DELAY));
+         assertThat(pipelineClaimer.claimOneDue()).isPresent();   // PENDING→RUNNING + lease, 워커는 첫 task 실행 전 "크래시"
+@@ -134,7 +135,7 @@ class PipelineStartDelayTest {
+ 
+     @Test
+     void cancelAfterClaimFallsToCooperativeCaseBNotTerminalResurrection() {
+-        Pipeline pipeline = creator.create("delay-f", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("delay-f", PipelineType.DELETE, RequestContext.none());
+ 
+         clock.set(START.plus(DELAY));
+         assertThat(pipelineClaimer.claimOneDue()).isPresent();   // PENDING→RUNNING + live lease
+@@ -149,7 +150,7 @@ class PipelineStartDelayTest {
+ 
+     @Test
+     void cancelDuringTheWaitRunsNoTaskAtAll() {
+-        Pipeline pipeline = creator.create("delay-c", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("delay-c", PipelineType.DELETE, RequestContext.none());
+         assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.PENDING);   // 대기(PENDING) 상태에서 취소
+ 
+         control.cancel(pipeline.getId());   // still waiting, unclaimed → Case A cancels immediately
+@@ -166,17 +167,17 @@ class PipelineStartDelayTest {
+ 
+     @Test
+     void pendingPipelineBlocksASecondCreateForTheSameTarget() {
+-        Pipeline pending = creator.create("delay-g", PipelineType.DELETE);
++        Pipeline pending = creator.create("delay-g", PipelineType.DELETE, RequestContext.none());
+         assertThat(pending.getStatus()).isEqualTo(PipelineStatus.PENDING);
+ 
+         // PENDING도 비종단이라 active_target 슬롯을 점유한다 → 중복 create는 409로 거절(one-active-per-target)
+-        assertThatThrownBy(() -> creator.create("delay-g", PipelineType.DELETE))
++        assertThatThrownBy(() -> creator.create("delay-g", PipelineType.DELETE, RequestContext.none()))
+                 .isInstanceOf(PipelineAlreadyActiveException.class);
+     }
+ 
+     @Test
+     void pendingAndRunningCountsMoveExactlyOnTransition() {
+-        creator.create("delay-h", PipelineType.DELETE);
++        creator.create("delay-h", PipelineType.DELETE, RequestContext.none());
+ 
+         assertThat(pipelineRepository.countByStatus(PipelineStatus.PENDING)).isEqualTo(1);
+         assertThat(pipelineRepository.countByStatus(PipelineStatus.RUNNING)).isZero();
+diff --git a/src/test/java/com/bff/pipeline/service/PipelineUniquenessTest.java b/src/test/java/com/bff/pipeline/service/PipelineUniquenessTest.java
+index aad71ab..0217bf1 100644
+--- a/src/test/java/com/bff/pipeline/service/PipelineUniquenessTest.java
++++ b/src/test/java/com/bff/pipeline/service/PipelineUniquenessTest.java
+@@ -12,6 +12,7 @@ import com.bff.pipeline.enums.PipelineType;
+ import com.bff.pipeline.exception.MissingTargetException;
+ import com.bff.pipeline.exception.PipelineAlreadyActiveException;
+ import com.bff.pipeline.exception.ProviderLookupException;
++import com.bff.pipeline.model.RequestContext;
+ import com.bff.pipeline.repository.PipelineRepository;
+ import com.bff.pipeline.repository.TaskRepository;
+ import com.bff.pipeline.service.lifecycle.PipelineCreator;
+@@ -62,7 +63,7 @@ class PipelineUniquenessTest {
+ 
+     @Test
+     void createResolvesTheProviderAndPersistsItWithTheRecipe() {
+-        Pipeline pipeline = creator.create("prov-a", PipelineType.INSTALL);
++        Pipeline pipeline = creator.create("prov-a", PipelineType.INSTALL, RequestContext.none());
+ 
+         assertThat(pipeline.getCloudProvider()).isEqualTo(CloudProvider.AWS);
+         assertThat(pipeline.getRecipeDefinition()).isEqualTo("AWS_INSTALL_V1");
+@@ -74,7 +75,7 @@ class PipelineUniquenessTest {
+         // enum 값으로 재현할 수 없다 — 그 분기는 recipe 없는 새 provider가 추가되는 미래를 지키는 가드로 남는다.
+         infraManager.onCloudProvider(CloudProvider.GCP);
+ 
+-        Pipeline pipeline = creator.create("prov-b", PipelineType.INSTALL);
++        Pipeline pipeline = creator.create("prov-b", PipelineType.INSTALL, RequestContext.none());
+ 
+         assertThat(pipeline.getCloudProvider()).isEqualTo(CloudProvider.GCP);
+         assertThat(pipeline.getRecipeDefinition()).isEqualTo("GCP_INSTALL_V1");
+@@ -82,7 +83,7 @@ class PipelineUniquenessTest {
+ 
+     @Test
+     void createRejectsABlankTargetBeforeTheProviderLookup() {
+-        assertThatThrownBy(() -> creator.create("  ", PipelineType.INSTALL))
++        assertThatThrownBy(() -> creator.create("  ", PipelineType.INSTALL, RequestContext.none()))
+                 .isInstanceOf(MissingTargetException.class);
+     }
+ 
+@@ -90,34 +91,34 @@ class PipelineUniquenessTest {
+     void createTranslatesANullProviderLookupIntoAServiceUnavailable() {
+         infraManager.onCloudProvider(null);   // 경계 계약 위반(null 반환)
+ 
+-        assertThatThrownBy(() -> creator.create("prov-c", PipelineType.INSTALL))
++        assertThatThrownBy(() -> creator.create("prov-c", PipelineType.INSTALL, RequestContext.none()))
+                 .isInstanceOf(ProviderLookupException.class);
+     }
+ 
+     @Test
+     void duplicateCreateForAnActiveTargetIsRejectedAsConflict() {
+-        creator.create("target-a", PipelineType.INSTALL);
++        creator.create("target-a", PipelineType.INSTALL, RequestContext.none());
+ 
+-        assertThatThrownBy(() -> creator.create("target-a", PipelineType.INSTALL))
++        assertThatThrownBy(() -> creator.create("target-a", PipelineType.INSTALL, RequestContext.none()))
+                 .isInstanceOf(PipelineAlreadyActiveException.class);
+         assertThat(pipelineRepository.findAll()).hasSize(1);
+     }
+ 
+     @Test
+     void aDifferentTypeCreateForAnActiveTargetIsRejectedAsConflict() {
+-        creator.create("target-b", PipelineType.INSTALL);
++        creator.create("target-b", PipelineType.INSTALL, RequestContext.none());
+ 
+-        assertThatThrownBy(() -> creator.create("target-b", PipelineType.DELETE))
++        assertThatThrownBy(() -> creator.create("target-b", PipelineType.DELETE, RequestContext.none()))
+                 .isInstanceOf(PipelineAlreadyActiveException.class);
+         assertThat(pipelineRepository.findAll()).hasSize(1);
+     }
+ 
+     @Test
+     void aNewRunIsAllowedForATargetOnceItsPriorRunIsTerminal() {
+-        Pipeline first = creator.create("target-c", PipelineType.DELETE);
++        Pipeline first = creator.create("target-c", PipelineType.DELETE, RequestContext.none());
+         terminate(first);
+ 
+-        Pipeline second = creator.create("target-c", PipelineType.DELETE);
++        Pipeline second = creator.create("target-c", PipelineType.DELETE, RequestContext.none());
+ 
+         assertThat(second.getId()).isNotEqualTo(first.getId());
+         assertThat(pipelineRepository.findById(first.getId()).orElseThrow().getActiveTarget()).isNull();
+diff --git a/src/test/java/com/bff/pipeline/service/RestartPipelineTest.java b/src/test/java/com/bff/pipeline/service/RestartPipelineTest.java
+index eccbf9a..9219d41 100644
+--- a/src/test/java/com/bff/pipeline/service/RestartPipelineTest.java
++++ b/src/test/java/com/bff/pipeline/service/RestartPipelineTest.java
+@@ -28,6 +28,7 @@ import com.bff.pipeline.exception.PipelineNotRestartableException;
+ import com.bff.pipeline.exception.UnknownTaskException;
+ import com.bff.pipeline.model.PipelinePlan;
+ import com.bff.pipeline.model.PipelinePlan.PlannedStep;
++import com.bff.pipeline.model.RequestContext;
+ import com.bff.pipeline.repository.PipelineRepository;
+ import com.bff.pipeline.repository.TaskRepository;
+ import com.bff.pipeline.service.lifecycle.PipelineCreator;
+@@ -89,7 +90,7 @@ class RestartPipelineTest {
+                 TaskStatus.DONE, TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED);
+         List<Task> originChain = chainOf(origin);
+ 
+-        Pipeline restarted = restarter.restart("rst-failed", origin.getId(), null);
++        Pipeline restarted = restarter.restart("rst-failed", origin.getId(), null, RequestContext.none());
+ 
+         assertThat(restarted.getId()).isNotEqualTo(origin.getId());   // terminal 불부활 — 항상 새 행
+         assertThat(restarted.getType()).isEqualTo(PipelineType.INSTALL);   // CUSTOM으로 위장하지 않는다(결정 1)
+@@ -111,7 +112,7 @@ class RestartPipelineTest {
+         Pipeline origin = seedTerminal("rst-cancelled", PipelineStatus.CANCELLED,
+                 TaskStatus.DONE, TaskStatus.CANCELLED, TaskStatus.CANCELLED, TaskStatus.CANCELLED);
+ 
+-        Pipeline restarted = restarter.restart("rst-cancelled", origin.getId(), null);
++        Pipeline restarted = restarter.restart("rst-cancelled", origin.getId(), null, RequestContext.none());
+ 
+         assertThat(chainOf(restarted)).extracting(Task::getTaskDefinition).containsExactly(
+                 TaskDefinition.AWS_SERVICE_APPLY_V1.name(),   // 취소 당시 진행 task부터
+@@ -125,7 +126,7 @@ class RestartPipelineTest {
+         Pipeline origin = seedTerminal("rst-done", PipelineStatus.DONE,
+                 TaskStatus.DONE, TaskStatus.DONE, TaskStatus.DONE, TaskStatus.DONE);
+ 
+-        assertThatThrownBy(() -> restarter.restart("rst-done", origin.getId(), null))
++        assertThatThrownBy(() -> restarter.restart("rst-done", origin.getId(), null, RequestContext.none()))
+                 .isInstanceOf(PipelineNotRestartableException.class);
+         assertThat(pipelineRepository.count()).isEqualTo(1);   // 아무것도 만들지 않는다
+     }
+@@ -135,12 +136,12 @@ class RestartPipelineTest {
+         // 비종료 원본은 유니크 제약 백스톱(ALREADY_ACTIVE 409)도 있지만, 그보다 먼저 정확한 코드로 거절한다.
+         Pipeline running = seedActive("rst-live");
+ 
+-        assertThatThrownBy(() -> restarter.restart("rst-live", running.getId(), null))
++        assertThatThrownBy(() -> restarter.restart("rst-live", running.getId(), null, RequestContext.none()))
+                 .isInstanceOf(PipelineNotRestartableException.class);
+ 
+         running.setStatus(PipelineStatus.PENDING);
+         pipelineRepository.save(running);
+-        assertThatThrownBy(() -> restarter.restart("rst-live", running.getId(), null))
++        assertThatThrownBy(() -> restarter.restart("rst-live", running.getId(), null, RequestContext.none()))
+                 .isInstanceOf(PipelineNotRestartableException.class);
+     }
+ 
+@@ -152,7 +153,7 @@ class RestartPipelineTest {
+         seedTerminal("rst-stale", PipelineStatus.FAILED,
+                 TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.CANCELLED);
+ 
+-        assertThatThrownBy(() -> restarter.restart("rst-stale", older.getId(), null))
++        assertThatThrownBy(() -> restarter.restart("rst-stale", older.getId(), null, RequestContext.none()))
+                 .isInstanceOf(PipelineNotLatestException.class);
+     }
+ 
+@@ -167,7 +168,7 @@ class RestartPipelineTest {
+         seedActive("rst-race");
+         clock.advance(Duration.ofMinutes(10));
+ 
+-        assertThatThrownBy(() -> restarter.restart("rst-race", origin.getId(), null))
++        assertThatThrownBy(() -> restarter.restart("rst-race", origin.getId(), null, RequestContext.none()))
+                 .isInstanceOf(PipelineAlreadyActiveException.class);   // 최종 심판은 active_target 유니크 제약
+     }
+ 
+@@ -179,7 +180,7 @@ class RestartPipelineTest {
+         failed.setTaskDefinition("GONE_TASK_V0");   // 카탈로그에서 사라진 이름 — 조용한 열화 금지
+         taskRepository.save(failed);
+ 
+-        assertThatThrownBy(() -> restarter.restart("rst-unknown", origin.getId(), null))
++        assertThatThrownBy(() -> restarter.restart("rst-unknown", origin.getId(), null, RequestContext.none()))
+                 .isInstanceOf(UnknownTaskException.class);
+     }
+ 
+@@ -188,12 +189,12 @@ class RestartPipelineTest {
+         Pipeline origin = seedTerminal("rst-seq", PipelineStatus.FAILED,
+                 TaskStatus.DONE, TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED);
+ 
+-        assertThatThrownBy(() -> restarter.restart("rst-seq", origin.getId(), 3))   // 실패 task 건너뛰기
++        assertThatThrownBy(() -> restarter.restart("rst-seq", origin.getId(), 3, RequestContext.none()))   // 실패 task 건너뛰기
+                 .isInstanceOf(InvalidResumeSequenceException.class);
+-        assertThatThrownBy(() -> restarter.restart("rst-seq", origin.getId(), -1))
++        assertThatThrownBy(() -> restarter.restart("rst-seq", origin.getId(), -1, RequestContext.none()))
+                 .isInstanceOf(InvalidResumeSequenceException.class);
+ 
+-        Pipeline fullRerun = restarter.restart("rst-seq", origin.getId(), 0);   // DONE 재실행은 멱등-안전(결정 3)
++        Pipeline fullRerun = restarter.restart("rst-seq", origin.getId(), 0, RequestContext.none());   // DONE 재실행은 멱등-안전(결정 3)
+ 
+         assertThat(chainOf(fullRerun)).hasSize(4);
+     }
+@@ -236,7 +237,7 @@ class RestartPipelineTest {
+                 TaskStatus.DONE, TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED);
+ 
+         PipelineDetail restarted = controller.restart("rst-links", origin.getId(),
+-                new RestartPipelineRequest(null));
++                new RestartPipelineRequest(null, null, null));
+ 
+         assertThat(restarted.originPipelineId()).isEqualTo(origin.getId());
+         assertThat(restarted.origin().pipelineId()).isEqualTo(origin.getId());
+@@ -256,31 +257,69 @@ class RestartPipelineTest {
+         Pipeline first = seedTerminal("rst-chain", PipelineStatus.FAILED,
+                 TaskStatus.DONE, TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED);
+         clock.advance(Duration.ofMinutes(5));
+-        Pipeline second = restarter.restart("rst-chain", first.getId(), null);
++        Pipeline second = restarter.restart("rst-chain", first.getId(), null, RequestContext.none());
+         terminalize(second, PipelineStatus.FAILED, TaskStatus.FAILED, TaskStatus.CANCELLED);
+         clock.advance(Duration.ofMinutes(5));
+ 
+-        Pipeline third = restarter.restart("rst-chain", second.getId(), null);
++        Pipeline third = restarter.restart("rst-chain", second.getId(), null, RequestContext.none());
+ 
+         assertThat(third.getOriginPipelineId()).isEqualTo(second.getId());   // 체인은 직전 실행을 가리킨다
+-        assertThatThrownBy(() -> restarter.restart("rst-chain", first.getId(), null))
++        assertThatThrownBy(() -> restarter.restart("rst-chain", first.getId(), null, RequestContext.none()))
+                 .isInstanceOf(PipelineNotLatestException.class);   // 최신 가드가 체인 끝만 허용
+     }
+ 
++    /** 재시작 요청이 요청 맥락을 비워 두면 원본 실행에서 승계한다 — 재시작했다고 요청자가 사라지지 않는다. */
++    @Test
++    void anEmptyRequestContextIsInheritedFromTheOrigin() {
++        // 요청자는 write-once 컬럼이라 생성 시점에만 채워진다 — 원본을 그렇게 만들어 둔다.
++        Pipeline origin = seedTerminal("rst-inherit", RequestContext.of("first-requester", "먼저 요청한 건"),
++                PipelineStatus.FAILED, TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED,
++                TaskStatus.CANCELLED);
++
++        Pipeline restarted = restarter.restart("rst-inherit", origin.getId(), null, RequestContext.none());
++
++        assertThat(restarted.getRequestedBy()).isEqualTo("first-requester");
++        assertThat(restarted.getRequestNote()).isEqualTo("먼저 요청한 건");
++    }
++
++    /** 재시작 요청이 자기 요청자를 실어 보내면 그 사람이 새 요청자다 — 승계는 비어 있을 때만이다. */
++    @Test
++    void anExplicitRequestContextWinsOverTheOrigin() {
++        Pipeline origin = seedTerminal("rst-override", RequestContext.of("first-requester", "먼저 요청한 건"),
++                PipelineStatus.FAILED, TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED,
++                TaskStatus.CANCELLED);
++
++        Pipeline restarted = restarter.restart("rst-override", origin.getId(), null,
++                RequestContext.of("second-requester", null));
++
++        assertThat(restarted.getRequestedBy()).isEqualTo("second-requester");
++        assertThat(restarted.getRequestNote()).isNull();   // 실어 보낸 맥락이 통째로 이긴다(필드별 병합이 아니다)
++    }
++
+     /** 원본 시딩: INSTALL 분류의 4-task 실행을 삽입한 뒤 주어진 상태로 종료시킨다. */
+     private Pipeline seedTerminal(String target, PipelineStatus status, TaskStatus... taskStatuses) {
+-        Pipeline pipeline = seedActive(target);
++        return seedTerminal(target, RequestContext.none(), status, taskStatuses);
++    }
++
++    /** 요청 맥락을 지정해 시딩한다 — 승계 검증은 원본이 요청자를 들고 있어야 성립한다. */
++    private Pipeline seedTerminal(String target, RequestContext request, PipelineStatus status,
++            TaskStatus... taskStatuses) {
++        Pipeline pipeline = seedActive(target, request);
+         terminalize(pipeline, status, taskStatuses);
+         return pipeline;
+     }
+ 
+     /** 활성(RUNNING, active_target 점유) 실행 삽입 — startDelay 0이라 fast path RUNNING이다. */
+     private Pipeline seedActive(String target) {
++        return seedActive(target, RequestContext.none());
++    }
++
++    private Pipeline seedActive(String target, RequestContext request) {
+         List<PlannedStep> steps = CHAIN_DEFINITIONS.stream()
+                 .map(definition -> new PlannedStep(definition, null))
+                 .toList();
+         return inserter.insert(new PipelinePlan(target, PipelineType.INSTALL, CloudProvider.AWS,
+-                "AWS_INSTALL_V1", null, steps));
++                "AWS_INSTALL_V1", request, null, steps));
+     }
+ 
+     /** 행 직접 갱신으로 종료 상태를 만든다 — 실행 엔진 없이 write-back 결과와 같은 꼴(activeTarget 해제 포함). */
+diff --git a/src/test/java/com/bff/pipeline/service/TerraformJobStateQueryTest.java b/src/test/java/com/bff/pipeline/service/TerraformJobStateQueryTest.java
+index 27d34a6..1f531e3 100644
+--- a/src/test/java/com/bff/pipeline/service/TerraformJobStateQueryTest.java
++++ b/src/test/java/com/bff/pipeline/service/TerraformJobStateQueryTest.java
+@@ -16,6 +16,7 @@ import com.bff.pipeline.enums.TaskStatus;
+ import com.bff.pipeline.exception.PipelineNotFoundException;
+ import com.bff.pipeline.exception.TaskNotFoundException;
+ import com.bff.pipeline.exception.TerraformJobStateNotFoundException;
++import com.bff.pipeline.model.RequestContext;
+ import com.bff.pipeline.repository.PipelineRepository;
+ import com.bff.pipeline.repository.TaskAttemptRepository;
+ import com.bff.pipeline.repository.TaskCheckRepository;
+@@ -118,7 +119,7 @@ class TerraformJobStateQueryTest {
+ 
+     @Test
+     void liveStateIsQueryableWhileTheTaskIsStillInProgress() {
+-        Pipeline pipeline = creator.create("tjs-live", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("tjs-live", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onDispatch(() -> "[\"job-1\"]");
+         // 아직 진행 중(종결 아님) — 상태 필드로는 안 보이는 원문 body까지 함께 관측된다
+         infraManagerClient.onPoll(() -> TerraformPoll.running("APPLYING")
+@@ -146,14 +147,14 @@ class TerraformJobStateQueryTest {
+         assertThatThrownBy(() -> queryService.terraformJobState(pipeline.getId() + 999, taskId, 1, "job-1"))
+                 .isInstanceOf(PipelineNotFoundException.class);
+ 
+-        Pipeline other = creator.create("tjs-404-other", PipelineType.DELETE);
++        Pipeline other = creator.create("tjs-404-other", PipelineType.DELETE, RequestContext.none());
+         assertThatThrownBy(() -> queryService.terraformJobState(other.getId(), taskId, 1, "job-1"))
+                 .isInstanceOf(TaskNotFoundException.class);
+     }
+ 
+     /** 2-job dispatch에서 job-2만 실패(사유 포함)로 종결시켜 attempt 1이 job별 상태 2행으로 끝난 pipeline을 만든다. */
+     private Pipeline createWithOneFailedOfTwoJobs(String target) {
+-        Pipeline pipeline = creator.create(target, PipelineType.DELETE);
++        Pipeline pipeline = creator.create(target, PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
+         infraManagerClient.onPollByJob(jobId -> "job-2".equals(jobId)
+                 ? TerraformPoll.failure("FAILED", "Error: exit status 1")
+diff --git a/src/test/java/com/bff/pipeline/service/TerraformResultQueryTest.java b/src/test/java/com/bff/pipeline/service/TerraformResultQueryTest.java
+index b8194bf..8513d1d 100644
+--- a/src/test/java/com/bff/pipeline/service/TerraformResultQueryTest.java
++++ b/src/test/java/com/bff/pipeline/service/TerraformResultQueryTest.java
+@@ -17,6 +17,7 @@ import com.bff.pipeline.exception.CallFailedException;
+ import com.bff.pipeline.exception.PipelineNotFoundException;
+ import com.bff.pipeline.exception.TaskNotFoundException;
+ import com.bff.pipeline.exception.TerraformResultNotFoundException;
++import com.bff.pipeline.model.RequestContext;
+ import com.bff.pipeline.repository.PipelineRepository;
+ import com.bff.pipeline.repository.TaskAttemptRepository;
+ import com.bff.pipeline.repository.TaskCheckRepository;
+@@ -149,14 +150,14 @@ class TerraformResultQueryTest {
+         assertThatThrownBy(() -> queryService.terraformResult(pipeline.getId() + 999, taskId, 1, "job-1"))
+                 .isInstanceOf(PipelineNotFoundException.class);
+ 
+-        Pipeline other = creator.create("trq-404-other", PipelineType.DELETE);
++        Pipeline other = creator.create("trq-404-other", PipelineType.DELETE, RequestContext.none());
+         assertThatThrownBy(() -> queryService.terraformResult(other.getId(), taskId, 1, "job-1"))
+                 .isInstanceOf(TaskNotFoundException.class);
+     }
+ 
+     @Test
+     void anOverlongFailureDetailIsClampedToTheColumnLength() {
+-        Pipeline pipeline = creator.create("trq-clamp", PipelineType.DELETE);
++        Pipeline pipeline = creator.create("trq-clamp", PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onDispatch(() -> { throw new CallFailedException("x".repeat(600)); });
+ 
+         pipelineWorker.pollOnce();
+@@ -168,7 +169,7 @@ class TerraformResultQueryTest {
+ 
+     /** 2-job dispatch에서 job-2만 실패로 종결시켜 attempt 1이 JOB_FAILED + result 2행으로 끝난 pipeline을 만든다. */
+     private Pipeline createWithOneFailedOfTwoJobs(String target) {
+-        Pipeline pipeline = creator.create(target, PipelineType.DELETE);
++        Pipeline pipeline = creator.create(target, PipelineType.DELETE, RequestContext.none());
+         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
+         infraManagerClient.onPollByJob(jobId -> "job-2".equals(jobId)
+                 ? TerraformPoll.failure("FAILED", null)
