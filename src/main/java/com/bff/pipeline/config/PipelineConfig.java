@@ -23,7 +23,8 @@ import org.springframework.web.client.RestClient;
  * 타임아웃으로 건 빈을 직접 만든다(호출 상한을 HTTP 클라이언트가 소유해 별도 스레드풀이 필요 없다).
  */
 @Configuration
-@EnableConfigurationProperties({PipelineSettings.class, ExecutionSettings.class, NotifySettings.class})
+@EnableConfigurationProperties({PipelineSettings.class, ExecutionSettings.class, NotifySettings.class,
+        InstallEventSettings.class})
 public class PipelineConfig {
 
     @Bean

@@ -75,6 +75,15 @@ pipeline:
     # 주소를 줘야 한다(안 주면 알림의 링크가 localhost로 나간다).
     detail-url-base: ${PIPELINE_NOTIFY_DETAIL_URL_BASE:http://localhost:3001/integration/admin/pipelines}
 
+  # 자동 설치 이벤트 구독(InstallEventSubscriber). 대상이 4단계로 넘어갈 때 발행되는 Pub/Sub 이벤트
+  # {"target_source_id", "cloud_provider", "type": "INSTALL"}를 받아 Azure/IDC 설치 파이프라인을 요청자 SYSTEM으로
+  # 연다(AWS/GCP는 보류 기록만). 기본은 꺼짐이며 켜는 배포는 세 값을 env로 함께 준다 — enabled=true인데
+  # project-id/subscription이 비면 InstallEventSettings가 시작에 실패한다. 인증은 ADC.
+  install-event:
+    enabled: ${PIPELINE_INSTALL_EVENT_ENABLED:false}
+    project-id: ${PIPELINE_INSTALL_EVENT_PROJECT_ID:}
+    subscription: ${PIPELINE_INSTALL_EVENT_SUBSCRIPTION:}
+
 # InfraManager 프로덕션 HTTP delegate. base-url·auth-token 은 필수 설정이다 — 도메인이 InfraManagerClient 를
 # 필수 주입받으므로 full 컨텍스트는 이 연동 없이는 못 뜬다(FeignConfig 참조). 값은 env 로 주입한다:
 #   INFRA_MANAGER_BASE_URL(없으면 @FeignClient url 해석 실패), INFRA_MANAGER_TOKEN(비면 인터셉터가 fail-fast).
