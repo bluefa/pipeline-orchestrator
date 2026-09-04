@@ -19,6 +19,7 @@ import com.bff.pipeline.exception.UnknownTaskException;
 import com.bff.pipeline.exception.UnsupportedRecipeException;
 import com.bff.pipeline.model.PipelinePlan;
 import com.bff.pipeline.model.PipelinePlan.PlannedStep;
+import com.bff.pipeline.model.RequestContext;
 import java.util.List;
 import java.util.Locale;
 import lombok.RequiredArgsConstructor;
@@ -50,11 +51,12 @@ public class PipelineCreator {
     private final InfraManagerClient infraManagerClient;
 
     /** 카탈로그 recipe 실행(P10). (provider, type)으로 고정 recipe를 골라 실행한다. */
-    public Pipeline create(String target, PipelineType type) {
+    public Pipeline create(String target, PipelineType type, RequestContext request) {
         if (type == null) {
             throw new MissingPipelineTypeException();
         }
-        return insert(PipelinePlan.fromCatalog(target, resolveRecipe(target, type)), target);   // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
+        // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
+        return insert(PipelinePlan.fromCatalog(target, resolveRecipe(target, type), request), target);
     }
 
     /**
@@ -63,7 +65,7 @@ public class PipelineCreator {
      * 이름 존재·provider 일치·설명 길이(≤100)를 검사해 하나라도 어기면 400이다. plan 구성은 트랜잭션 밖에서 입력 검증 +
      * provider 조회를 마치고 삽입만 inserter의 트랜잭션에 맡긴다 — 유니크 위반은 {@link #insert}가 도메인 응답으로 번역한다.
      */
-    public Pipeline createCustom(String target, List<CustomTaskRequest> tasks) {
+    public Pipeline createCustom(String target, List<CustomTaskRequest> tasks, RequestContext request) {
         if (target == null || target.isBlank()) {
             throw new MissingTargetException();
         }
@@ -74,7 +76,7 @@ public class PipelineCreator {
         List<PlannedStep> steps = tasks.stream().map(PipelineCreator::resolveNameAndDescription).toList();
         CloudProvider provider = resolveProvider(target);   // 트랜잭션 밖 외부 조회(§3)
         steps.forEach(step -> requireProviderMatch(step.definition(), provider));
-        return insert(PipelinePlan.custom(target, provider, steps), target);
+        return insert(PipelinePlan.custom(target, provider, steps, request), target);
     }
 
     /** plan 삽입 + active-target 유니크 위반의 도메인 번역. catalog/custom/restart(PipelineRestarter) 경로가 공유한다. */

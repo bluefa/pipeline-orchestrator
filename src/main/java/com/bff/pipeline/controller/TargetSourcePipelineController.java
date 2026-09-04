@@ -9,6 +9,7 @@ import com.bff.pipeline.dto.pipeline.RestartPipelineRequest;
 import com.bff.pipeline.dto.pipeline.RestartPreview;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.exception.MissingPipelineTypeException;
+import com.bff.pipeline.model.RequestContext;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
 import com.bff.pipeline.service.lifecycle.PipelineRestarter;
 import com.bff.pipeline.service.query.PipelineQueryService;
@@ -65,7 +66,8 @@ public class TargetSourcePipelineController {
         if (request == null || request.type() == null) {
             throw new MissingPipelineTypeException();
         }
-        return queryService.toDetail(pipelineCreator.create(targetSourceId, request.type()));
+        return queryService.toDetail(pipelineCreator.create(targetSourceId, request.type(),
+                RequestContext.of(request.requestedBy(), request.requestNote())));
     }
 
     /**
@@ -76,7 +78,9 @@ public class TargetSourcePipelineController {
     public PipelineDetail createCustom(@PathVariable String targetSourceId,
             @RequestBody CustomPipelineRequest request) {
         return queryService.toDetail(pipelineCreator.createCustom(targetSourceId,
-                request == null ? null : request.tasks()));
+                request == null ? null : request.tasks(),
+                request == null ? RequestContext.none()
+                        : RequestContext.of(request.requestedBy(), request.requestNote())));
     }
 
     /**
@@ -97,6 +101,8 @@ public class TargetSourcePipelineController {
     public PipelineDetail restart(@PathVariable String targetSourceId, @PathVariable Long pipelineId,
             @RequestBody(required = false) RestartPipelineRequest request) {
         return queryService.toDetail(pipelineRestarter.restart(targetSourceId, pipelineId,
-                request == null ? null : request.fromSequence()));
+                request == null ? null : request.fromSequence(),
+                request == null ? RequestContext.none()
+                        : RequestContext.of(request.requestedBy(), request.requestNote())));
     }
 }

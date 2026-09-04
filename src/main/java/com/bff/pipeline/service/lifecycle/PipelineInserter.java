@@ -51,6 +51,8 @@ public class PipelineInserter {
                 .target(target)
                 .cloudProvider(plan.provider())
                 .recipeDefinition(plan.recipeDefinition())
+                .requestedBy(plan.request().requestedBy())
+                .requestNote(plan.request().requestNote())
                 .originPipelineId(plan.originPipelineId())
                 .status(delayed ? PipelineStatus.PENDING : PipelineStatus.RUNNING)
                 .activeTarget(target)

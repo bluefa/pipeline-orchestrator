@@ -16,6 +16,7 @@ import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.exception.PipelineNotFoundException;
 import com.bff.pipeline.exception.TaskNotFoundException;
 import com.bff.pipeline.exception.TerraformJobStateNotFoundException;
+import com.bff.pipeline.model.RequestContext;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
@@ -118,7 +119,7 @@ class TerraformJobStateQueryTest {
 
     @Test
     void liveStateIsQueryableWhileTheTaskIsStillInProgress() {
-        Pipeline pipeline = creator.create("tjs-live", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("tjs-live", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onDispatch(() -> "[\"job-1\"]");
         // 아직 진행 중(종결 아님) — 상태 필드로는 안 보이는 원문 body까지 함께 관측된다
         infraManagerClient.onPoll(() -> TerraformPoll.running("APPLYING")
@@ -146,14 +147,14 @@ class TerraformJobStateQueryTest {
         assertThatThrownBy(() -> queryService.terraformJobState(pipeline.getId() + 999, taskId, 1, "job-1"))
                 .isInstanceOf(PipelineNotFoundException.class);
 
-        Pipeline other = creator.create("tjs-404-other", PipelineType.DELETE);
+        Pipeline other = creator.create("tjs-404-other", PipelineType.DELETE, RequestContext.none());
         assertThatThrownBy(() -> queryService.terraformJobState(other.getId(), taskId, 1, "job-1"))
                 .isInstanceOf(TaskNotFoundException.class);
     }
 
     /** 2-job dispatch에서 job-2만 실패(사유 포함)로 종결시켜 attempt 1이 job별 상태 2행으로 끝난 pipeline을 만든다. */
     private Pipeline createWithOneFailedOfTwoJobs(String target) {
-        Pipeline pipeline = creator.create(target, PipelineType.DELETE);
+        Pipeline pipeline = creator.create(target, PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
         infraManagerClient.onPollByJob(jobId -> "job-2".equals(jobId)
                 ? TerraformPoll.failure("FAILED", "Error: exit status 1")

@@ -12,6 +12,7 @@ import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.exception.MissingTargetException;
 import com.bff.pipeline.exception.PipelineAlreadyActiveException;
 import com.bff.pipeline.exception.ProviderLookupException;
+import com.bff.pipeline.model.RequestContext;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
@@ -62,7 +63,7 @@ class PipelineUniquenessTest {
 
     @Test
     void createResolvesTheProviderAndPersistsItWithTheRecipe() {
-        Pipeline pipeline = creator.create("prov-a", PipelineType.INSTALL);
+        Pipeline pipeline = creator.create("prov-a", PipelineType.INSTALL, RequestContext.none());
 
         assertThat(pipeline.getCloudProvider()).isEqualTo(CloudProvider.AWS);
         assertThat(pipeline.getRecipeDefinition()).isEqualTo("AWS_INSTALL_V1");
@@ -74,7 +75,7 @@ class PipelineUniquenessTest {
         // enum 값으로 재현할 수 없다 — 그 분기는 recipe 없는 새 provider가 추가되는 미래를 지키는 가드로 남는다.
         infraManager.onCloudProvider(CloudProvider.GCP);
 
-        Pipeline pipeline = creator.create("prov-b", PipelineType.INSTALL);
+        Pipeline pipeline = creator.create("prov-b", PipelineType.INSTALL, RequestContext.none());
 
         assertThat(pipeline.getCloudProvider()).isEqualTo(CloudProvider.GCP);
         assertThat(pipeline.getRecipeDefinition()).isEqualTo("GCP_INSTALL_V1");
@@ -82,7 +83,7 @@ class PipelineUniquenessTest {
 
     @Test
     void createRejectsABlankTargetBeforeTheProviderLookup() {
-        assertThatThrownBy(() -> creator.create("  ", PipelineType.INSTALL))
+        assertThatThrownBy(() -> creator.create("  ", PipelineType.INSTALL, RequestContext.none()))
                 .isInstanceOf(MissingTargetException.class);
     }
 
@@ -90,34 +91,34 @@ class PipelineUniquenessTest {
     void createTranslatesANullProviderLookupIntoAServiceUnavailable() {
         infraManager.onCloudProvider(null);   // 경계 계약 위반(null 반환)
 
-        assertThatThrownBy(() -> creator.create("prov-c", PipelineType.INSTALL))
+        assertThatThrownBy(() -> creator.create("prov-c", PipelineType.INSTALL, RequestContext.none()))
                 .isInstanceOf(ProviderLookupException.class);
     }
 
     @Test
     void duplicateCreateForAnActiveTargetIsRejectedAsConflict() {
-        creator.create("target-a", PipelineType.INSTALL);
+        creator.create("target-a", PipelineType.INSTALL, RequestContext.none());
 
-        assertThatThrownBy(() -> creator.create("target-a", PipelineType.INSTALL))
+        assertThatThrownBy(() -> creator.create("target-a", PipelineType.INSTALL, RequestContext.none()))
                 .isInstanceOf(PipelineAlreadyActiveException.class);
         assertThat(pipelineRepository.findAll()).hasSize(1);
     }
 
     @Test
     void aDifferentTypeCreateForAnActiveTargetIsRejectedAsConflict() {
-        creator.create("target-b", PipelineType.INSTALL);
+        creator.create("target-b", PipelineType.INSTALL, RequestContext.none());
 
-        assertThatThrownBy(() -> creator.create("target-b", PipelineType.DELETE))
+        assertThatThrownBy(() -> creator.create("target-b", PipelineType.DELETE, RequestContext.none()))
                 .isInstanceOf(PipelineAlreadyActiveException.class);
         assertThat(pipelineRepository.findAll()).hasSize(1);
     }
 
     @Test
     void aNewRunIsAllowedForATargetOnceItsPriorRunIsTerminal() {
-        Pipeline first = creator.create("target-c", PipelineType.DELETE);
+        Pipeline first = creator.create("target-c", PipelineType.DELETE, RequestContext.none());
         terminate(first);
 
-        Pipeline second = creator.create("target-c", PipelineType.DELETE);
+        Pipeline second = creator.create("target-c", PipelineType.DELETE, RequestContext.none());
 
         assertThat(second.getId()).isNotEqualTo(first.getId());
         assertThat(pipelineRepository.findById(first.getId()).orElseThrow().getActiveTarget()).isNull();

@@ -2,14 +2,15 @@ package com.bff.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.bff.pipeline.client.FakeInfraManagerClient;
 import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.config.PipelineSettings;
-import com.bff.pipeline.client.FakeInfraManagerClient;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.TaskStatus;
+import com.bff.pipeline.model.RequestContext;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.repository.TerraformJobStateRepository;
@@ -74,8 +75,8 @@ class PipelineSoftCapTest {
 
     @Test
     void theAdmissionCapBlocksASecondConcurrentClaim() {
-        creator.create("cap-a", PipelineType.DELETE);
-        creator.create("cap-b", PipelineType.DELETE);
+        creator.create("cap-a", PipelineType.DELETE, RequestContext.none());
+        creator.create("cap-b", PipelineType.DELETE, RequestContext.none());
 
         assertThat(pipelineClaimer.claimOneDue()).isPresent();   // 1 active claim == cap
         assertThat(pipelineClaimer.claimOneDue()).isEmpty();      // blocked by the soft cap
@@ -83,10 +84,10 @@ class PipelineSoftCapTest {
 
     @Test
     void creationIsNotGatedByTheCap() {
-        creator.create("cap-c", PipelineType.DELETE);
+        creator.create("cap-c", PipelineType.DELETE, RequestContext.none());
         pipelineClaimer.claimOneDue();   // cap reached
 
-        Pipeline overCap = creator.create("cap-d", PipelineType.DELETE);
+        Pipeline overCap = creator.create("cap-d", PipelineType.DELETE, RequestContext.none());
 
         assertThat(pipelineRepository.findById(overCap.getId()).orElseThrow().getStatus())
                 .isEqualTo(PipelineStatus.RUNNING);
@@ -94,7 +95,7 @@ class PipelineSoftCapTest {
 
     @Test
     void zeroStartDelayTakesTheFastPathToRunningWithoutEverBeingPending() {
-        Pipeline pipeline = creator.create("cap-fast", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("cap-fast", PipelineType.DELETE, RequestContext.none());
 
         // startDelay=0 → fast path: 생성 즉시 RUNNING, nextDueAt=now, PENDING을 거치지 않는다(LIN-30)
         assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.RUNNING);
@@ -106,7 +107,7 @@ class PipelineSoftCapTest {
     @Test
     void theTerraformSlotGateReschedulesAndReleasesTheClaimWhenNoSlotIsFree() {
         occupyTheOnlyTerraformSlot();
-        Pipeline pipeline = creator.create("cap-slot", PipelineType.DELETE);   // the only due pipeline
+        Pipeline pipeline = creator.create("cap-slot", PipelineType.DELETE, RequestContext.none());   // the only due pipeline
 
         pipelineWorker.pollOnce();   // terraform READY dispatch, but the single slot is taken → reschedule
 
@@ -119,7 +120,7 @@ class PipelineSoftCapTest {
 
     /** terraformSlotCap=1을 채우는 IN_PROGRESS terraform task를 두되, 그 pipeline은 미래 due로 두어 claim 대상에서 제외한다. */
     private void occupyTheOnlyTerraformSlot() {
-        Pipeline filler = creator.create("cap-filler", PipelineType.DELETE);
+        Pipeline filler = creator.create("cap-filler", PipelineType.DELETE, RequestContext.none());
         Task task = taskRepository.findByPipelineIdOrderBySequenceAsc(filler.getId()).getFirst();
         task.setStatus(TaskStatus.IN_PROGRESS);
         taskRepository.save(task);

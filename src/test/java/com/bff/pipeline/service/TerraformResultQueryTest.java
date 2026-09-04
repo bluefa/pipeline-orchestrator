@@ -17,6 +17,7 @@ import com.bff.pipeline.exception.CallFailedException;
 import com.bff.pipeline.exception.PipelineNotFoundException;
 import com.bff.pipeline.exception.TaskNotFoundException;
 import com.bff.pipeline.exception.TerraformResultNotFoundException;
+import com.bff.pipeline.model.RequestContext;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
@@ -149,14 +150,14 @@ class TerraformResultQueryTest {
         assertThatThrownBy(() -> queryService.terraformResult(pipeline.getId() + 999, taskId, 1, "job-1"))
                 .isInstanceOf(PipelineNotFoundException.class);
 
-        Pipeline other = creator.create("trq-404-other", PipelineType.DELETE);
+        Pipeline other = creator.create("trq-404-other", PipelineType.DELETE, RequestContext.none());
         assertThatThrownBy(() -> queryService.terraformResult(other.getId(), taskId, 1, "job-1"))
                 .isInstanceOf(TaskNotFoundException.class);
     }
 
     @Test
     void anOverlongFailureDetailIsClampedToTheColumnLength() {
-        Pipeline pipeline = creator.create("trq-clamp", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("trq-clamp", PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onDispatch(() -> { throw new CallFailedException("x".repeat(600)); });
 
         pipelineWorker.pollOnce();
@@ -168,7 +169,7 @@ class TerraformResultQueryTest {
 
     /** 2-job dispatch에서 job-2만 실패로 종결시켜 attempt 1이 JOB_FAILED + result 2행으로 끝난 pipeline을 만든다. */
     private Pipeline createWithOneFailedOfTwoJobs(String target) {
-        Pipeline pipeline = creator.create(target, PipelineType.DELETE);
+        Pipeline pipeline = creator.create(target, PipelineType.DELETE, RequestContext.none());
         infraManagerClient.onDispatch(() -> "[\"job-1\",\"job-2\"]");
         infraManagerClient.onPollByJob(jobId -> "job-2".equals(jobId)
                 ? TerraformPoll.failure("FAILED", null)

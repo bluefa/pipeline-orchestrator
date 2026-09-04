@@ -21,11 +21,14 @@ import java.util.Objects;
  * {@code originPipelineId}는 재시작 계보다 — restart 경로만 원본 파이프라인 id를 싣고, 나머지 경로는 null이다.
  * 표시용 write-once 메타데이터로 inserter가 행에 스탬핑만 하고 엔진은 읽지 않는다.
  *
+ * {@code request}는 누가 왜 이 실행을 요청했는지다 — 세 경로 모두 요청 본문에서 받아 채우며, 재시작은
+ * 요청이 비어 있으면 원본의 것을 승계한다.
+ *
  * 각 {@link PlannedStep}은 실행할 TaskDefinition과 선택적 운영자 설명(custom 경로에서만 채워지고, catalog 경로는
  * null), 그리고 재시작 계보(originTaskId — restart 경로에서만)다.
  */
 public record PipelinePlan(String target, PipelineType type, CloudProvider provider, String recipeDefinition,
-        Long originPipelineId, List<PlannedStep> steps) {
+        RequestContext request, Long originPipelineId, List<PlannedStep> steps) {
 
     public PipelinePlan {
         if (target == null || target.isBlank()) {
@@ -33,6 +36,7 @@ public record PipelinePlan(String target, PipelineType type, CloudProvider provi
         }
         Objects.requireNonNull(type, "type must not be null");
         Objects.requireNonNull(provider, "provider must not be null");
+        Objects.requireNonNull(request, "request must not be null — use RequestContext.none()");
         if (steps == null || steps.isEmpty()) {
             throw new IllegalArgumentException("steps must not be empty");
         }
@@ -40,27 +44,30 @@ public record PipelinePlan(String target, PipelineType type, CloudProvider provi
     }
 
     /** 카탈로그 recipe로부터 plan을 만든다 — type/provider/recipe 이름/step은 recipe가 이미 들고 있다. step 설명은 없다(null). */
-    public static PipelinePlan fromCatalog(String target, RecipeDefinition recipe) {
+    public static PipelinePlan fromCatalog(String target, RecipeDefinition recipe, RequestContext request) {
         Objects.requireNonNull(recipe, "recipe must not be null");
         List<PlannedStep> steps = recipe.steps().stream()
                 .map(definition -> new PlannedStep(definition, null))
                 .toList();
-        return new PipelinePlan(target, recipe.pipelineType(), recipe.provider(), recipe.name(), null, steps);
+        return new PipelinePlan(target, recipe.pipelineType(), recipe.provider(), recipe.name(), request, null, steps);
     }
 
     /** 검증을 통과한 custom step 리스트로 plan을 만든다 — type은 {@link PipelineType#CUSTOM}, recipeDefinition은 없다(null). */
-    public static PipelinePlan custom(String target, CloudProvider provider, List<PlannedStep> steps) {
-        return new PipelinePlan(target, PipelineType.CUSTOM, provider, null, null, steps);
+    public static PipelinePlan custom(String target, CloudProvider provider, List<PlannedStep> steps,
+            RequestContext request) {
+        return new PipelinePlan(target, PipelineType.CUSTOM, provider, null, request, null, steps);
     }
 
     /**
      * 재시작 plan — type/recipeDefinition을 원본에서 승계하고 계보(originPipelineId)를 실어 만든다(재시작 설계
      * 결정 1·2). provider는 호출자(PipelineRestarter)가 원본 저장값 또는 폴백 조회로 확정해 넘긴다.
+     * 요청 맥락도 호출자가 "요청에 실려 온 값 또는 원본 승계"로 확정해 넘긴다.
      */
-    public static PipelinePlan restartOf(Pipeline origin, CloudProvider provider, List<PlannedStep> steps) {
+    public static PipelinePlan restartOf(Pipeline origin, CloudProvider provider, List<PlannedStep> steps,
+            RequestContext request) {
         Objects.requireNonNull(origin, "origin must not be null");
         return new PipelinePlan(origin.getTarget(), origin.getType(), provider,
-                origin.getRecipeDefinition(), origin.getId(), steps);
+                origin.getRecipeDefinition(), request, origin.getId(), steps);
     }
 
     /** 체인의 한 단계 — 실행할 TaskDefinition, 운영자가 붙인 선택적 설명, 재시작 계보(원본 task 행 id). */

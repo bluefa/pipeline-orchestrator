@@ -212,8 +212,11 @@ cancel is applied against a live worker is an execution concern (ADR-021).
 **Domain state tables**
 
 - `pipeline(id, type, target, cloud_provider, recipe_definition, status, created_at,
-  last_activity_at, active_target, origin_pipeline_id)` — execution adds `next_due_at, claimed_by, claimed_until,
-  cancel_requested` (see ADR-021). `cloud_provider` is a **write-once** (`updatable=false`) cache
+  last_activity_at, active_target, origin_pipeline_id, requested_by, request_note)` — execution adds `next_due_at, claimed_by, claimed_until,
+  cancel_requested` (see ADR-021). `requested_by`(100)/`request_note`(512) are **write-once,
+  display-only** request context stamped at create (nullable; over-length input is rejected with a
+  typed 400, never truncated; exposed in the detail DTO only — the engine never reads them).
+  `cloud_provider` is a **write-once** (`updatable=false`) cache
   of the provider looked up at create for recipe selection; `recipe_definition` is stamped at
   create with the `RecipeDefinition` constant name the Admin API joins on (set once at insert,
   though not annotation-immutable). `origin_pipeline_id` is a **write-once, display-only**

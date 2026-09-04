@@ -23,6 +23,7 @@ import com.bff.pipeline.exception.TaskDescriptionTooLongException;
 import com.bff.pipeline.exception.TaskProviderMismatchException;
 import com.bff.pipeline.exception.UnknownTaskException;
 import com.bff.pipeline.exception.UnsupportedRecipeException;
+import com.bff.pipeline.model.RequestContext;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
@@ -75,7 +76,7 @@ class CustomRecipeCreationTest {
                 new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply first"),
                 new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "then plan"));
 
-        Pipeline pipeline = creator.createCustom("cust-order", tasks);
+        Pipeline pipeline = creator.createCustom("cust-order", tasks, RequestContext.none());
 
         assertThat(pipeline.getType()).isEqualTo(PipelineType.CUSTOM);   // 분류는 type이 진다
         assertThat(pipeline.getRecipeDefinition()).isNull();              // 백킹 RecipeDefinition이 없다
@@ -90,7 +91,7 @@ class CustomRecipeCreationTest {
     void customRecipeRunsThroughTheCustomEndpoint() {
         CustomPipelineRequest request = new CustomPipelineRequest(List.of(
                 new CustomTaskRequest(TaskDefinition.AWS_SERVICE_APPLY_V1.name(), "apply first"),
-                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "then plan")));
+                new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), "then plan")), null, null);
 
         PipelineDetail detail = controller.createCustom("cust-endpoint", request);
 
@@ -104,16 +105,53 @@ class CustomRecipeCreationTest {
     @Test
     void catalogEndpointStaysTypedInstallOrDelete() {
         PipelineDetail detail = controller.create("cust-endpoint-catalog",
-                new CreatePipelineRequest(PipelineType.DELETE));
+                new CreatePipelineRequest(PipelineType.DELETE, null, null));
 
         assertThat(detail.type()).isEqualTo(PipelineType.DELETE);
         assertThat(detail.recipeDefinition()).isEqualTo("AWS_DELETE_V1");
     }
 
+    /** 요청 맥락은 요청 본문에서 받아 행에 남고 상세 응답으로 다시 나온다 — 목록에는 싣지 않는다. */
+    @Test
+    void theRequestContextIsRecordedAndReadBack() {
+        PipelineDetail detail = controller.create("cust-endpoint-request",
+                new CreatePipelineRequest(PipelineType.DELETE, "admin@example.com", "정리 요청 건입니다."));
+
+        assertThat(detail.requestedBy()).isEqualTo("admin@example.com");
+        assertThat(detail.requestNote()).isEqualTo("정리 요청 건입니다.");
+        assertThat(pipelineRepository.findById(detail.pipelineId()).orElseThrow().getRequestedBy())
+                .isEqualTo("admin@example.com");
+    }
+
+    /**
+     * custom 경로도 실값으로 왕복을 고정한다 — 컨트롤러가 같은 타입의 String 두 개를 넘기므로, 인자가
+     * 뒤바뀌어도 컴파일은 통과한다. 요청자가 사유 자리에 저장되면 감사 기록이 다른 사람을 가리킨다.
+     */
+    @Test
+    void theCustomEndpointRecordsItsOwnRequestContext() {
+        PipelineDetail detail = controller.createCustom("cust-endpoint-request-custom",
+                new CustomPipelineRequest(
+                        List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), null)),
+                        "operator@example.com", "커스텀 정리 실행"));
+
+        assertThat(detail.requestedBy()).isEqualTo("operator@example.com");
+        assertThat(detail.requestNote()).isEqualTo("커스텀 정리 실행");
+    }
+
+    /** 요청 맥락은 선택값이다 — 안 실어 보내도 실행은 그대로 만들어진다. */
+    @Test
+    void aRequestWithoutContextStillRuns() {
+        PipelineDetail detail = controller.create("cust-endpoint-norequest",
+                new CreatePipelineRequest(PipelineType.DELETE, null, null));
+
+        assertThat(detail.requestedBy()).isNull();
+        assertThat(detail.requestNote()).isNull();
+    }
+
     @Test
     void nullDescriptionIsAllowed() {
         Pipeline pipeline = creator.createCustom("cust-nodesc",
-                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), null)));
+                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), null)), RequestContext.none());
 
         assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).getFirst().getDescription())
                 .isNull();
@@ -122,7 +160,7 @@ class CustomRecipeCreationTest {
     @Test
     void unknownTaskNameIsRejected() {
         assertThatThrownBy(() -> creator.createCustom("cust-unknown",
-                List.of(new CustomTaskRequest("NOT_A_REAL_TASK", null))))
+                List.of(new CustomTaskRequest("NOT_A_REAL_TASK", null)), RequestContext.none()))
                 .isInstanceOf(UnknownTaskException.class);
     }
 
@@ -131,7 +169,7 @@ class CustomRecipeCreationTest {
         infraManager.onCloudProvider(CloudProvider.AWS);   // target is AWS, task is GCP
 
         assertThatThrownBy(() -> creator.createCustom("cust-mismatch",
-                List.of(new CustomTaskRequest(TaskDefinition.GCP_SERVICE_PLAN_V1.name(), null))))
+                List.of(new CustomTaskRequest(TaskDefinition.GCP_SERVICE_PLAN_V1.name(), null)), RequestContext.none()))
                 .isInstanceOf(TaskProviderMismatchException.class);
     }
 
@@ -140,7 +178,7 @@ class CustomRecipeCreationTest {
         String tooLong = "x".repeat(CustomTaskRequest.MAX_DESCRIPTION_LENGTH + 1);
 
         assertThatThrownBy(() -> creator.createCustom("cust-long",
-                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), tooLong))))
+                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), tooLong)), RequestContext.none()))
                 .isInstanceOf(TaskDescriptionTooLongException.class);
     }
 
@@ -149,7 +187,7 @@ class CustomRecipeCreationTest {
         String maxLen = "x".repeat(CustomTaskRequest.MAX_DESCRIPTION_LENGTH);
 
         Pipeline pipeline = creator.createCustom("cust-max",
-                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), maxLen)));
+                List.of(new CustomTaskRequest(TaskDefinition.AWS_SERVICE_PLAN_V1.name(), maxLen)), RequestContext.none());
 
         assertThat(taskRepository.findByPipelineIdOrderBySequenceAsc(pipeline.getId()).getFirst().getDescription())
                 .hasSize(CustomTaskRequest.MAX_DESCRIPTION_LENGTH);
@@ -157,9 +195,9 @@ class CustomRecipeCreationTest {
 
     @Test
     void emptyTaskListIsRejected() {
-        assertThatThrownBy(() -> creator.createCustom("cust-empty", List.of()))
+        assertThatThrownBy(() -> creator.createCustom("cust-empty", List.of(), RequestContext.none()))
                 .isInstanceOf(EmptyCustomRecipeException.class);
-        assertThatThrownBy(() -> creator.createCustom("cust-null", null))
+        assertThatThrownBy(() -> creator.createCustom("cust-null", null, RequestContext.none()))
                 .isInstanceOf(EmptyCustomRecipeException.class);
     }
 
@@ -167,7 +205,7 @@ class CustomRecipeCreationTest {
     void catalogEndpointRejectsCustomTypeBeforeProviderLookup() {
         infraManager.onCloudProvider(null);   // provider 조회가 503을 낼 상황
 
-        assertThatThrownBy(() -> creator.create("cat-custom", PipelineType.CUSTOM))
+        assertThatThrownBy(() -> creator.create("cat-custom", PipelineType.CUSTOM, RequestContext.none()))
                 .isInstanceOf(UnsupportedRecipeException.class);   // 503이 아니라 400 — CUSTOM을 먼저 거절
     }
 
@@ -176,7 +214,7 @@ class CustomRecipeCreationTest {
         infraManager.onCloudProvider(null);   // provider 조회가 503을 낼 상황
 
         assertThatThrownBy(() -> creator.createCustom("cust-badname",
-                List.of(new CustomTaskRequest("NOT_A_REAL_TASK", null))))
+                List.of(new CustomTaskRequest("NOT_A_REAL_TASK", null)), RequestContext.none()))
                 .isInstanceOf(UnknownTaskException.class);   // 이름 검증이 provider 조회보다 먼저라 400 유지
     }
 

@@ -1,0 +1,69 @@
+package com.bff.pipeline.model;
+
+import com.bff.pipeline.entity.Pipeline;
+import com.bff.pipeline.exception.RequestNoteTooLongException;
+import com.bff.pipeline.exception.RequestedByTooLongException;
+
+/**
+ * 실행을 누가 왜 요청했는지다. 실행 기록만 보고는 "이 target에 무엇이 돌았다"까지만 알 수 있고 누가 시켰는지는
+ * 알 수 없어, 파이프라인을 만드는 시점에 요청자와 요청 사유를 함께 받아 행에 붙인다. 세 경로(카탈로그·custom·
+ * 재시작)가 같은 값을 받고, 재시작은 요청이 비어 있으면 원본에서 승계한다.
+ *
+ * 두 값 모두 사람이 쓴 값이라 길이를 넘으면 자르지 않고 거절한다. 요청자 이름을 말없이 자르면
+ * 감사 기록이 다른 사람을 가리킬 수 있고, 요청 사유를 자르면 하려던 말이 훼손된다. 저장이 깨질까
+ * 걱정해 자르는 것보다, 경계에서 되돌려 보내 다시 쓰게 하는 편이 정직하다.
+ *
+ * 지금은 둘 다 선택값이다 — 있으면 기록하고 없으면 그만이다. 필수로 걸어야 하는 경로(승인 게이트)는 그
+ * 규칙을 쓰는 코드와 함께 들어온다.
+ *
+ * 요청자 값 자체는 호출자가 정한다. 콘솔에서 시작한 실행은 BFF가 검증된 세션 계정을 채워 보내고, 대상이
+ * 4단계에 들어서 infra install worker가 스스로 여는 자동 설치는 예약값 {@code "SYSTEM"}을 보낸다. 오케스트레이터는
+ * 두 값을 구분하지 않고 기록만 하며, 콘솔이 {@code "SYSTEM"}을 "시스템"으로 그려 사람이 시킨 실행과 가른다.
+ * 어느 시스템이 왜 열었는지는 요청 사유에 적는다.
+ */
+public record RequestContext(String requestedBy, String requestNote) {
+
+    private static final RequestContext NONE = new RequestContext(null, null);
+
+    /**
+     * 길이 검증은 생성자에 있다 — of()를 지나지 않고 record를 직접 만들어도 열 길이를 넘는 값은 여기서
+     * 거절되므로, 초과 값이 insert까지 흘러가 일반 500으로 죽는 길이 없다. 내부 경로(빈 값, 이미 저장된
+     * 행에서의 승계)는 항상 한도 안이라 이 검사를 그냥 지나간다.
+     */
+    public RequestContext {
+        if (requestedBy != null && requestedBy.length() > Pipeline.REQUESTED_BY_LENGTH) {
+            throw new RequestedByTooLongException(requestedBy.length(), Pipeline.REQUESTED_BY_LENGTH);
+        }
+        if (requestNote != null && requestNote.length() > Pipeline.REQUEST_NOTE_LENGTH) {
+            throw new RequestNoteTooLongException(requestNote.length(), Pipeline.REQUEST_NOTE_LENGTH);
+        }
+    }
+
+    /**
+     * 요청에서 온 두 값을 다듬어 담는다. 빈 문자열은 값이 없는 것과 같게 다뤄 저장하지 않는다 —
+     * 공백만 넣어 필수 검사를 형식적으로 통과하는 길을 막는다. 길이 거절은 생성자가 한다.
+     */
+    public static RequestContext of(String requestedBy, String requestNote) {
+        return new RequestContext(blankToNull(requestedBy), blankToNull(requestNote));
+    }
+
+    /** 요청 맥락이 없는 경로(재시작 승계 전 기본값 등)를 위한 빈 값. */
+    public static RequestContext none() {
+        return NONE;
+    }
+
+    /**
+     * 이 맥락이 비어 있으면 원본의 것을 승계한다 — 재시작이 쓴다. 재시작 요청이 자기 요청자를 실어 보내면
+     * 그 사람이 새 요청자이고, 안 실어 보내면 원본 실행의 요청 맥락을 그대로 이어받는다.
+     */
+    public RequestContext orInheritFrom(Pipeline origin) {
+        if (requestedBy != null || requestNote != null) {
+            return this;
+        }
+        return new RequestContext(origin.getRequestedBy(), origin.getRequestNote());
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+}

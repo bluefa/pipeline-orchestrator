@@ -28,6 +28,7 @@ import com.bff.pipeline.exception.PipelineNotRestartableException;
 import com.bff.pipeline.exception.UnknownTaskException;
 import com.bff.pipeline.model.PipelinePlan;
 import com.bff.pipeline.model.PipelinePlan.PlannedStep;
+import com.bff.pipeline.model.RequestContext;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.service.lifecycle.PipelineCreator;
@@ -89,7 +90,7 @@ class RestartPipelineTest {
                 TaskStatus.DONE, TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED);
         List<Task> originChain = chainOf(origin);
 
-        Pipeline restarted = restarter.restart("rst-failed", origin.getId(), null);
+        Pipeline restarted = restarter.restart("rst-failed", origin.getId(), null, RequestContext.none());
 
         assertThat(restarted.getId()).isNotEqualTo(origin.getId());   // terminal 불부활 — 항상 새 행
         assertThat(restarted.getType()).isEqualTo(PipelineType.INSTALL);   // CUSTOM으로 위장하지 않는다(결정 1)
@@ -111,7 +112,7 @@ class RestartPipelineTest {
         Pipeline origin = seedTerminal("rst-cancelled", PipelineStatus.CANCELLED,
                 TaskStatus.DONE, TaskStatus.CANCELLED, TaskStatus.CANCELLED, TaskStatus.CANCELLED);
 
-        Pipeline restarted = restarter.restart("rst-cancelled", origin.getId(), null);
+        Pipeline restarted = restarter.restart("rst-cancelled", origin.getId(), null, RequestContext.none());
 
         assertThat(chainOf(restarted)).extracting(Task::getTaskDefinition).containsExactly(
                 TaskDefinition.AWS_SERVICE_APPLY_V1.name(),   // 취소 당시 진행 task부터
@@ -125,7 +126,7 @@ class RestartPipelineTest {
         Pipeline origin = seedTerminal("rst-done", PipelineStatus.DONE,
                 TaskStatus.DONE, TaskStatus.DONE, TaskStatus.DONE, TaskStatus.DONE);
 
-        assertThatThrownBy(() -> restarter.restart("rst-done", origin.getId(), null))
+        assertThatThrownBy(() -> restarter.restart("rst-done", origin.getId(), null, RequestContext.none()))
                 .isInstanceOf(PipelineNotRestartableException.class);
         assertThat(pipelineRepository.count()).isEqualTo(1);   // 아무것도 만들지 않는다
     }
@@ -135,12 +136,12 @@ class RestartPipelineTest {
         // 비종료 원본은 유니크 제약 백스톱(ALREADY_ACTIVE 409)도 있지만, 그보다 먼저 정확한 코드로 거절한다.
         Pipeline running = seedActive("rst-live");
 
-        assertThatThrownBy(() -> restarter.restart("rst-live", running.getId(), null))
+        assertThatThrownBy(() -> restarter.restart("rst-live", running.getId(), null, RequestContext.none()))
                 .isInstanceOf(PipelineNotRestartableException.class);
 
         running.setStatus(PipelineStatus.PENDING);
         pipelineRepository.save(running);
-        assertThatThrownBy(() -> restarter.restart("rst-live", running.getId(), null))
+        assertThatThrownBy(() -> restarter.restart("rst-live", running.getId(), null, RequestContext.none()))
                 .isInstanceOf(PipelineNotRestartableException.class);
     }
 
@@ -152,7 +153,7 @@ class RestartPipelineTest {
         seedTerminal("rst-stale", PipelineStatus.FAILED,
                 TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.CANCELLED);
 
-        assertThatThrownBy(() -> restarter.restart("rst-stale", older.getId(), null))
+        assertThatThrownBy(() -> restarter.restart("rst-stale", older.getId(), null, RequestContext.none()))
                 .isInstanceOf(PipelineNotLatestException.class);
     }
 
@@ -167,7 +168,7 @@ class RestartPipelineTest {
         seedActive("rst-race");
         clock.advance(Duration.ofMinutes(10));
 
-        assertThatThrownBy(() -> restarter.restart("rst-race", origin.getId(), null))
+        assertThatThrownBy(() -> restarter.restart("rst-race", origin.getId(), null, RequestContext.none()))
                 .isInstanceOf(PipelineAlreadyActiveException.class);   // 최종 심판은 active_target 유니크 제약
     }
 
@@ -179,7 +180,7 @@ class RestartPipelineTest {
         failed.setTaskDefinition("GONE_TASK_V0");   // 카탈로그에서 사라진 이름 — 조용한 열화 금지
         taskRepository.save(failed);
 
-        assertThatThrownBy(() -> restarter.restart("rst-unknown", origin.getId(), null))
+        assertThatThrownBy(() -> restarter.restart("rst-unknown", origin.getId(), null, RequestContext.none()))
                 .isInstanceOf(UnknownTaskException.class);
     }
 
@@ -188,12 +189,12 @@ class RestartPipelineTest {
         Pipeline origin = seedTerminal("rst-seq", PipelineStatus.FAILED,
                 TaskStatus.DONE, TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED);
 
-        assertThatThrownBy(() -> restarter.restart("rst-seq", origin.getId(), 3))   // 실패 task 건너뛰기
+        assertThatThrownBy(() -> restarter.restart("rst-seq", origin.getId(), 3, RequestContext.none()))   // 실패 task 건너뛰기
                 .isInstanceOf(InvalidResumeSequenceException.class);
-        assertThatThrownBy(() -> restarter.restart("rst-seq", origin.getId(), -1))
+        assertThatThrownBy(() -> restarter.restart("rst-seq", origin.getId(), -1, RequestContext.none()))
                 .isInstanceOf(InvalidResumeSequenceException.class);
 
-        Pipeline fullRerun = restarter.restart("rst-seq", origin.getId(), 0);   // DONE 재실행은 멱등-안전(결정 3)
+        Pipeline fullRerun = restarter.restart("rst-seq", origin.getId(), 0, RequestContext.none());   // DONE 재실행은 멱등-안전(결정 3)
 
         assertThat(chainOf(fullRerun)).hasSize(4);
     }
@@ -236,7 +237,7 @@ class RestartPipelineTest {
                 TaskStatus.DONE, TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED);
 
         PipelineDetail restarted = controller.restart("rst-links", origin.getId(),
-                new RestartPipelineRequest(null));
+                new RestartPipelineRequest(null, null, null));
 
         assertThat(restarted.originPipelineId()).isEqualTo(origin.getId());
         assertThat(restarted.origin().pipelineId()).isEqualTo(origin.getId());
@@ -256,31 +257,69 @@ class RestartPipelineTest {
         Pipeline first = seedTerminal("rst-chain", PipelineStatus.FAILED,
                 TaskStatus.DONE, TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED);
         clock.advance(Duration.ofMinutes(5));
-        Pipeline second = restarter.restart("rst-chain", first.getId(), null);
+        Pipeline second = restarter.restart("rst-chain", first.getId(), null, RequestContext.none());
         terminalize(second, PipelineStatus.FAILED, TaskStatus.FAILED, TaskStatus.CANCELLED);
         clock.advance(Duration.ofMinutes(5));
 
-        Pipeline third = restarter.restart("rst-chain", second.getId(), null);
+        Pipeline third = restarter.restart("rst-chain", second.getId(), null, RequestContext.none());
 
         assertThat(third.getOriginPipelineId()).isEqualTo(second.getId());   // 체인은 직전 실행을 가리킨다
-        assertThatThrownBy(() -> restarter.restart("rst-chain", first.getId(), null))
+        assertThatThrownBy(() -> restarter.restart("rst-chain", first.getId(), null, RequestContext.none()))
                 .isInstanceOf(PipelineNotLatestException.class);   // 최신 가드가 체인 끝만 허용
+    }
+
+    /** 재시작 요청이 요청 맥락을 비워 두면 원본 실행에서 승계한다 — 재시작했다고 요청자가 사라지지 않는다. */
+    @Test
+    void anEmptyRequestContextIsInheritedFromTheOrigin() {
+        // 요청자는 write-once 컬럼이라 생성 시점에만 채워진다 — 원본을 그렇게 만들어 둔다.
+        Pipeline origin = seedTerminal("rst-inherit", RequestContext.of("first-requester", "먼저 요청한 건"),
+                PipelineStatus.FAILED, TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED,
+                TaskStatus.CANCELLED);
+
+        Pipeline restarted = restarter.restart("rst-inherit", origin.getId(), null, RequestContext.none());
+
+        assertThat(restarted.getRequestedBy()).isEqualTo("first-requester");
+        assertThat(restarted.getRequestNote()).isEqualTo("먼저 요청한 건");
+    }
+
+    /** 재시작 요청이 자기 요청자를 실어 보내면 그 사람이 새 요청자다 — 승계는 비어 있을 때만이다. */
+    @Test
+    void anExplicitRequestContextWinsOverTheOrigin() {
+        Pipeline origin = seedTerminal("rst-override", RequestContext.of("first-requester", "먼저 요청한 건"),
+                PipelineStatus.FAILED, TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED,
+                TaskStatus.CANCELLED);
+
+        Pipeline restarted = restarter.restart("rst-override", origin.getId(), null,
+                RequestContext.of("second-requester", null));
+
+        assertThat(restarted.getRequestedBy()).isEqualTo("second-requester");
+        assertThat(restarted.getRequestNote()).isNull();   // 실어 보낸 맥락이 통째로 이긴다(필드별 병합이 아니다)
     }
 
     /** 원본 시딩: INSTALL 분류의 4-task 실행을 삽입한 뒤 주어진 상태로 종료시킨다. */
     private Pipeline seedTerminal(String target, PipelineStatus status, TaskStatus... taskStatuses) {
-        Pipeline pipeline = seedActive(target);
+        return seedTerminal(target, RequestContext.none(), status, taskStatuses);
+    }
+
+    /** 요청 맥락을 지정해 시딩한다 — 승계 검증은 원본이 요청자를 들고 있어야 성립한다. */
+    private Pipeline seedTerminal(String target, RequestContext request, PipelineStatus status,
+            TaskStatus... taskStatuses) {
+        Pipeline pipeline = seedActive(target, request);
         terminalize(pipeline, status, taskStatuses);
         return pipeline;
     }
 
     /** 활성(RUNNING, active_target 점유) 실행 삽입 — startDelay 0이라 fast path RUNNING이다. */
     private Pipeline seedActive(String target) {
+        return seedActive(target, RequestContext.none());
+    }
+
+    private Pipeline seedActive(String target, RequestContext request) {
         List<PlannedStep> steps = CHAIN_DEFINITIONS.stream()
                 .map(definition -> new PlannedStep(definition, null))
                 .toList();
         return inserter.insert(new PipelinePlan(target, PipelineType.INSTALL, CloudProvider.AWS,
-                "AWS_INSTALL_V1", null, steps));
+                "AWS_INSTALL_V1", request, null, steps));
     }
 
     /** 행 직접 갱신으로 종료 상태를 만든다 — 실행 엔진 없이 write-back 결과와 같은 꼴(activeTarget 해제 포함). */

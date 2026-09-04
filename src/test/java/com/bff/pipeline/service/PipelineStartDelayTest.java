@@ -3,15 +3,16 @@ package com.bff.pipeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.bff.pipeline.client.FakeInfraManagerClient;
 import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.config.PipelineSettings;
-import com.bff.pipeline.client.FakeInfraManagerClient;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.exception.PipelineAlreadyActiveException;
+import com.bff.pipeline.model.RequestContext;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.repository.TerraformJobStateRepository;
@@ -82,7 +83,7 @@ class PipelineStartDelayTest {
 
     @Test
     void firstTaskDoesNotDispatchBeforeTheDelayElapses() {
-        Pipeline pipeline = creator.create("delay-a", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("delay-a", PipelineType.DELETE, RequestContext.none());
 
         assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.PENDING);   // LIN-30: 지연 창 동안은 PENDING(RUNNING 아님)
         assertThat(pipeline.getNextDueAt()).isEqualTo(START.plus(DELAY));
@@ -94,7 +95,7 @@ class PipelineStartDelayTest {
 
     @Test
     void firstTaskDispatchesAndTransitionsToRunningOnceTheDelayElapses() {
-        Pipeline pipeline = creator.create("delay-b", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("delay-b", PipelineType.DELETE, RequestContext.none());
 
         clock.set(START.plus(DELAY));
         pipelineWorker.pollOnce();   // now due → claim transitions PENDING→RUNNING, then dispatch first destroy
@@ -105,7 +106,7 @@ class PipelineStartDelayTest {
 
     @Test
     void claimTransitionKeepsTheNextDueAtSeedAndDoesNotResetItToNow() {
-        Pipeline pipeline = creator.create("delay-d", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("delay-d", PipelineType.DELETE, RequestContext.none());
         Instant seededDue = pipeline.getNextDueAt();   // START + DELAY
 
         clock.set(START.plus(DELAY).plus(Duration.ofSeconds(5)));   // due, and now strictly after the seed
@@ -118,7 +119,7 @@ class PipelineStartDelayTest {
 
     @Test
     void crashAfterTransitionResumesTheFirstTaskOnReclaim() {
-        Pipeline pipeline = creator.create("delay-e", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("delay-e", PipelineType.DELETE, RequestContext.none());
 
         clock.set(START.plus(DELAY));
         assertThat(pipelineClaimer.claimOneDue()).isPresent();   // PENDING→RUNNING + lease, 워커는 첫 task 실행 전 "크래시"
@@ -134,7 +135,7 @@ class PipelineStartDelayTest {
 
     @Test
     void cancelAfterClaimFallsToCooperativeCaseBNotTerminalResurrection() {
-        Pipeline pipeline = creator.create("delay-f", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("delay-f", PipelineType.DELETE, RequestContext.none());
 
         clock.set(START.plus(DELAY));
         assertThat(pipelineClaimer.claimOneDue()).isPresent();   // PENDING→RUNNING + live lease
@@ -149,7 +150,7 @@ class PipelineStartDelayTest {
 
     @Test
     void cancelDuringTheWaitRunsNoTaskAtAll() {
-        Pipeline pipeline = creator.create("delay-c", PipelineType.DELETE);
+        Pipeline pipeline = creator.create("delay-c", PipelineType.DELETE, RequestContext.none());
         assertThat(pipeline.getStatus()).isEqualTo(PipelineStatus.PENDING);   // 대기(PENDING) 상태에서 취소
 
         control.cancel(pipeline.getId());   // still waiting, unclaimed → Case A cancels immediately
@@ -166,17 +167,17 @@ class PipelineStartDelayTest {
 
     @Test
     void pendingPipelineBlocksASecondCreateForTheSameTarget() {
-        Pipeline pending = creator.create("delay-g", PipelineType.DELETE);
+        Pipeline pending = creator.create("delay-g", PipelineType.DELETE, RequestContext.none());
         assertThat(pending.getStatus()).isEqualTo(PipelineStatus.PENDING);
 
         // PENDING도 비종단이라 active_target 슬롯을 점유한다 → 중복 create는 409로 거절(one-active-per-target)
-        assertThatThrownBy(() -> creator.create("delay-g", PipelineType.DELETE))
+        assertThatThrownBy(() -> creator.create("delay-g", PipelineType.DELETE, RequestContext.none()))
                 .isInstanceOf(PipelineAlreadyActiveException.class);
     }
 
     @Test
     void pendingAndRunningCountsMoveExactlyOnTransition() {
-        creator.create("delay-h", PipelineType.DELETE);
+        creator.create("delay-h", PipelineType.DELETE, RequestContext.none());
 
         assertThat(pipelineRepository.countByStatus(PipelineStatus.PENDING)).isEqualTo(1);
         assertThat(pipelineRepository.countByStatus(PipelineStatus.RUNNING)).isZero();

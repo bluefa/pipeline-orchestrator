@@ -304,9 +304,9 @@ channel)`은 **한 트랜잭션에서** 위 CAS와 웨이크업(`pipeline.next_d
   않는다. 비게이트 레시피에서는 선택(있으면 기록 — 일반 감사에도 유익).
 - **두 필드의 경계 계약은 절단이 아니라 typed 400 거절이다**(사람이 쓴 값을
   말없이 자르면 의도가 훼손된다 — R10 규칙 "bound or reject"에서 reject 선택):
-  `requested_by`는 non-blank·최대 64자(blank·초과 400 — blank를 허용하면 필수
+  `requested_by`는 non-blank·최대 100자(blank·초과 400 — blank를 허용하면 필수
   감사가 형식으로만 통과하고, 초과는 insert에서 500으로 새므로 경계에서 막는다),
-  `request_note`는 최대 200자(custom task 설명 ≤100 선례와 같은 축, 초과 400).
+  `request_note`는 최대 512자(초과 400).
   각각 안정적인 `OrchestrationErrorCode` 신규 값으로 거절한다. 수용 지점은 생성
   두 갈래(카탈로그 `CreatePipelineRequest`·custom `CustomPipelineRequest`)
   모두이며, `requested_by` **필수** 검증은 게이트 레시피가 활성인 카탈로그 생성
@@ -396,7 +396,7 @@ claim으로 이어질 수 있다(원장 R10 "judgment-tx column overflow" 패턴
 base + id로만 조립), 그리고 요청 맥락 3필드(§결정 4) — `requested_by`(BFF가
 검증한 **내부 계정 표시 identity**라 허용한다: 승인 결과의 `approver_name` 표시와
 같은 범주이고, 승인 판단에 "누가 요청했는가"가 필수 입력이다), `requested_at`,
-`request_note`(유일한 자유 텍스트 — 상한 200자·경계 검증, 불변식 3의 예외). 속성 값(before/after), raw 연결 식별자, 예외 텍스트는 요약·
+`request_note`(유일한 자유 텍스트 — 상한 512자·경계 검증, 불변식 3의 예외). 속성 값(before/after), raw 연결 식별자, 예외 텍스트는 요약·
 Slack 본문에 직렬화하지 않는다(MUST NOT). **리소스 주소는 "코드 식별자라 무해"라고
 일반화하지 않는다** — `for_each` 인덱스 키에 hostname/DB명 같은 외부 유래 값이
 들어올 수 있으므로, Slack 본문의 주소는 **인덱스 세그먼트를 마스킹**한다
@@ -444,7 +444,7 @@ private cluster 제약(맥락)을 Socket Mode가 정확히 해소한다: 앱이 
   상세 링크, 승인/반려 버튼. `request_note`는 이 payload에서 유일한 자유
   텍스트다 — 자동 추출물이 아니라 **사람(관리자/담당자)이 승인자에게 의도적으로
   쓰는 메시지**라 PII allowlist의 닫힌-필드 원칙과 범주가 다르며, 상한
-  200자·경계 검증(§결정 4)을 조건으로 수용한다(불변식 3에 예외 명시).
+  512자·경계 검증(§결정 4)을 조건으로 수용한다(불변식 3에 예외 명시).
   **렌더링 안전(MUST)**: `request_note`·`requested_by`는 Block Kit
   `plain_text`로만 렌더링한다(mrkdwn 금지) — `<!channel>` 멘션이나
   `<url|라벨>` 링크 문자열이 해석되면 채널 소란·승인 문맥 오인이 되므로,
@@ -712,7 +712,7 @@ decided_at, approver, channel, plan_summary)을 추가하고, **`PipelineDetail`
 3. 승인 요청·요약(payload)은 ADR-022의 PII 계약 + §결정 5의 allowlist를 따른다 —
    집계·마스킹된 주소·닫힌 필드만, 속성 값·raw 연결 식별자·예외 텍스트 금지
    (MUST NOT). 유일한 자유 텍스트 예외는 `request_note`(§결정 4·6 — 사람이
-   승인자에게 의도적으로 쓰는 메시지, 상한 200자·경계 검증)다.
+   승인자에게 의도적으로 쓰는 메시지, 상한 512자·경계 검증)다.
 4. 게이트 task는 terraform slot을 소비하지 않으며, **승인 대기 중에는** 실행
    캡을 점유하지 않는다(§결정 2 — cap은 활성 claim 수 기준이고 대기 중엔 claim이
    없다; 진입·결정 반영·만료 처리의 짧은 claim 순간은 일반 task와 동일하게

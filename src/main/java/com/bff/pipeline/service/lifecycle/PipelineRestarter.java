@@ -18,6 +18,7 @@ import com.bff.pipeline.exception.PipelineNotRestartableException;
 import com.bff.pipeline.exception.UnknownTaskException;
 import com.bff.pipeline.model.PipelinePlan;
 import com.bff.pipeline.model.PipelinePlan.PlannedStep;
+import com.bff.pipeline.model.RequestContext;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import java.time.Clock;
@@ -58,11 +59,15 @@ public class PipelineRestarter {
     private final PipelineSettings pipelineSettings;
     private final Clock clock;
 
-    /** 재시작 실행 — 검증·suffix 계산 후 새 파이프라인을 삽입한다. fromSequence는 선택적 오버라이드(더 앞으로만). */
-    public Pipeline restart(String target, Long pipelineId, Integer fromSequence) {
+    /**
+     * 재시작 실행 — 검증·suffix 계산 후 새 파이프라인을 삽입한다. fromSequence는 선택적 오버라이드(더 앞으로만).
+     * 요청 맥락은 요청이 실어 보낸 값을 쓰고, 비어 있으면 원본 실행에서 승계한다 — 재시작했다는 이유만으로
+     * 요청자가 비면 계보를 따라가도 시킨 사람을 찾을 수 없다.
+     */
+    public Pipeline restart(String target, Long pipelineId, Integer fromSequence, RequestContext request) {
         RestartComputation computation = compute(target, pipelineId, fromSequence);
-        return pipelineCreator.insert(
-                PipelinePlan.restartOf(computation.origin(), computation.provider(), computation.steps()), target);
+        return pipelineCreator.insert(PipelinePlan.restartOf(computation.origin(), computation.provider(),
+                computation.steps(), request.orInheritFrom(computation.origin())), target);
     }
 
     /** 재시작 미리보기 — 실행과 동일한 검증을 수행하고(불가 상태는 여기서부터 409/400) 아무것도 저장하지 않는다. */
