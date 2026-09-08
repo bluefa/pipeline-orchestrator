@@ -418,6 +418,9 @@ CSP 범위·옵션·capability를 검증한다. 기존 Task의 실행 문맥 유
 ## 구현 현황 — 2026-09-09
 
 백엔드 내부 구현은 이 checkout에 반영했다. Fable 5.1 설계 리뷰 후 구현했고, 코드 리뷰의 지적을 수정한 뒤 main 재시작 통합 전 Code Round 4에서 **P0 0 / P1 0 / P2 0**으로 통과했다. 이후 main 재시작 기능과의 결합 및 회귀 검증을 추가했다. 전체 과정과 실제 모델 증빙은 [리뷰 기록](../reviews/adr-023-fable-5-1-review.md)에 보존한다.
+최신 main 기준 [PR #55](https://github.com/bluefa/pipeline-orchestrator/pull/55)의 독립 Fable 5.1 리뷰는
+Round 1의 6개 P2를 평가·보완한 후 Round 2에서 **P0 0 / P1 0 / P2 0**으로 통과했다.
+정확한 검토 커밋과 실제 모델 증빙은 [PR 리뷰 기록](../reviews/adr-023-pr-fable-5-1-review.md)을 참조한다.
 
 | 반영한 범위 | 구현 |
 |---|---|
@@ -435,7 +438,7 @@ main 재시작 통합 직후 `mvn test`: **372건, 실패 0, 오류 0, 건너뜀
 PR #55 리뷰 보완 후 최종 `mvn test`: **386건, 실패 0, 오류 0, 건너뜀 0**
 (2026-09-09 08:47 KST). UTF-8 별칭·잘못된 charset, 혼합 restart 경고, 세 상세 GET의
 200/소유권 및 자료 404 코드, 신규 DTO snake_case 검증을 추가했다.
-HTML은 데스크톱 1440px·모바일 390px에서 흐름·필터·본문 예시·링크·넘침·JavaScript 오류를 확인했다.
+HTML은 실제 Claude CLI Opus가 제작했다. 1440·768·390·320px에서 흐름·필터·본문·재시작 예시와 링크·넘침·JavaScript 오류를 확인했다. [제작 모델과 QA 증빙](../reviews/adr-023-opus-design.md)을 보존한다.
 
 실제 운영 adapter는 아직 연결하지 않았다. 기본 `UnavailableInstallationOperationsClient`와 빈
 enabled-operations 설정은 실제 호출을 열지 않는다. 서버 계약 검증, 실제 MySQL에서의 schema 검증,
@@ -443,6 +446,8 @@ enabled-operations 설정은 실제 호출을 열지 않는다. 서버 계약 �
 이 테스트 결과를 운영 API 또는 실제 MySQL 검증으로 해석하지 않는다.
 
 ## 연결 문서
+
+- [Opus 설명 페이지 웹 보기 · 본인 전용](https://pipeline-adr023-design.chulyonga.chatgpt.site)
 
 - [ADR-016 도메인 모델](016-install-delete-pipeline-domain-model.md)
 - [ADR-021 실행 모델](021-pipeline-execution-model.md)

@@ -404,3 +404,6 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
   and deployment availability remain separate. No hypothetical per-definition denial policy or
   configuration is introduced solely to replace this truthful constant. Class Javadoc and ADR now
   explain that distinction. See docs/reviews/adr-023-pr-fable-5-1-review.md for reviewer evidence.
+  PR Round 2 (actual claude-fable-5-1, reviewed f91f79af) passed P0 0 / P1 0 / P2 0: five fixes
+  verified and the explicit custom_allowed contract rationale accepted. Final Maven: 386 tests,
+  no failures/errors/skips. Opus-authored HTML passed four viewport sizes and interaction QA.

@@ -2,6 +2,23 @@
 
 ## 최신 판정 — 2026-09-09
 
+[PR #55](https://github.com/bluefa/pipeline-orchestrator/pull/55)의 **최종 Round 2 통과: P0 0 / P1 0 / P2 0**.
+Round 1의 P2 6건 중 5건을 수정했고 `custom_allowed=true` 1건은 현재 도메인·wire 계약에 대한
+명시적 판단을 Fable 5.1이 수용해 종결했다. [최종 해결표와 모델 증거](#pr-round-2)를 참조한다.
+
+- 검토 HEAD: `f91f79af6bbf196387b891045df687ed88494602`.
+- PR base: `fb7dc777785b603b91741f7bf738501517dbe6da`.
+- 전체 `mvn test` **386건 PASS**(실패/오류/스킵 0), 2026-09-09 08:47:47 KST 완료.
+  원본 `/private/tmp/adr023-pr55-followup-full.log`를 최종 사본에 보존했다.
+- 고정 사본: `/private/tmp/pipeline-adr023-pr55-r2-review-20260908T234900Z`,
+  08:49:00 KST에 pushed HEAD의 `git archive`로 생성했다.
+- Round 1은 전체 PR 및 최신 main restart 상호작용을 검토했고 Round 2는 그 지적 수정과
+  직접 회귀를 검증했다. 이전 checkout의 354건 증거와 이번 PR의 372→386건 증거를 구분한다.
+- 운영 adapter·실제 upstream 계약·실제 MySQL 검증·프런트 연동은 남아 있다.
+  후속 설명 HTML 문서 작업은 이번 Java 코드 검토 HEAD 이후 별도 범위다.
+
+## Round 1 검토 대상과 당시 판정
+
 [PR #55](https://github.com/bluefa/pipeline-orchestrator/pull/55)의 **Round 1 통과: P0 0 / P1 0 / P2 6**.
 P2는 소스·명시된 계약과 대조하여 평가·수정한다. P2-5의 `custom_allowed=true`는 현재 모든 정의를
 CUSTOM에서 허용한다는 계약과 응답 호환성을 고려해 root가 적용 여부를 판단한다.
@@ -76,3 +93,64 @@ CUSTOM에서 허용한다는 계약과 응답 호환성을 고려해 root가 적
 - **§6/recurring**: PASS(P2 3·5 제외). 추가 줄에 HTML 태그·인라인 FQN·`.get(0)`·이름 분기 없음. sealed/exhaustive switch, Clock 주입, 테스트 `@Transactional(NOT_SUPPORTED)`.
 
 **PR 리뷰 통과: 예** — P0 0건 / P1 0건 / P2 6건. P2는 평가 반영 대상이며 모두 비차단입니다.
+
+
+<a id="pr-round-2"></a>
+
+## Round 2 — 최종 수정 검증, 남은 지적 없음
+
+- PR: https://github.com/bluefa/pipeline-orchestrator/pull/55
+- 검토 HEAD: `f91f79af6bbf196387b891045df687ed88494602`.
+- 비교한 이전 리뷰 HEAD: `8bd49e27d6fec3323d1a0272e5775f3241be0718`.
+- PR base: `fb7dc777785b603b91741f7bf738501517dbe6da`.
+- 고정 사본: `/private/tmp/pipeline-adr023-pr55-r2-review-20260908T234900Z`.
+  정확한 pushed HEAD를 archive하고 두 HEAD 사이 diff, 변경 목록, 원본 검증 로그, SHA-256 manifest를 포함했다.
+- 범위: P2-1/2/3/4/6 수정과 직접 회귀, P2-5의 도메인 계약·호환성 rationale 재평가.
+  앞선 전체 PR PASS 범위를 불필요하게 확대하지 않았다.
+- 검증: `mvn test` 386건 PASS, 08:47:47 KST 완료. 이전 372건과 구분했고 신규 14건 증가를 확인했다.
+- 실제 실행: `subtype=success`, `is_error=false`, `duration_ms=239347`, `num_turns=45`.
+- `modelUsage.claude-fable-5-1`: input 226, output 19,386, thinking 9,555,
+  cache-read 568,792, cache-creation 130,105 tokens. canonicalModel은 `claude-fable-5-1`.
+- CLI 보조 `claude-haiku-4-5-20251001`도 input 1,866/output 29 tokens로 기록됐다.
+- 원본 JSON: `/private/tmp/pipeline-adr023-pr55-fable-round2.json`. stderr는 비어 있다.
+- 판정: **PR 리뷰 통과 예 — P0 0 / P1 0 / P2 0**. 직접 회귀 없음.
+- 이 리뷰 작업은 파일 읽기만 수행했다. 보고서는 별도 기록하며 commit/push/PR 댓글은 root가 담당한다.
+
+### Round 2 원문
+
+## PR #55 Round 2 검증 결과
+
+검증 대상은 head `f91f79af…`의 고정 사본이며 Round 2 diff는 Java 5개, 테스트 3개, 문서 3개 파일입니다. 검증 로그는 BUILD SUCCESS로 종료됐고 종료 시각은 2026-09-09T08:47:47+09:00입니다. Round 1의 372건 로그(08:26:40)와는 별개 파일이며 증가분이 이번 신규 테스트와 정확히 일치합니다.
+
+| 항목 | Round 1 | Round 2 | 증가 근거 |
+|---|---|---|---|
+| 전체 | 372 | 386 / 실패 0 / 오류 0 / 스킵 0 | 아래 합계 14 |
+| HttpInstallationTaskTest | 58 | 64 | alias 3 + invalid 3 (parameterized) |
+| TestConnectionTaskTest | 46 | 50 | 혼합 경고 1 + GET MockMvc 3 |
+| DtoSnakeCaseSerializationTest | 10 | 14 | 신규 DTO 4 |
+
+### P2 항목별 판정
+
+| 항목 | 판정 | 근거 |
+|---|---|---|
+| P2-1 restart 경고 누적 | 해결 | `PipelineRestarter.java:206-219`. 공통 Task 경고와 Terraform in-flight 경고를 리스트에 누적하고, Terraform 경고는 원본 chain에 slot 소비 행이 있을 때만 붙습니다. 혼합 2건 테스트 `TestConnectionTaskTest.java:780-788`, TC 단독 1건 `hasSize(1)` `TestConnectionTaskTest.java:691`. 기존 Terraform 원본 테스트 `RestartPipelineTest.java:222`도 유지됩니다. |
+| P2-2 preview NLB 옵션 노출 | 해결 | `RestartPreview.java:54` 필드 추가, `PipelineRestarter.java:180-181`에서 suffix와 steps를 같은 인덱스로 결합합니다. steps는 `suffix.stream().map(toStep)`(`:100`)으로 만들어져 길이와 순서가 동일합니다. true 승계 검증 `TestConnectionTaskTest.java:718-719`, 직렬화 `DtoSnakeCaseSerializationTest.java:357-364`. |
+| P2-3 catalog plan 공통 validateStep | 해결 | `PipelineCreator.java:66-70`. plan을 먼저 만들고 옵션은 받았으나 입력 step이 없는 경우만 별도 거절한 뒤 모든 step에 `validateStep`을 적용합니다. 타 CSP RECONFIRM + true는 `validateStep`의 provider 검사로 거절되며 기존 테스트 `HttpInstallationTaskTest.java:605-610`이 유지됩니다. 동작 결과는 이전과 동일하고 규칙 정의는 한 곳(`PipelineCreator.java:127-134`)으로 모였습니다. |
+| P2-4 UTF-8 별칭 정규화 | 해결 | `HttpResponses.java:53-63`. `Charset.forName`으로 UTF-8 동치 비교, 이름 불법·미지원은 catch로 false. 빈 charset 값도 `IllegalCharsetNameException`으로 false가 되어 이전과 동일합니다. alias 3 + invalid 3 테스트 `HttpInstallationTaskTest.java:454-480`이 DONE/FAILED, CHECK_ERROR, failCount 0, confirmation 미전송을 확인합니다. |
+| P2-5 custom_allowed 명시적 계약 | 판단 수용 | 현재 코드는 정의별 CUSTOM 금지가 없습니다. `PipelineCreator.java:107-118`은 존재하는 모든 정의를 받고 `validateStep`(`:127-134`)은 provider·옵션·가용성만 검사합니다. `TaskCatalogEntry.java:14-16` Javadoc과 ADR 결정 2 문구가 이를 명시하며, `TaskCatalogResponseTest.java:40-44`가 execution_available만 capability에 따라 바뀜을 검증합니다. 응답 필드 제거는 wire 계약 파괴이므로 상수 유지가 현 계약과 일관적입니다. 가상의 미래 정책은 요구하지 않습니다. |
+| P2-6 신규 GET·DTO 테스트 | 해결 | MockMvc 3건 `TestConnectionTaskTest.java:790-848`: 200 본문/metadata, 타 pipeline 소유권 TASK_NOT_FOUND, 미존재 pipeline PIPELINE_NOT_FOUND, 데이터 없음 시 각 안정 코드. 소유권 검증 로직은 `PipelineQueryService.java:307-336`. snake_case 4건 `DtoSnakeCaseSerializationTest.java:316-364`. |
+
+### 수정의 직접 회귀 검토
+
+회귀로 판정할 문제는 없습니다. 확인한 위험 지점은 다음과 같습니다.
+
+- **Terraform 경고의 null 컬럼 의존.** `Task.java:95-96`의 slot 플래그는 nullable이지만 `Boolean.TRUE.equals`로 처리하고, 삽입 시 항상 채워지며(`PipelineInserter.java:91`) slot 게이트도 같은 값을 쓰므로 새 의존성이 아닙니다.
+- **catalog 경로 가용성 중복 검사.** `RecipeCatalog.java:54-58`이 이미 step별 `requireAvailable`을 호출하고 `validateStep`이 다시 호출합니다. 같은 예외와 코드를 내므로 결과는 동일하고 무해합니다. 기존 테스트 `HttpInstallationTaskTest.java:365-370`이 통과합니다.
+- **charset 예외 범위.** `Charset.forName`은 위 두 예외 외에 null 인자만 다른 예외를 내는데 substring 결과는 null이 될 수 없습니다.
+
+### 남은 문제 (결함 미집계, 비차단)
+
+- **Terraform 경고 정밀도.** `PipelineRestarter.java:215-219`는 DONE 상태의 Terraform 행도 포함해 판단하므로, 삭제 3단계가 모두 완료된 뒤 입력 Task에서 실패한 RECONFIRM에도 in-flight 안내가 붙습니다. 이는 PR 이전의 경고 정밀도와 같은 수준이고 명세("원본에 Terraform 존재 시")와 일치하므로 P2로 집계하지 않습니다. 원한다면 non-DONE 행으로 좁히는 후속이 가능합니다.
+- **HTML 링크.** Round 1 참고 사항과 동일하게 후속 docs commit 범위이며 이번 코드 리뷰에서 제외했습니다.
+
+**PR 리뷰 통과: 예** — P0 0건 / P1 0건 / P2 0건. Round 1의 P2 6건은 5건 해결, 1건(P2-5) 명시적 판단 수용으로 종결됩니다. 이 세션에서 파일 수정, 명령 실행, 네트워크 접근은 하지 않았습니다.

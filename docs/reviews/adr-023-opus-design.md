@@ -83,3 +83,9 @@ HTML 하나만 배포하면 된다. 상대 href로 요구하는 부속 파일은
 
 - 파일: `docs/adr-023-explained.html` (134,051 bytes)
 - SHA-256: `ba477ce45ec5064b6327a134068a372f05f5b3851d64d5aee21a8861fe58550f`
+
+## 웹 게시
+
+[Opus 디자인 아티팩트 웹 보기](https://pipeline-adr023-design.chulyonga.chatgpt.site) — 본인만 볼 수 있는 Sites 게시 완료.
+게시 성공 상태를 확인했으며 배포한 HTML은 위 QA 해시와 동일하다. 이 실행 환경에는 연결된 브라우저가 없어
+게시 URL을 자동으로 여는 인계는 수행하지 못했다. 로컬 Chrome으로 최종 HTML을 검증한 범위와 게시 성공 확인을 구분한다.
