@@ -63,11 +63,12 @@ public class PipelineCreator {
     public Pipeline create(String target, PipelineType type, boolean applyNlbSecurityGroup) {
         if (type == null) throw new MissingPipelineTypeException();
         RecipeDefinition recipe = resolveRecipe(target, type);
-        if (applyNlbSecurityGroup && (recipe.provider() != CloudProvider.AWS
-                || !recipe.steps().contains(TaskDefinition.CONFIRM_RESOURCES_FROM_RECOMMENDATION_V1))) {
+        PipelinePlan plan = PipelinePlan.fromCatalog(target, recipe, applyNlbSecurityGroup);
+        if (applyNlbSecurityGroup && plan.steps().stream().noneMatch(PlannedStep::applyNlbSecurityGroup)) {
             throw InstallationRequestException.invalidOption();
         }
-        return insert(PipelinePlan.fromCatalog(target, recipe, applyNlbSecurityGroup), target);   // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
+        plan.steps().forEach(step -> validateStep(step, recipe.provider()));
+        return insert(plan, target);   // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
     }
 
     /**

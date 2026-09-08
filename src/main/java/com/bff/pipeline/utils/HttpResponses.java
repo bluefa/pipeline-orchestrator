@@ -6,6 +6,9 @@ import com.bff.pipeline.client.InstallationOperationsClient.VerifiedContext;
 import com.bff.pipeline.model.HttpExchange;
 import com.bff.pipeline.exception.CallFailedException;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.Charset;
+import java.nio.charset.IllegalCharsetNameException;
+import java.nio.charset.UnsupportedCharsetException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -51,7 +54,12 @@ public final class HttpResponses {
         if (contentType == null) return true;
         String normalized = contentType.toLowerCase(Locale.ROOT).replace(" ", "").replace("\"", "");
         int charset = normalized.indexOf("charset=");
-        return charset < 0 || normalized.substring(charset + 8).split(";", 2)[0].equals("utf-8");
+        if (charset < 0) return true;
+        try {
+            return StandardCharsets.UTF_8.equals(Charset.forName(normalized.substring(charset + 8).split(";", 2)[0]));
+        } catch (IllegalCharsetNameException | UnsupportedCharsetException unsupported) {
+            return false;
+        }
     }
 
     public static HttpExchange bounded(HttpExchange exchange, String operation, int maximumBytes) {

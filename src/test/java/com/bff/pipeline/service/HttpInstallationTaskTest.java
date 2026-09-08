@@ -451,6 +451,33 @@ class HttpInstallationTaskTest {
         assertThat(attempt(task(pipeline), 1).getHttpResponse()).isEqualTo("{}");
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"utf8", "UTF-8", "unicode-1-1-utf-8"})
+    void utf8AliasesAreAcceptedForRecommendationResponses(String charset) {
+        Pipeline pipeline = inputPipeline();
+        client.recommendation = request -> new Recommendation(FakeInstallationOperationsClient.response(200, "{}")
+                .toBuilder().contentType("application/json;charset=" + charset).build(),
+                VerifiedContext.builder().approvalVersion("approval").targetGeneration("generation").build());
+        worker.pollOnce();
+        worker.pollOnce();
+        assertThat(task(pipeline).getStatus()).isEqualTo(TaskStatus.DONE);
+        assertThat(client.confirmations).hasSize(1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"unknown-charset", "utf/8", "ISO-8859-1"})
+    void invalidOrUnsupportedCharsetsFailWithoutSendingConfirmation(String charset) {
+        Pipeline pipeline = inputPipeline();
+        client.recommendation = request -> new Recommendation(FakeInstallationOperationsClient.response(200, "{}")
+                .toBuilder().contentType("application/json;charset=" + charset).build(),
+                VerifiedContext.builder().approvalVersion("approval").targetGeneration("generation").build());
+        worker.pollOnce();
+        assertThat(task(pipeline).getStatus()).isEqualTo(TaskStatus.FAILED);
+        assertThat(task(pipeline).getErrorCode()).isEqualTo(ErrorCode.CHECK_ERROR);
+        assertThat(task(pipeline).getFailCount()).isZero();
+        assertThat(client.confirmations).isEmpty();
+    }
+
     @Test
     void customInputUsesAwsOptionWithoutAdditionalApprovalRequestFields() {
         Pipeline pipeline = creator.createCustom("option", List.of(new CustomTaskRequest(inputRequest().name(), null, true)));

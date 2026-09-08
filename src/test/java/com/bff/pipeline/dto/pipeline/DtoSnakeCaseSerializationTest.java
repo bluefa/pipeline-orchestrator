@@ -144,8 +144,10 @@ class DtoSnakeCaseSerializationTest {
 
         assertThat(json).contains("\"task_definitions\":", "\"name\":\"AWS_SERVICE_APPLY_V1\"", "\"display_name\":",
                 "\"description\":", "\"provider\":\"AWS\"", "\"kind\":\"TERRAFORM_JOB\"",
-                "\"terraform_action\":\"APPLY\"", "\"consumes_terraform_slot\":true");
-        assertThat(json).doesNotContain("taskDefinitions", "displayName", "consumesTerraformSlot");
+                "\"terraform_action\":\"APPLY\"", "\"consumes_terraform_slot\":true",
+                "\"provider_scope\":\"CSP_SPECIFIC\"", "\"custom_allowed\":true", "\"execution_available\":true");
+        assertThat(json).doesNotContain("taskDefinitions", "displayName", "consumesTerraformSlot",
+                "providerScope", "customAllowed", "executionAvailable");
     }
 
     @Test
@@ -204,4 +206,54 @@ class DtoSnakeCaseSerializationTest {
         assertThat(json).doesNotContain("taskId", "attemptNumber", "jobId", "lastState", "lastFailReason",
                 "lastError", "lastResponse", "pollCount", "lastPolledAt");
     }
+    @Test
+    void httpResponseAndAttemptMetadataSerializeSnakeCase() throws Exception {
+        HttpResponseDetail.Metadata metadata = HttpResponseDetail.Metadata.builder().operation("CONFIRMATION_POST")
+                .statusCode(201).contentType("application/json").receivedAt(Instant.parse("2026-09-09T00:00:00Z"))
+                .truncated(false).confirmationInputId(17L).build();
+        String response = mapper.writeValueAsString(HttpResponseDetail.builder().metadata(metadata).body("raw").build());
+        String attempt = mapper.writeValueAsString(TaskAttemptView.builder().attemptNumber(1).http(metadata).build());
+        assertThat(response).contains("\"status_code\":201", "\"content_type\":", "\"received_at\":",
+                "\"confirmation_input_id\":17", "\"body\":\"raw\"");
+        assertThat(attempt).contains("\"http\":{", "\"status_code\":201", "\"confirmation_input_id\":17");
+        assertThat(response + attempt).doesNotContain("statusCode", "contentType", "receivedAt", "confirmationInputId");
+    }
+
+    @Test
+    void confirmationInputDetailSerializesSnakeCase() throws Exception {
+        String json = mapper.writeValueAsString(ConfirmationInputDetail.builder().inputId(17L).recommendationBody("raw")
+                .bodyDigest("digest").approvalVersion("approval").targetGeneration("generation").applyNlbSecurityGroup(true)
+                .sourceAttemptNumber(2).capturedAt(Instant.parse("2026-09-09T00:00:00Z")).build());
+        assertThat(json).contains("\"input_id\":17", "\"recommendation_body\":\"raw\"", "\"body_digest\":",
+                "\"approval_version\":", "\"target_generation\":", "\"apply_nlb_security_group\":true",
+                "\"source_attempt_number\":2", "\"captured_at\":");
+        assertThat(json).doesNotContain("inputId", "recommendationBody", "bodyDigest", "approvalVersion",
+                "targetGeneration", "applyNlbSecurityGroup", "sourceAttemptNumber", "capturedAt");
+    }
+
+    @Test
+    void connectionResultDetailSerializesSnakeCase() throws Exception {
+        Instant observed = Instant.parse("2026-09-09T00:00:00Z");
+        String json = mapper.writeValueAsString(TestConnectionResultDetail.builder().executionId(7L).requestKey("key")
+                .executionVersion("version").deadlineAt(observed).connectionStatus("RUNNING").lastResponse("normal")
+                .lastObservedAt(observed).terminalObservedAt(null).lastErrorCode(ErrorCode.CHECK_ERROR)
+                .lastErrorDetail("failure").lastErrorResponse("error").lastErrorAt(observed).build());
+        assertThat(json).contains("\"execution_id\":7", "\"request_key\":", "\"execution_version\":",
+                "\"deadline_at\":", "\"connection_status\":", "\"last_response\":", "\"last_observed_at\":",
+                "\"terminal_observed_at\":", "\"last_error_code\":", "\"last_error_detail\":",
+                "\"last_error_response\":", "\"error_response\":", "\"last_error_at\":");
+        assertThat(json).doesNotContain("executionId", "requestKey", "executionVersion", "deadlineAt", "connectionStatus",
+                "lastResponse", "lastObservedAt", "terminalObservedAt", "lastErrorCode", "lastErrorDetail",
+                "lastErrorResponse", "errorResponse", "lastErrorAt");
+    }
+
+    @Test
+    void restartPreviewExposesTheInheritedNlbOptionInSnakeCase() throws Exception {
+        RestartPreview.TaskToRun step = RestartPreview.TaskToRun.builder().taskDefinition("CONFIRM_RESOURCES_FROM_RECOMMENDATION_V1")
+                .originTaskId(5L).applyNlbSecurityGroup(true).build();
+        String json = mapper.writeValueAsString(RestartPreview.builder().tasksToRun(List.of(step)).build());
+        assertThat(json).contains("\"tasks_to_run\":[", "\"apply_nlb_security_group\":true");
+        assertThat(json).doesNotContain("applyNlbSecurityGroup");
+    }
+
 }

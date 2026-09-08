@@ -395,3 +395,12 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
   and missing execution state uses Optional rather than an empty context sentinel. Final full
   `mvn test`: 354 tests, zero failures/errors/skips. Production adapters, actual MySQL schema
   verification, and frontend/business integration remain explicitly outside the activated scope.
+
+- **ADR-023 PR #55 / Fable 5.1 (2026-09-09):** latest-main integration passed 372 tests;
+  independent PR Round 1 returned P0 0 / P1 0 / P2 6. Accepted follow-up: accumulate restart warnings,
+  expose inherited NLB options in restart preview, share option validation, normalize supported UTF-8
+  charset aliases, and cover new HTTP wire/ownership contracts. `custom_allowed=true` is retained as
+  the explicit current composition contract (all definitions are structurally allowed); CSP matching
+  and deployment availability remain separate. No hypothetical per-definition denial policy or
+  configuration is introduced solely to replace this truthful constant. Class Javadoc and ADR now
+  explain that distinction. See docs/reviews/adr-023-pr-fable-5-1-review.md for reviewer evidence.

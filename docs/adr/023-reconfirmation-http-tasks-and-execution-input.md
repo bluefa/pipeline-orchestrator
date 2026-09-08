@@ -67,6 +67,9 @@ CSP_SPECIFIC에는 provider가 필수이고 ALL_CSP에는 provider를 지정하�
 
 CUSTOM 선택 목록은 **해당 CSP 전용 Task + 모든 공통 Task**다. 공통 Task는 `custom_allowed=true`이며,
 입력 Task만 넣거나 같은 공통 정의를 여러 번 넣어도 된다. Task마다 입력·요청 키를 독립적으로 소유한다.
+현재 등록된 정의는 모두 CUSTOM 구성 요소로 허용한다. `custom_allowed`는 이 구조적 허용을 알리는
+항상 true인 응답 계약이며, 현재 실행 가능 여부는 `execution_available`로 별도 전달한다.
+존재하지 않는 정의별 CUSTOM 금지 정책이나 설정은 추가하지 않는다.
 서버는 존재하는 정의, CSP 적합성, 옵션, 실제 실행 가용성을 검증한다. 선행 추천 Task를 요구하지 않는다.
 
 `execution_available`은 선택 범위와 구분한다. 실제 API 계약이 아직 연결되지 않은 공통 Task는
@@ -191,7 +194,8 @@ contract test로 검증한다. 사용자 SSO 쿠키를 저장하거나 재사용
 
 ## 결정 5. HTTP 원문과 상세 조회
 
-원문은 JSON parse/재직렬화 전에 캡처한 UTF-8 본문 텍스트다. JSON wrapper·pretty print·필드 변환을
+원문은 JSON parse/재직렬화 전에 캡처한 UTF-8 본문 텍스트다. charset 이름은 Java Charset으로 정규화하여
+`utf8` 등 UTF-8 별칭도 허용하고, 잘못된 이름이나 다른 문자셋은 비재시도 계약 오류로 종결한다. JSON wrapper·pretty print·필드 변환을
 하지 않는다. TLS·압축·전체 header·wire bytes는 범위 밖이다. 상한 이내 공백/순서/미지 필드를 보존한다.
 
 - 기존 task_attempt.response TEXT와 Terraform/Condition 계약은 유지한다.
@@ -373,6 +377,7 @@ CSP 범위·옵션·capability를 검증한다. 기존 Task의 실행 문맥 유
 - 추천 기반 입력의 재시작은 원본 입력행의 `apply_nlb_security_group` 옵션만 승계한다. 원문·digest·승인/대상
   세대·출처 attempt는 복사하지 않는다. 새 Task의 새 요청 키로 recommendation GET부터 수행한다.
   원본 입력행이 유실되어 옵션을 알 수 없으면 preview/restart 모두 CONFIRMATION_INPUT_NOT_FOUND typed 404로 거절한다.
+  미리보기의 `tasks_to_run[].apply_nlb_security_group`은 실행에 승계할 옵션을 명시한다.
 - TC 재시작은 새 Task별 요청 키와 새 실행행을 생성한다. 원본 외부 version·deadline·진단을 복사하지 않는다.
   새 첫 Task는 새 Pipeline의 예정 시작을 기준으로, 후속 Task는 실제 최초 READY에서 자기 deadline을 정한다.
 - 확정정보 삭제도 새 Task의 요청 키를 사용한다. DONE prefix는 기존 정책대로 건너뛰고, 명시적 앞 단계 선택은
@@ -381,6 +386,7 @@ CSP 범위·옵션·capability를 검증한다. 기존 Task의 실행 문맥 유
   RECONFIRM 원본의 재시작은 해당 CSP 삭제 순서 계약도 다시 확인한다. 옵션은 AWS 입력 Task에만 적용한다.
 - 원본 실행의 외부 호출은 취소·timeout 뒤에도 계속 실행 중일 수 있다. 새 요청 키는 원본 요청과의 중복을
   제거하지 않는다. 신규 공통 Task가 포함된 미리보기는 이 점과 새 입력/실행 생성 사실을 알린다.
+  원본에 Terraform Task가 있고 종결 후 실행 제한 시간 이내라면 기존 in-flight 안내도 함께 유지한다.
   이미 보낸 mutation이 새 세대를 훼손하지 않는 보호 및 TC 중복 실행 제한은 기존 운영 adapter 활성 조건이며,
   재시작을 추가했다고 안전이 증명된 것으로 간주하지 않는다.
 
@@ -424,8 +430,11 @@ CSP 범위·옵션·capability를 검증한다. 기존 Task의 실행 문맥 유
 | 기존 재시작 통합 | 원본 계보 유지, NLB 옵션 승계, 새 입력/키/TC deadline, 현재 capability 재검증 |
 
 main 재시작 통합 전 `mvn test`: **354건, 실패 0, 오류 0, 건너뜀 0**.
-main 재시작 통합 후 최종 `mvn test`: **372건, 실패 0, 오류 0, 건너뜀 0**
+main 재시작 통합 직후 `mvn test`: **372건, 실패 0, 오류 0, 건너뜀 0**
 (2026-09-09 08:26 KST). 기존 Terraform/Condition 및 재시작 회귀와 신규 결합 5건을 포함한다.
+PR #55 리뷰 보완 후 최종 `mvn test`: **386건, 실패 0, 오류 0, 건너뜀 0**
+(2026-09-09 08:47 KST). UTF-8 별칭·잘못된 charset, 혼합 restart 경고, 세 상세 GET의
+200/소유권 및 자료 404 코드, 신규 DTO snake_case 검증을 추가했다.
 HTML은 데스크톱 1440px·모바일 390px에서 흐름·필터·본문 예시·링크·넘침·JavaScript 오류를 확인했다.
 
 실제 운영 adapter는 아직 연결하지 않았다. 기본 `UnavailableInstallationOperationsClient`와 빈

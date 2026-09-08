@@ -50,6 +50,7 @@ public record RestartPreview(
             @JsonProperty("origin_task_id") long originTaskId,
             @JsonProperty("origin_status") TaskStatus originStatus,
             @JsonProperty("origin_error_code") ErrorCode originErrorCode,
-            @JsonProperty("origin_fail_count") int originFailCount) {
+            @JsonProperty("origin_fail_count") int originFailCount,
+            @JsonProperty("apply_nlb_security_group") boolean applyNlbSecurityGroup) {
     }
 }

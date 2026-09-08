@@ -2,6 +2,8 @@ package com.bff.pipeline.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 import com.bff.pipeline.client.FakeInfraManagerClient;
 import com.bff.pipeline.client.FakeTestConnectionClient;
@@ -14,6 +16,8 @@ import com.bff.pipeline.config.InstallationSettings;
 import com.bff.pipeline.config.PipelineSettings;
 import com.bff.pipeline.config.TestConnectionSettings;
 import com.bff.pipeline.dto.Claim;
+import com.bff.pipeline.controller.PipelineController;
+import com.bff.pipeline.controller.GlobalAdvice;
 import com.bff.pipeline.dto.pipeline.CustomTaskRequest;
 import com.bff.pipeline.dto.pipeline.HttpResponseDetail;
 import com.bff.pipeline.dto.pipeline.TestConnectionResultDetail;
@@ -84,6 +88,9 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -681,7 +688,7 @@ class TestConnectionTaskTest {
         TaskExternalExecution original = execution(originTask);
         control.cancel(origin.getId());
         clock.advance(Duration.ofMinutes(10));
-        assertThat(restarter.preview(origin.getTarget(), origin.getId(), null).warnings())
+        assertThat(restarter.preview(origin.getTarget(), origin.getId(), null).warnings()).hasSize(1)
                 .anySatisfy(warning -> assertThat(warning).contains("새 Task와 요청 키"));
         Pipeline restarted = restarter.restart(origin.getTarget(), origin.getId(), null);
         Task restartedTask = task(restarted);
@@ -708,6 +715,8 @@ class TestConnectionTaskTest {
         Task originTask = task(origin);
         var original = inputs.findByTaskId(originTask.getId()).orElseThrow();
         control.cancel(origin.getId());
+        assertThat(restarter.preview(origin.getTarget(), origin.getId(), null).tasksToRun()).singleElement()
+                .satisfies(step -> assertThat(step.applyNlbSecurityGroup()).isTrue());
         Pipeline restarted = restarter.restart(origin.getTarget(), origin.getId(), null);
         Task restartedTask = task(restarted);
         var fresh = inputs.findByTaskId(restartedTask.getId()).orElseThrow();
@@ -766,6 +775,96 @@ class TestConnectionTaskTest {
         assertThatThrownBy(() -> restarter.restart(origin.getTarget(), origin.getId(), null))
                 .isInstanceOf(InstallationRequestException.class);
         assertThat(pipelines.count()).isEqualTo(1);
+    }
+
+    @Test
+    void mixedReconfirmationRestartRetainsBothExternalExecutionWarnings() {
+        Pipeline origin = creator.create("mixed-warnings", PipelineType.RECONFIRM);
+        control.cancel(origin.getId());
+        assertThat(restarter.preview(origin.getTarget(), origin.getId(), null).warnings())
+                .hasSize(2)
+                .anySatisfy(warning -> assertThat(warning).contains("새 Task와 요청 키"))
+                .anySatisfy(warning -> assertThat(warning).contains("Terraform job"));
+    }
+
+    @Test
+    void httpResponseEndpointReturnsBodyMetadataAndControlledMissingResponse() throws Exception {
+        Pipeline pipeline = start();
+        Task task = task(pipeline);
+        String suffix = "/attempts/1/http-response";
+        bodyApi().perform(get(bodyPath(pipeline.getId(), task.getId(), suffix)))
+                .andExpect(MockMvcResultMatchers.status().isOk())
+                .andExpect(jsonPath("$.metadata.operation").value("TEST_CONNECTION_START"))
+                .andExpect(jsonPath("$.metadata.status_code").value(202))
+                .andExpect(jsonPath("$.metadata.content_type").value("application/json; charset=UTF-8"))
+                .andExpect(jsonPath("$.metadata.received_at").exists())
+                .andExpect(jsonPath("$.body").value("{ \"success\": true } "));
+        assertBodyOwnership(pipeline, task, suffix);
+        bodyApi().perform(get(bodyPath(pipeline.getId(), task.getId(), "/attempts/2/http-response")))
+                .andExpect(MockMvcResultMatchers.status().isNotFound())
+                .andExpect(jsonPath("$.code").value(OrchestrationErrorCode.HTTP_RESPONSE_NOT_FOUND.code()));
+    }
+
+    @Test
+    void confirmationInputEndpointReturnsCapturedInputAndControlledMissingInput() throws Exception {
+        Pipeline pipeline = creator.createCustom("wire-input", List.of(
+                new CustomTaskRequest("CONFIRM_RESOURCES_FROM_RECOMMENDATION_V1", null, true)));
+        clock.advance(Duration.ofSeconds(10));
+        worker.pollOnce();
+        Task task = task(pipeline);
+        String suffix = "/confirmation-input";
+        bodyApi().perform(get(bodyPath(pipeline.getId(), task.getId(), suffix)))
+                .andExpect(MockMvcResultMatchers.status().isOk())
+                .andExpect(jsonPath("$.recommendation_body").value(FakeTestConnectionClient.BODY))
+                .andExpect(jsonPath("$.apply_nlb_security_group").value(true))
+                .andExpect(jsonPath("$.source_attempt_number").value(1))
+                .andExpect(jsonPath("$.response.status_code").value(200))
+                .andExpect(jsonPath("$.body_digest").exists());
+        assertBodyOwnership(pipeline, task, suffix);
+        inputs.deleteAll();
+        bodyApi().perform(get(bodyPath(pipeline.getId(), task.getId(), suffix)))
+                .andExpect(MockMvcResultMatchers.status().isNotFound())
+                .andExpect(jsonPath("$.code").value(OrchestrationErrorCode.CONFIRMATION_INPUT_NOT_FOUND.code()));
+    }
+
+    @Test
+    void connectionResultEndpointReturnsBoundExecutionAndControlledMissingResult() throws Exception {
+        Pipeline pipeline = start();
+        poll();
+        Task task = task(pipeline);
+        String suffix = "/test-connection-result";
+        bodyApi().perform(get(bodyPath(pipeline.getId(), task.getId(), suffix)))
+                .andExpect(MockMvcResultMatchers.status().isOk())
+                .andExpect(jsonPath("$.execution_version").value(execution(task).getExternalExecutionVersion()))
+                .andExpect(jsonPath("$.request_key").value(execution(task).getRequestKey()))
+                .andExpect(jsonPath("$.deadline_at").exists())
+                .andExpect(jsonPath("$.connection_status").value("RUNNING"))
+                .andExpect(jsonPath("$.response.status_code").value(200))
+                .andExpect(jsonPath("$.last_response").value(result(task).getLastResponse()));
+        assertBodyOwnership(pipeline, task, suffix);
+        executions.deleteAll();
+        bodyApi().perform(get(bodyPath(pipeline.getId(), task.getId(), suffix)))
+                .andExpect(MockMvcResultMatchers.status().isNotFound())
+                .andExpect(jsonPath("$.code").value(OrchestrationErrorCode.TEST_CONNECTION_RESULT_NOT_FOUND.code()));
+    }
+
+    private void assertBodyOwnership(Pipeline pipeline, Task task, String suffix) throws Exception {
+        Pipeline other = creator.createCustom("other-owner", List.of(request()));
+        bodyApi().perform(get(bodyPath(other.getId(), task.getId(), suffix)))
+                .andExpect(MockMvcResultMatchers.status().isNotFound())
+                .andExpect(jsonPath("$.code").value(OrchestrationErrorCode.TASK_NOT_FOUND.code()));
+        bodyApi().perform(get(bodyPath(pipeline.getId() + 1000, task.getId(), suffix)))
+                .andExpect(MockMvcResultMatchers.status().isNotFound())
+                .andExpect(jsonPath("$.code").value(OrchestrationErrorCode.PIPELINE_NOT_FOUND.code()));
+    }
+
+    private MockMvc bodyApi() {
+        return MockMvcBuilders.standaloneSetup(new PipelineController(queries, control))
+                .setControllerAdvice(new GlobalAdvice(clock)).build();
+    }
+
+    private String bodyPath(long pipelineId, long taskId, String suffix) {
+        return "/api/v1/pipelines/" + pipelineId + "/tasks/" + taskId + suffix;
     }
 
     private StepOutcome runPoll(Pipeline pipeline) {

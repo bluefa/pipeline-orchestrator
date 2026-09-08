@@ -30,6 +30,8 @@ import com.bff.pipeline.repository.TaskConfirmationInputRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.stream.IntStream;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -175,12 +177,13 @@ public class PipelineRestarter {
                 .skippedTasks(computation.skipped().stream()
                         .map(task -> new SkippedTask(task.getSequence(), task.getTaskDefinition(), task.getStatus()))
                         .toList())
-                .tasksToRun(computation.suffix().stream().map(PipelineRestarter::toTaskToRun).toList())
-                .warnings(warnings(origin, computation.steps()))
+                .tasksToRun(IntStream.range(0, computation.suffix().size())
+                        .mapToObj(index -> toTaskToRun(computation.suffix().get(index), computation.steps().get(index))).toList())
+                .warnings(warnings(computation))
                 .build();
     }
 
-    private static TaskToRun toTaskToRun(Task task) {
+    private static TaskToRun toTaskToRun(Task task, PlannedStep step) {
         return TaskToRun.builder()
                 .sequence(task.getSequence())
                 .taskDefinition(task.getTaskDefinition())
@@ -191,6 +194,7 @@ public class PipelineRestarter {
                 .originStatus(task.getStatus())
                 .originErrorCode(task.getErrorCode())
                 .originFailCount(task.getFailCount())
+                .applyNlbSecurityGroup(step.applyNlbSecurityGroup())
                 .build();
     }
 
@@ -199,12 +203,19 @@ public class PipelineRestarter {
      * 기존 Terraform 실행은 종결 후 executionTimeout 창 안에 남아 있을 수 있다는 기존 안내를 유지한다.
      * 끝난 행은 갱신되지 않으므로 lastActivityAt이 곧 끝난 시각이다.
      */
-    private List<String> warnings(Pipeline origin, List<PlannedStep> steps) {
-        if (steps.stream().anyMatch(step -> step.definition().operation().usesInstallationClient())) {
-            return List.of(NEW_INSTALLATION_EXECUTION_WARNING);
+    private List<String> warnings(RestartComputation computation) {
+        List<String> warnings = new ArrayList<>();
+        if (computation.steps().stream().anyMatch(step -> step.definition().operation().usesInstallationClient())) {
+            warnings.add(NEW_INSTALLATION_EXECUTION_WARNING);
         }
+        if (hasRecentTerraformExecution(computation)) warnings.add(IN_FLIGHT_JOB_WARNING);
+        return List.copyOf(warnings);
+    }
+
+    private boolean hasRecentTerraformExecution(RestartComputation computation) {
         Instant inFlightHorizon = clock.instant().minus(pipelineSettings.executionTimeout());
-        return origin.getLastActivityAt().isAfter(inFlightHorizon) ? List.of(IN_FLIGHT_JOB_WARNING) : List.of();
+        return computation.origin().getLastActivityAt().isAfter(inFlightHorizon)
+                && computation.originChain().stream().anyMatch(task -> Boolean.TRUE.equals(task.getConsumesTerraformSlot()));
     }
 
     private static long countDone(List<Task> chain) {
