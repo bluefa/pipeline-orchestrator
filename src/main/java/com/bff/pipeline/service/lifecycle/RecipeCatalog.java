@@ -4,6 +4,7 @@ import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.RecipeDefinition;
 import com.bff.pipeline.enums.TaskDefinition;
+import com.bff.pipeline.exception.InstallationRequestException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -24,11 +25,14 @@ public class RecipeCatalog {
 
     private final Map<Key, RecipeDefinition> byKey;
 
-    public RecipeCatalog() {
+    private final InstallationOperationAvailability availability;
+
+    public RecipeCatalog(InstallationOperationAvailability availability) {
+        this.availability = availability;
         Map<Key, RecipeDefinition> map = new HashMap<>();
         for (RecipeDefinition recipe : RecipeDefinition.values()) {
             for (TaskDefinition step : recipe.steps()) {
-                if (step.provider() != recipe.provider()) {
+                if (!step.supportsProvider(recipe.provider())) {
                     throw new IllegalStateException("RecipeDefinition " + recipe.name() + " (provider " + recipe.provider()
                             + ") references step " + step.name() + " of provider " + step.provider());
                 }
@@ -42,8 +46,16 @@ public class RecipeCatalog {
         this.byKey = Map.copyOf(map);
     }
 
-    /** (provider, type)에 해당하는 recipe. 지원하지 않는 조합이면 empty(호출자가 400으로 거절). */
+    /** 지원하지 않는 조합은 empty이고, 존재하지만 비활성인 recipe는 별도의 통제된 400으로 구분한다. */
     public Optional<RecipeDefinition> forProviderAndType(CloudProvider provider, PipelineType type) {
-        return Optional.ofNullable(byKey.get(new Key(provider, type)));
+        return Optional.ofNullable(byKey.get(new Key(provider, type)))
+                .map(recipe -> requireAvailable(provider, recipe));
+    }
+    private RecipeDefinition requireAvailable(CloudProvider provider, RecipeDefinition recipe) {
+        recipe.steps().forEach(step -> availability.requireAvailable(provider, step));
+        if (recipe.pipelineType() == PipelineType.RECONFIRM && !availability.supportsReconfirmation(provider)) {
+            throw InstallationRequestException.unavailable(recipe.name());
+        }
+        return recipe;
     }
 }

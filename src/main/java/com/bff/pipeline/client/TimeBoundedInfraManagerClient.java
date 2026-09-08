@@ -1,17 +1,13 @@
 package com.bff.pipeline.client;
 
 import com.bff.pipeline.config.ExecutionSettings;
+import com.bff.pipeline.exception.CallTimeoutException;
 import com.bff.pipeline.dto.ConditionPoll;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskOperation;
-import com.bff.pipeline.exception.CallInterruptedException;
-import com.bff.pipeline.exception.CallTimeoutException;
-import java.util.concurrent.ExecutionException;
+import com.bff.pipeline.utils.BoundedCallExecutor;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Primary;
@@ -73,28 +69,6 @@ public class TimeBoundedInfraManagerClient implements InfraManagerClient {
     }
 
     private <T> T withTimeout(Supplier<T> call) {
-        Future<T> future = infraManagerCallPool.submit(call::get);
-        try {
-            return future.get(executionSettings.apiCallTimeout().toMillis(), TimeUnit.MILLISECONDS);
-        } catch (TimeoutException timeout) {
-            future.cancel(true);
-            throw new CallTimeoutException();
-        } catch (InterruptedException interrupted) {
-            future.cancel(true);
-            Thread.currentThread().interrupt();
-            throw new CallInterruptedException();
-        } catch (ExecutionException executionFailure) {
-            throw rethrow(executionFailure.getCause());
-        }
-    }
-
-    private RuntimeException rethrow(Throwable cause) {
-        if (cause instanceof RuntimeException runtimeException) {
-            return runtimeException;        // 닫힌 어휘(CallFailed/CallTimeout 등)와 진짜 버그를 언랩해 전파
-        }
-        if (cause instanceof Error error) {
-            throw error;
-        }
-        return new IllegalStateException("InfraManager call failed", cause);
+        return BoundedCallExecutor.execute(infraManagerCallPool, executionSettings.apiCallTimeout(), call);
     }
 }

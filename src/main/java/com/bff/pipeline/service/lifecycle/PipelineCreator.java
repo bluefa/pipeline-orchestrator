@@ -7,6 +7,8 @@ import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.RecipeDefinition;
 import com.bff.pipeline.enums.TaskDefinition;
+import com.bff.pipeline.enums.TaskOperation;
+import com.bff.pipeline.exception.InstallationRequestException;
 import com.bff.pipeline.exception.EmptyCustomRecipeException;
 import com.bff.pipeline.exception.MissingPipelineTypeException;
 import com.bff.pipeline.exception.MissingTargetException;
@@ -40,6 +42,9 @@ import com.bff.pipeline.exception.CallFailedException;
  * <p>"실행이 이미 존재한다"를 뜻하는 것은 오직 active-target 유니크 위반뿐이다(위반 원인 체인의 제약 이름으로 판별한다).
  * 그 외 무결성 위반은 예상 밖 버그이므로 raw 예외가 컨트롤러까지 새지 않도록 {@link PipelinePersistenceException}(500)으로
  * 감싸 전파한다.
+ *
+ * 공통 정의는 모든 CSP에서 CUSTOM으로 단독 또는 반복 구성할 수 있다. 실제 실행은 operation 활성 설정과
+ * CSP별 client capability를 모두 확인한다. 추천 기반 입력의 NLB 옵션은 AWS 입력 Task에서만 허용한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -48,13 +53,21 @@ public class PipelineCreator {
     private final PipelineInserter pipelineInserter;
     private final RecipeCatalog recipeCatalog;
     private final InfraManagerClient infraManagerClient;
+    private final InstallationOperationAvailability availability;
 
     /** 카탈로그 recipe 실행(P10). (provider, type)으로 고정 recipe를 골라 실행한다. */
     public Pipeline create(String target, PipelineType type) {
-        if (type == null) {
-            throw new MissingPipelineTypeException();
+        return create(target, type, false);
+    }
+
+    public Pipeline create(String target, PipelineType type, boolean applyNlbSecurityGroup) {
+        if (type == null) throw new MissingPipelineTypeException();
+        RecipeDefinition recipe = resolveRecipe(target, type);
+        if (applyNlbSecurityGroup && (recipe.provider() != CloudProvider.AWS
+                || !recipe.steps().contains(TaskDefinition.CONFIRM_RESOURCES_FROM_RECOMMENDATION_V1))) {
+            throw InstallationRequestException.invalidOption();
         }
-        return insert(PipelinePlan.fromCatalog(target, resolveRecipe(target, type)), target);   // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
+        return insert(PipelinePlan.fromCatalog(target, recipe, applyNlbSecurityGroup), target);   // 입력 검증 + 트랜잭션 밖 외부 조회(§3)
     }
 
     /**
@@ -73,7 +86,7 @@ public class PipelineCreator {
         // provider와 무관한 검증(이름 존재·설명 길이)은 외부 조회 전에 끝낸다(§3) — provider 조회가 죽어도 malformed 요청은 400을 유지한다.
         List<PlannedStep> steps = tasks.stream().map(PipelineCreator::resolveNameAndDescription).toList();
         CloudProvider provider = resolveProvider(target);   // 트랜잭션 밖 외부 조회(§3)
-        steps.forEach(step -> requireProviderMatch(step.definition(), provider));
+        steps.forEach(step -> validateStep(step, provider));
         return insert(PipelinePlan.custom(target, provider, steps), target);
     }
 
@@ -99,14 +112,24 @@ public class PipelineCreator {
             throw new TaskDescriptionTooLongException(name, description.length(),
                     CustomTaskRequest.MAX_DESCRIPTION_LENGTH);
         }
-        return new PlannedStep(definition, description);
+        return PlannedStep.builder().definition(definition).description(description)
+                .applyNlbSecurityGroup(task.applyNlbSecurityGroup()).build();
     }
 
     /** pass 2: task의 provider가 target provider와 일치하는지 검사한다(외부 조회로 얻은 provider가 있어야 가능) — 불일치는 400. */
     private static void requireProviderMatch(TaskDefinition definition, CloudProvider provider) {
-        if (definition.provider() != provider) {
+        if (!definition.supportsProvider(provider)) {
             throw new TaskProviderMismatchException(definition.name(), definition.provider(), provider);
         }
+    }
+
+    void validateStep(PlannedStep step, CloudProvider provider) {
+        requireProviderMatch(step.definition(), provider);
+        if (step.applyNlbSecurityGroup() && (provider != CloudProvider.AWS
+                || step.definition().operation() != TaskOperation.CONFIRM_RESOURCES_FROM_RECOMMENDATION)) {
+            throw InstallationRequestException.invalidOption();
+        }
+        availability.requireAvailable(provider, step.definition());
     }
 
     /**

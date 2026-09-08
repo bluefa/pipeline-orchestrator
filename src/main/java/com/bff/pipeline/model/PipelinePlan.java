@@ -5,8 +5,10 @@ import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.enums.RecipeDefinition;
 import com.bff.pipeline.enums.TaskDefinition;
+import com.bff.pipeline.enums.TaskOperation;
 import java.util.List;
 import java.util.Objects;
+import lombok.Builder;
 
 /**
  * create 요청이 해석된 결과 — 무엇에(target) 어떤 순서의 어떤 task 체인을 실행할지다. PipelineCreator가 target
@@ -41,9 +43,15 @@ public record PipelinePlan(String target, PipelineType type, CloudProvider provi
 
     /** 카탈로그 recipe로부터 plan을 만든다 — type/provider/recipe 이름/step은 recipe가 이미 들고 있다. step 설명은 없다(null). */
     public static PipelinePlan fromCatalog(String target, RecipeDefinition recipe) {
+        return fromCatalog(target, recipe, false);
+    }
+
+    public static PipelinePlan fromCatalog(String target, RecipeDefinition recipe, boolean applyNlbSecurityGroup) {
         Objects.requireNonNull(recipe, "recipe must not be null");
         List<PlannedStep> steps = recipe.steps().stream()
-                .map(definition -> new PlannedStep(definition, null))
+                .map(definition -> PlannedStep.builder().definition(definition)
+                        .applyNlbSecurityGroup(applyNlbSecurityGroup
+                                && definition.operation() == TaskOperation.CONFIRM_RESOURCES_FROM_RECOMMENDATION).build())
                 .toList();
         return new PipelinePlan(target, recipe.pipelineType(), recipe.provider(), recipe.name(), null, steps);
     }
@@ -63,15 +71,17 @@ public record PipelinePlan(String target, PipelineType type, CloudProvider provi
                 origin.getRecipeDefinition(), origin.getId(), steps);
     }
 
-    /** 체인의 한 단계 — 실행할 TaskDefinition, 운영자가 붙인 선택적 설명, 재시작 계보(원본 task 행 id). */
-    public record PlannedStep(TaskDefinition definition, String description, Long originTaskId) {
+    /** 체인의 한 단계 — 정의·설명, 재시작 계보, 추천 입력에 적용할 NLB 옵션을 함께 전달한다. */
+    @Builder
+    public record PlannedStep(TaskDefinition definition, String description, Long originTaskId,
+            boolean applyNlbSecurityGroup) {
         public PlannedStep {
             Objects.requireNonNull(definition, "definition must not be null");
         }
 
-        /** 기존 catalog/custom 경로용 — 계보 없음. */
         public PlannedStep(TaskDefinition definition, String description) {
-            this(definition, description, null);
+            this(definition, description, null, false);
         }
+
     }
 }

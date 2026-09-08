@@ -55,7 +55,7 @@ class TaskDefinitionTest {
     @Test
     void conditionCheckDefinitionsHaveNoDispatchAndNoResult() {
         for (TaskDefinition definition : TaskDefinition.values()) {
-            if (definition.operation().consumesTerraformSlot()) {
+            if (!definition.mechanism().equals(TaskOperation.Mechanism.CONDITION_CHECK)) {
                 continue;
             }
             TaskExecutionSpec spec = definition.spec();

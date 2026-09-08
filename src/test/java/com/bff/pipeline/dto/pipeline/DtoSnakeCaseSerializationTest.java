@@ -138,7 +138,7 @@ class DtoSnakeCaseSerializationTest {
 
     @Test
     void taskCatalogResponseSerializesSnakeCase() throws Exception {
-        TaskCatalogEntry entry = TaskCatalogEntry.from(TaskDefinition.AWS_SERVICE_APPLY_V1);
+        TaskCatalogEntry entry = TaskCatalogEntry.from(TaskDefinition.AWS_SERVICE_APPLY_V1, true);
 
         String json = mapper.writeValueAsString(new TaskCatalogResponse(List.of(entry)));
 
@@ -157,7 +157,7 @@ class DtoSnakeCaseSerializationTest {
                 null, 4, Instant.parse("2026-07-02T00:05:00Z"));
         TaskAttemptView attempt = new TaskAttemptView(1, TaskStatus.FAILED, ErrorCode.CHECK_ERROR,
                 "infra-manager call failed: 503", "{\"jobIds\":[\"j-1\"]}", Instant.parse("2026-07-02T00:00:00Z"),
-                Instant.parse("2026-07-02T00:05:00Z"), check, List.of(resultSummary), List.of(jobState));
+                Instant.parse("2026-07-02T00:05:00Z"), check, List.of(resultSummary), List.of(jobState), null);
 
         String json = mapper.writeValueAsString(attempt);
 

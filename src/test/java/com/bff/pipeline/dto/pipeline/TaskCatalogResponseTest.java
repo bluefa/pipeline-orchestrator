@@ -16,29 +16,36 @@ class TaskCatalogResponseTest {
 
     @Test
     void filtersToTheRequestedProvider() {
-        List<String> names = TaskCatalogResponse.of(CloudProvider.AWS).taskDefinitions().stream()
+        List<String> names = TaskCatalogResponse.of(CloudProvider.AWS, definition -> true).taskDefinitions().stream()
                 .map(TaskCatalogEntry::name)
                 .toList();
 
         List<String> expected = Arrays.stream(TaskDefinition.values())
-                .filter(definition -> definition.provider() == CloudProvider.AWS)
+                .filter(definition -> definition.supportsProvider(CloudProvider.AWS))
                 .map(TaskDefinition::name)
                 .toList();
 
         assertThat(names).isEqualTo(expected);
-        assertThat(TaskCatalogResponse.of(CloudProvider.AWS).taskDefinitions())
-                .allSatisfy(entry -> assertThat(entry.provider()).isEqualTo(CloudProvider.AWS));
+        assertThat(TaskCatalogResponse.of(CloudProvider.AWS, definition -> true).taskDefinitions())
+                .allSatisfy(entry -> assertThat(TaskDefinition.valueOf(entry.name()).supportsProvider(CloudProvider.AWS)).isTrue());
     }
 
     @Test
     void nullProviderReturnsTheWholeCatalog() {
-        assertThat(TaskCatalogResponse.of(null).taskDefinitions())
+        assertThat(TaskCatalogResponse.of(null, definition -> true).taskDefinitions())
                 .hasSize(TaskDefinition.values().length);
     }
 
     @Test
+    void executionAvailabilityComesFromTheSuppliedCapabilityCheck() {
+        TaskDefinition permitted = TaskDefinition.CONFIRM_RESOURCES_FROM_RECOMMENDATION_V1;
+        assertThat(TaskCatalogResponse.of(CloudProvider.AWS, definition -> definition == permitted).taskDefinitions())
+                .allSatisfy(entry -> assertThat(entry.executionAvailable()).isEqualTo(entry.name().equals(permitted.name())));
+    }
+
+    @Test
     void carriesTheFieldsTheBuilderNeeds() {
-        TaskCatalogEntry conditionCheck = TaskCatalogResponse.of(CloudProvider.AWS).taskDefinitions().stream()
+        TaskCatalogEntry conditionCheck = TaskCatalogResponse.of(CloudProvider.AWS, definition -> true).taskDefinitions().stream()
                 .filter(entry -> entry.name().equals(TaskDefinition.NETWORK_READY_V1.name()))
                 .findFirst().orElseThrow();
 

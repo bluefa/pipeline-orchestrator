@@ -10,6 +10,8 @@ import com.bff.pipeline.model.StepOutcome;
 import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
 import java.util.Optional;
+import com.bff.pipeline.enums.ErrorCode;
+import com.bff.pipeline.enums.CheckSignal;
 import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -76,8 +78,8 @@ public class StepRunner {
     private StepOutcome run(String target, Task task, TaskAttempt attempt, TaskType type) {
         return switch (task.getStatus()) {
             case BLOCKED -> StepOutcome.unblock();
-            case READY -> runExternalCall(task, true, () -> StepOutcome.dispatched(type.execute(target, task)));
-            case IN_PROGRESS -> runExternalCall(task, false, () -> mapProgress(checkProgress(target, task, attempt, type)));
+            case READY -> runExternalCall(task, type, true, () -> StepOutcome.dispatched(type.execute(target, task)));
+            case IN_PROGRESS -> runExternalCall(task, type, false, () -> mapProgress(checkProgress(target, task, attempt, type)));
             case DONE, FAILED, CANCELLED ->
                     throw new IllegalStateException("runStep on a terminal task " + task.getId());
         };
@@ -90,6 +92,8 @@ public class StepRunner {
 
     private StepOutcome mapProgress(TaskProgress progress) {
         return switch (progress) {
+            case TaskProgress.TestConnectionPolled polled -> new StepOutcome.TestConnectionPolled(polled.observation());
+            case TaskProgress.HttpCompleted completed -> new StepOutcome.HttpCompleted(completed.result());
             case TaskProgress.Succeeded ignored -> StepOutcome.succeeded();
             case TaskProgress.Pending pending -> StepOutcome.pending(pending.observed());
             case TaskProgress.Failed failed -> StepOutcome.failed(failed.reason(), failed.retryable(), failed.detail());
@@ -98,16 +102,18 @@ public class StepRunner {
         };
     }
 
-    private StepOutcome runExternalCall(Task task, boolean dispatch, Supplier<StepOutcome> call) {
+    private StepOutcome runExternalCall(Task task, TaskType type, boolean dispatch, Supplier<StepOutcome> call) {
         try {
             return call.get();
         } catch (CallTimeoutException exception) {
-            log.warn("InfraManager call timed out for task {} ({})", task.getId(), task.getTaskName());
-            return StepOutcome.callTimeout(dispatch, exception.getMessage());
+            log.warn("External call timed out for task {} ({})", task.getId(), task.getTaskName());
+            return type.handleCallFailure(task, StepOutcome.callTimeout(dispatch, exception.getMessage()));
         } catch (CallFailedException exception) {
-            log.warn("InfraManager call failed for task {} ({}): {}", task.getId(), task.getTaskName(),
+            log.warn("External call failed for task {} ({}): {}", task.getId(), task.getTaskName(),
                     exception.getMessage());
-            return StepOutcome.callFailed(dispatch, exception.getMessage());
+            return type.handleCallFailure(task, StepOutcome.CallFailure.builder().reason(ErrorCode.CHECK_ERROR)
+                    .signal(CheckSignal.API_ERROR).dispatch(dispatch).detail(exception.getMessage())
+                    .retryable(exception.retryable()).exchange(exception.exchange()).build());
         }
     }
 }

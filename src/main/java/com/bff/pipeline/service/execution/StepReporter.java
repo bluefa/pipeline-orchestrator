@@ -1,6 +1,7 @@
 package com.bff.pipeline.service.execution;
 import com.bff.pipeline.service.task.TaskCanceller;
 import com.bff.pipeline.service.task.TaskStateMachine;
+import com.bff.pipeline.service.task.TestConnectionExecutionService;
 
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
@@ -44,6 +45,7 @@ public class StepReporter {
     private final TaskStateMachine taskStateMachine;
     private final TaskCanceller taskCanceller;
     private final Clock clock;
+    private final TestConnectionExecutionService testConnections;
 
     /**
      * run 단계가 계산한 outcome을 현재 task에 적용하고 스텝을 마무리한다. outcome이 없는 사이클은 이 메서드가
@@ -156,6 +158,7 @@ public class StepReporter {
             if (task.getStatus() == TaskStatus.BLOCKED) {
                 task.setStatus(TaskStatus.READY);
                 task.setReadyAt(clock.instant());
+                testConnections.markReady(task, task.getReadyAt());
                 taskRepository.save(task);
             }
         });

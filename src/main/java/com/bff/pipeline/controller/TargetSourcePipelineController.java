@@ -44,13 +44,15 @@ public class TargetSourcePipelineController {
 
     @GetMapping
     public Page<PipelineSummary> history(@PathVariable String targetSourceId,
+            @RequestParam(required = false) PipelineType type,
             @PageableDefault(size = 20, sort = {"createdAt", "id"}, direction = Sort.Direction.DESC) Pageable pageable) {
-        return queryService.historyByTarget(targetSourceId, pageable);
+        return queryService.historyByTarget(targetSourceId, type, pageable);
     }
 
     @GetMapping("/latest")
-    public ResponseEntity<PipelineSummary> latest(@PathVariable String targetSourceId) {
-        return queryService.latestByTarget(targetSourceId)
+    public ResponseEntity<PipelineSummary> latest(@PathVariable String targetSourceId,
+            @RequestParam(required = false) PipelineType type) {
+        return queryService.latestByTarget(targetSourceId, type)
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.noContent().build());
     }
@@ -65,7 +67,7 @@ public class TargetSourcePipelineController {
         if (request == null || request.type() == null) {
             throw new MissingPipelineTypeException();
         }
-        return queryService.toDetail(pipelineCreator.create(targetSourceId, request.type()));
+        return queryService.toDetail(pipelineCreator.create(targetSourceId, request.type(), request.applyNlbSecurityGroup()));
     }
 
     /**

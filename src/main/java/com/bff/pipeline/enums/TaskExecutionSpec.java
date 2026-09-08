@@ -49,4 +49,20 @@ public record TaskExecutionSpec(
         String resultStorage = "별도 result 저장은 없다 — 폴 관찰(호출 횟수, 마지막 외부 상태)은 task_check에 남는다.";
         return new TaskExecutionSpec(null, checkApi, null, successPolicy, resultStorage);
     }
+    public static TaskExecutionSpec httpDelete() {
+        return new TaskExecutionSpec(null, null, null,
+                "검증된 설치 서비스 DELETE 200으로 완료한다. 외부 호출 오류만 설정한 예산 안에서 재시도한다.",
+                "현재 HTTP 본문과 metadata는 task_attempt에 보존한다. 실제 API 계약은 연결 전이다.");
+    }
+
+    public static TaskExecutionSpec httpConfirmation() {
+        return new TaskExecutionSpec(null, null, null,
+                "추천 GET 200의 검증된 입력을 고정하고 같은 Task의 다음 실행에서 POST 201로 완료한다.",
+                "성공 GET은 task_confirmation_input에, 현재/최종 HTTP 응답은 task_attempt에 보존한다. 실제 API 계약은 연결 전이다.");
+    }
+    public static TaskExecutionSpec testConnection() {
+        return new TaskExecutionSpec(null, null, null,
+                "요청 키로 식별한 실행 version의 SUCCESS로 완료한다. 접수 성공이나 사용자 acknowledgment는 완료 기준이 아니다.",
+                "실행 정체성은 task_external_execution, 최신/최종 진단은 test_connection_result에 저장한다. 실제 API 계약은 연결 전이다.");
+    }
 }

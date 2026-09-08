@@ -9,7 +9,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  */
 public record CustomTaskRequest(
         @JsonProperty("name") String name,
-        @JsonProperty("description") String description) {
+        @JsonProperty("description") String description,
+        @JsonProperty("apply_nlb_security_group") boolean applyNlbSecurityGroup) {
+
+    public CustomTaskRequest(String name, String description) { this(name, description, false); }
 
     public static final int MAX_DESCRIPTION_LENGTH = 100;
 }

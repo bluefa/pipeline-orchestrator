@@ -3,16 +3,20 @@ package com.bff.pipeline.enums;
 import java.util.Optional;
 
 /**
- * 파이프라인이 대상 인프라에 수행하는 작업 유형이다. {@code INSTALL}은 구축, {@code DELETE}는 철거를 뜻하며,
- * 이 둘은 (provider, type)으로 {@code RecipeCatalog}의 고정 recipe를 결정한다. {@code CUSTOM}은 운영자가 요청에서
- * task 순서를 직접 구성한 실행으로, RecipeCatalog를 거치지 않는다(LIN-18) — 이 값 자체가 곧 "custom 분류"라
- * 조회 API가 고정 recipe 실행과 구분한다. 각 파이프라인 행(row)에 저장된다.
+ * 파이프라인 한 번이 수행하는 업무 유형이다. 인프라 설치·삭제, 확정정보 재입력, 연결 테스트를 구분해
+ * 같은 대상에서도 원하는 업무의 진행 현황과 이력을 찾을 수 있게 한다. CUSTOM은 운영자가 Task 순서를
+ * 직접 구성한 실행이다. 유형은 생성 시 저장하며, 값이 존재한다고 해당 Recipe가 실행 가능한 것은 아니다.
+ * 실제 생성 가능 여부는 대상의 provider와 활성 Recipe 카탈로그가 결정한다.
  */
 public enum PipelineType {
     /** 대상 인프라를 구축하는 파이프라인 유형. */
     INSTALL,
     /** 대상 인프라를 철거하는 파이프라인 유형. */
     DELETE,
+    /** 기존 인프라와 확정정보를 정리하고 새 확정정보를 입력하는 실행 유형. */
+    RECONFIRM,
+    /** 연결 테스트의 실행과 결과 확인을 수행하는 유형. */
+    TEST_CONNECTION,
     /** 운영자가 task 순서를 직접 구성한 custom 실행 유형(RecipeCatalog 미사용, 비영속 recipe). */
     CUSTOM;
 

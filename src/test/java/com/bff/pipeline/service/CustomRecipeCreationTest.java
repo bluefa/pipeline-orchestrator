@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
+import com.bff.pipeline.InstallationTestConfiguration;
 import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.config.PipelineSettings;
 import com.bff.pipeline.client.FakeInfraManagerClient;
@@ -51,8 +52,8 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineCreator.class, PipelineInserter.class, PipelineRestarter.class, RecipeCatalog.class,
-        PipelineQueryService.class, TargetSourcePipelineController.class, CustomRecipeCreationTest.Wiring.class})
+@Import({InstallationTestConfiguration.class, PipelineCreator.class, PipelineInserter.class, PipelineRestarter.class,
+        RecipeCatalog.class, PipelineQueryService.class, TargetSourcePipelineController.class, CustomRecipeCreationTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class CustomRecipeCreationTest {
 

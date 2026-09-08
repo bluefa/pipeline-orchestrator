@@ -2,6 +2,7 @@ package com.bff.pipeline.dto.pipeline;
 
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.TaskDefinition;
+import com.bff.pipeline.enums.TaskProviderScope;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Builder;
 
@@ -20,9 +21,12 @@ public record TaskCatalogEntry(
         @JsonProperty("provider") CloudProvider provider,
         @JsonProperty("kind") String kind,
         @JsonProperty("terraform_action") String terraformAction,
-        @JsonProperty("consumes_terraform_slot") boolean consumesTerraformSlot) {
+        @JsonProperty("consumes_terraform_slot") boolean consumesTerraformSlot,
+        @JsonProperty("provider_scope") TaskProviderScope providerScope,
+        @JsonProperty("custom_allowed") boolean customAllowed,
+        @JsonProperty("execution_available") boolean executionAvailable) {
 
-    public static TaskCatalogEntry from(TaskDefinition definition) {
+    public static TaskCatalogEntry from(TaskDefinition definition, boolean available) {
         return TaskCatalogEntry.builder()
                 .name(definition.name())
                 .displayName(definition.displayName())
@@ -31,6 +35,7 @@ public record TaskCatalogEntry(
                 .kind(definition.mechanism())
                 .terraformAction(definition.operation().terraformAction().orElse(null))
                 .consumesTerraformSlot(definition.consumesTerraformSlot())
+                .providerScope(definition.providerScope()).customAllowed(true).executionAvailable(available)
                 .build();
     }
 }

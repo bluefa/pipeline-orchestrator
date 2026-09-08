@@ -55,21 +55,45 @@ public enum TaskOperation {
 
     // ── CONDITION_CHECK mechanism ──
     /** 네트워크가 준비됐는지 확인(condition check)하는 액션. (실제 API 미확정 — 가정 엔드포인트) */
-    NETWORK_READY(Mechanism.CONDITION_CHECK);
+    NETWORK_READY(Mechanism.CONDITION_CHECK),
+    /** 검증된 설치 서비스에서 확정정보를 동기로 삭제한다. */
+    DELETE_CONFIRMED_RESOURCES(Mechanism.HTTP_REQUEST, InstallationPolicy.HTTP_RETRY),
+    /** 추천값 조회와 등록을 하나의 입력 Task로 수행한다. */
+    CONFIRM_RESOURCES_FROM_RECOMMENDATION(Mechanism.HTTP_REQUEST, InstallationPolicy.HTTP_RETRY),
+    /** 요청 키에 연결된 외부 테스트 실행의 종결을 관찰한다. */
+    TEST_CONNECTION(Mechanism.TEST_CONNECTION_JOB, InstallationPolicy.EXTERNAL_EXECUTION);
 
     /** mechanism 이름 리터럴 — 값은 각 TaskType.NAME과 일치해야 하며 부팅 시 검증된다. */
     public static final class Mechanism {
         public static final String TERRAFORM_JOB = "TERRAFORM_JOB";
         public static final String CONDITION_CHECK = "CONDITION_CHECK";
+        public static final String HTTP_REQUEST = "HTTP_REQUEST";
+        public static final String TEST_CONNECTION_JOB = "TEST_CONNECTION_JOB";
 
         private Mechanism() {
         }
     }
 
+    /** 설치 경계 사용 여부와 생성 시 적용할 실행 정책을 operation 자체에 선언한다. */
+    private enum InstallationPolicy {
+        /** 기존 실행 경계를 사용한다. */
+        NONE,
+        /** 설치 HTTP 호출에 재시도 간격과 예산을 적용한다. */
+        HTTP_RETRY,
+        /** 설치 외부 실행에 고정 deadline과 관찰 정책을 적용한다. */
+        EXTERNAL_EXECUTION
+    }
+
     private final String mechanism;
+    private final InstallationPolicy installationPolicy;
 
     TaskOperation(String mechanism) {
+        this(mechanism, InstallationPolicy.NONE);
+    }
+
+    TaskOperation(String mechanism, InstallationPolicy installationPolicy) {
         this.mechanism = mechanism;
+        this.installationPolicy = installationPolicy;
     }
 
     /** 이 operation을 실행할 TaskType의 이름(=taskName). */
@@ -89,6 +113,21 @@ public enum TaskOperation {
         }
         int marker = name().lastIndexOf("_TF_");
         return marker < 0 ? Optional.empty() : Optional.of(name().substring(marker + "_TF_".length()));
+    }
+
+    /** 설치 client의 capability와 operation 활성 설정을 요구하는 작업인지 표시한다. */
+    public boolean usesInstallationClient() {
+        return installationPolicy != InstallationPolicy.NONE;
+    }
+
+    /** 생성 시 HTTP 재시도 간격과 예산을 고정해야 하는 작업인지 표시한다. */
+    public boolean usesHttpRetryPolicy() {
+        return installationPolicy == InstallationPolicy.HTTP_RETRY;
+    }
+
+    /** 실제 외부 실행의 완료를 시간으로 제한하는 작업인지 표시한다. HTTP/조건 확인은 재시도 예산을 사용한다. */
+    public boolean usesExecutionTimeout() {
+        return consumesTerraformSlot() || installationPolicy == InstallationPolicy.EXTERNAL_EXECUTION;
     }
 
     /**

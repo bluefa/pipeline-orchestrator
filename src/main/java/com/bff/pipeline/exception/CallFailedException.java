@@ -1,11 +1,18 @@
 package com.bff.pipeline.exception;
 
-/**
- * 그 밖의 모든 InfraManager 호출 실패(HTTP 오류, 거부, 잘못된/빈 응답)에 던진다(→ {@code ErrorCode.CHECK_ERROR}).
- * InfraManager 전송 경계 닫힌 어휘의 하나다({@link CallTimeoutException} 참조).
- */
+import com.bff.pipeline.model.HttpExchange;
+
+/** 외부 호출 실패의 재시도 정책과 실제 응답을 전달한다. 응답 본문은 로그 메시지에 포함하지 않는다. */
 public final class CallFailedException extends RuntimeException {
-    public CallFailedException(String message) {
+    private final boolean retryable;
+    private final HttpExchange exchange;
+
+    public CallFailedException(String message) { this(message, true, null); }
+    public CallFailedException(String message, boolean retryable, HttpExchange exchange) {
         super(message);
+        this.retryable = retryable;
+        this.exchange = exchange;
     }
+    public boolean retryable() { return retryable; }
+    public HttpExchange exchange() { return exchange; }
 }

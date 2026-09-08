@@ -46,6 +46,9 @@ public sealed interface TaskProgress {
      */
     record NotMet(String response) implements TaskProgress {}
 
+    record HttpCompleted(HttpTaskResult result) implements TaskProgress { }
+    record TestConnectionPolled(TestConnectionObservation observation) implements TaskProgress { }
+
     TaskProgress SUCCEEDED = new Succeeded();
 
     static TaskProgress pending(CheckSignal observed) {

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
+import com.bff.pipeline.InstallationTestConfiguration;
 import com.bff.pipeline.client.FakeInfraManagerClient;
 import com.bff.pipeline.dto.TerraformPoll;
 import com.bff.pipeline.dto.pipeline.TaskAttemptView;
@@ -58,7 +59,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
+@Import({InstallationTestConfiguration.class,PipelineClaimer.class, PipelineWorker.class, StepRunner.class, StepReporter.class,
         TaskStateMachine.class, TaskTypeRegistry.class, TerraformTask.class, TerraformResultRecorder.class, TerraformJobStateRecorder.class,
         ConditionCheckTask.class, ObservationRecorder.class, TaskCanceller.class, PipelineCreator.class,
         PipelineInserter.class, RecipeCatalog.class, PipelineQueryService.class, PipelineExecutionTest.Wiring.class})

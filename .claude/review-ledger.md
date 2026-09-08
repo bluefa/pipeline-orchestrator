@@ -51,6 +51,7 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
 | Configuration lives in env vars (repo precedent: infra-manager) — an admin-managed settings surface (DB table + REST + UI) is built only on explicit owner request, even when a synced spec prescribes it; gate that scope with the owner before implementing | owner (2026-07-09, ADR-022 notify: spec §6 admin channel management replaced by `PIPELINE_NOTIFY_SLACK_WEBHOOK_URL`) | process + agent |
 | Derive "done" from the ADR (`docs/acceptance-criteria.md`); don't ask for sign-off | owner | process |
 | Respond to the owner in Korean | owner | process |
+| HTML 설명 페이지와 디자인 아티팩트는 실제 Claude CLI `--model opus`로 제작한다. 주 에이전트는 요구사항·사실 검증·브라우저 QA·게시를 담당하고 HTML을 직접 작성하지 않는다. 실제 사용 모델을 기록한다. | owner (2026-09-09) | process |
 | Javadoc explains FUNCTION in plain Korean — an ADR/section reference or compressed jargon (술어/파생/회계/lease/fencing untranslated) must never substitute for the explanation; spell terms out (lease→점유 시간, fencing token→점유 확인용 토큰), one trailing "자세한 배경은 ADR-N 참조" line at most; do NOT mirror the dense style of older files (exemplar: `NotifySettings` header, 2026-07-09 rewrite) | owner (2026-07-09: "알아먹기 힘들다… ADR의 뭐를 참조했다 이런것보다 그냥 기능을 설명해") | agent |
 | Prefer `Stream`/`IntStream.range` (enumerate) over a `for` loop where it reads cleanly | owner | agent |
 | Purposeful names; **no abbreviations** in ANY identifier (class, method, field, variable) — reveal the role: `ImClient`→`InfraManagerClient`, `im`→`infraManager`, `seq`→`sequence`, `ttl`→`timeToLive`, `cve`→`constraintViolation`, catch `e`→`exception`. Allowed: `id`, `main(args)` (owner stated 3×). Role-based collection names (`tasks`, `pipelines`, `settings`) are correct — reveal-the-role, not echo-the-type (ADR-021 retro #1 folded in here; owner keeps role names) | owner | agent (recurring-review pattern 6) |
@@ -350,3 +351,47 @@ exception to a rule is annotated inline with `// harness-allow: <rule> — <reas
   label/binding/success-states), every contract that parses the name — and DO scan the schema
   section for stale wording after changing a validation contract in the body (truncate vs reject
   drifted between sections).**
+
+- **ADR-023 / Fable 5.1 R17 (2026-09-08, revised by owner):** actual `claude-fable-5-1`
+  round 1 returned P0 0 / P1 5 / P2 12; verbatim findings and model evidence are in
+  `docs/reviews/adr-023-fable-5-1-review.md`. The intermediate round 2 was cancelled without a
+  final verdict. Owner corrected the task boundary before implementation: recommendation GET and
+  registration POST are ONE recommendation-based input task, and deletion/input/TestConnection
+  are ALL_CSP definitions usable independently in CUSTOM. Previous separate-GET-task and CUSTOM
+  exclusion decisions are superseded, not accepted rules. New round reviews the corrected design.
+  Preserved findings: additive LONGTEXT column rather than relying on widening existing TEXT;
+  guarded committed-only response evidence with unknown discarded effects; fixed logical-execution
+  deadline and same-attempt poll errors for TestConnection; actual adapter capability plus explicit
+  operation enablement on both catalog and CUSTOM; bounded server-to-server client calls; metadata
+  projections and separate body retrieval; no invented upstream JSON fields. These refine existing
+  column-length, boundary, input-contract and API-size checks rather than broadening the enum-schema
+  rule into a claim about every Hibernate type change.
+  Owner task-unit preference: task boundaries represent independently selectable work, not HTTP
+  call count. Shared tasks are provider-independent in composition while the internal adapter may
+  route by the pipeline's provider. Repeated definitions in CUSTOM require task-specific identity,
+  never pipelineId plus definition name. Successful GET evidence stays in the task-owned input
+  when the same attempt's final POST response replaces its current HTTP response.
+  Corrected-design Fable rounds: R3 P0 0 / P1 1 / P2 6; R4 P0 0 / P1 0 / P2 1 (design pass).
+  R3's decisive CUSTOM finding: a successor's timeout cannot begin at pipeline creation; each
+  TestConnection deadline is initialized once in its first READY transaction. Transient poll errors
+  now remain in one attempt until that deadline; short error-counter terminalization was removed.
+  R4's remaining typed-result documentation was applied: TestConnectionStarted and TestConnectionPolled
+  carry typed start/observation data into guarded report, never run-phase domain writes or parsing
+  WithResponse in the engine. Implementation review remains separate from this design verdict.
+  Code Round 1 (HTTP/CSP/query, fixed snapshot) passed P0 0 / P1 0 / P2 10. The follow-up
+  versions the confirmation-input key derivation explicitly, moves installation policy to operation
+  attributes, removes Optional/null-sentinel patterns and test-only availability defaults, returns
+  null HTTP metadata for legacy attempts, shares response validation, and distinguishes unsupported
+  recipes from temporarily unavailable operations. New behavioral tests cover POST stale/cancel,
+  DELETE retry identity, timeout metadata, every CSP reconfirmation chain/options, missing provider,
+  and cross-type active-target exclusion. These apply existing identity, extensibility, API-contract
+  and fragile-branch checks; they do not require a new broad abstraction. Integrated `mvn test`
+  passed 345 tests after these changes. Final TC/integration Fable review is recorded separately.
+  Final Code Round 4 (2026-09-09, actual Fable 5.1) passed P0 0 / P1 0 / P2 0 after
+  TC/integration rounds exposed a further evidence distinction: no external call must preserve
+  the prior attempt response; a real call without a response carries operation-only metadata.
+  Diagnostic last_error_operation preserves the same distinction, while pre-call termination
+  synchronizes the error code without inventing a poll. Missing observations return null metadata,
+  and missing execution state uses Optional rather than an empty context sentinel. Final full
+  `mvn test`: 354 tests, zero failures/errors/skips. Production adapters, actual MySQL schema
+  verification, and frontend/business integration remain explicitly outside the activated scope.

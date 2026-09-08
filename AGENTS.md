@@ -16,6 +16,10 @@ Java 21 / MySQL.
 
 ## Hard rules
 
+프런트엔드 코드는 `/Users/study/pii-agent-demo` 저장소에 있다. 화면 흐름과 API 연동을 검토할 때 함께 참조한다.
+
+HTML 설명 페이지와 디자인 아티팩트는 실제 Claude CLI의 `--model opus`로 제작한다. 주 에이전트는 요구사항 전달, 사실 검증, 브라우저 QA와 게시를 맡고 HTML을 직접 작성하지 않는다.
+
 1. **The skill is the standard.** `.claude/skills/spring-java21/SKILL.md` governs *how*
    Java/Spring code is written here (records, sealed types, constructor injection,
    injected `Clock`, guarded-CAS over `@Version`-alone, no `@Transactional` on tests,

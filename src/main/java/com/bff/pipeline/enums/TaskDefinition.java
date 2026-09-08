@@ -194,8 +194,19 @@ public enum TaskDefinition {
 
     NETWORK_READY_V1(CloudProvider.AWS, TaskOperation.NETWORK_READY,
             "네트워크 준비 확인", "네트워크가 준비 완료 상태가 될 때까지 조건을 확인한다.",
-            TaskExecutionSpec.conditionCheck("GET /infra/network/ready?target={target} (실제 API 미확정 — 가정 엔드포인트)"));
+            TaskExecutionSpec.conditionCheck("GET /infra/network/ready?target={target} (실제 API 미확정 — 가정 엔드포인트)")),
 
+    /** 모든 CSP에서 독립 선택할 수 있는 확정정보 삭제 정의다. */
+    DELETE_CONFIRMED_RESOURCES_V1(TaskProviderScope.ALL_CSP, null, TaskOperation.DELETE_CONFIRMED_RESOURCES,
+            "확정정보 삭제", "대상 CSP의 확정정보를 삭제한다. 인프라 삭제는 수행하지 않는다.", TaskExecutionSpec.httpDelete()),
+    /** 추천 조회와 등록을 하나의 Task로 수행하는 CSP 공통 입력 정의다. */
+    CONFIRM_RESOURCES_FROM_RECOMMENDATION_V1(TaskProviderScope.ALL_CSP, null, TaskOperation.CONFIRM_RESOURCES_FROM_RECOMMENDATION,
+            "추천 정보 기반 확정정보 입력", "추천값을 조회하고 Task별로 고정한 뒤 같은 Task에서 등록한다.", TaskExecutionSpec.httpConfirmation()),
+    /** 요청 키에 연결된 외부 실행의 종결을 확인하는 CSP 공통 테스트 정의다. */
+    TEST_CONNECTION_V1(TaskProviderScope.ALL_CSP, null, TaskOperation.TEST_CONNECTION,
+            "연결 테스트", "Task별 요청 키로 연결 테스트를 시작하고 해당 실행의 실제 종결을 관찰한다.", TaskExecutionSpec.testConnection());
+
+    private final TaskProviderScope providerScope;
     private final CloudProvider provider;
     private final TaskOperation operation;
     private final String displayName;
@@ -204,11 +215,26 @@ public enum TaskDefinition {
 
     TaskDefinition(CloudProvider provider, TaskOperation operation, String displayName, String description,
             TaskExecutionSpec spec) {
+        this(TaskProviderScope.CSP_SPECIFIC, provider, operation, displayName, description, spec);
+    }
+
+    TaskDefinition(TaskProviderScope scope, CloudProvider provider, TaskOperation operation, String displayName,
+            String description, TaskExecutionSpec spec) {
+        if ((scope == TaskProviderScope.CSP_SPECIFIC) != (provider != null)) {
+            throw new IllegalArgumentException("Task provider scope disagrees with provider");
+        }
+        this.providerScope = scope;
         this.provider = provider;
         this.operation = operation;
         this.displayName = displayName;
         this.description = description;
         this.spec = spec;
+    }
+
+    public TaskProviderScope providerScope() { return providerScope; }
+
+    public boolean supportsProvider(CloudProvider targetProvider) {
+        return targetProvider != null && (providerScope == TaskProviderScope.ALL_CSP || provider == targetProvider);
     }
 
     public CloudProvider provider() {
