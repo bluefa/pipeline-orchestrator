@@ -1,0 +1,1886 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>ADR-023 해설 · 재확정과 연결 테스트는 어떻게 실행되는가</title>
+<style>
+/* ─────────────────────────────────────────────────────────────
+   ADR-023 해설 문서. 외부 폰트·CDN·이미지 없이 단독 실행된다.
+   ───────────────────────────────────────────────────────────── */
+:root{
+  --paper:#f2efe9;      --panel:#ffffff;      --panel-2:#faf8f4;
+  --ink:#13181c;        --ink-2:#4d545b;      --ink-3:#767c83;
+  --rule:#ddd7cc;       --rule-2:#c7c0b3;
+  --dark:#101619;       --dark-2:#1c262b;     --dark-line:#314047;
+  --signal:#a8380f;     --signal-soft:#fbe9df;
+  --runtime:#0d5460;    --runtime-soft:#dff0f1;
+  --ok:#125e44;         --ok-soft:#dff0e6;
+  --warn:#7f5305;       --warn-soft:#fbeed2;
+  --fail:#95201f;       --fail-soft:#fadedd;
+  --idle:#6b7278;       --idle-soft:#e9e6e0;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard","Malgun Gothic","Noto Sans KR",sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:16px;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.75 var(--sans);
+  font-feature-settings:"tnum";word-break:keep-all;overflow-wrap:break-word}
+h1,h2,h3,h4,p,ul,ol,figure{margin:0}
+ul,ol{padding-left:1.15em}
+li{margin:.35em 0}
+code,kbd,pre,samp{font-family:var(--mono);font-size:.86em}
+code{overflow-wrap:anywhere}
+pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+button,select,input{font:inherit;color:inherit}
+button{cursor:pointer}
+button:disabled{cursor:not-allowed;opacity:.42}
+:focus-visible{outline:3px solid var(--signal);outline-offset:2px;border-radius:2px}
+.dark :focus-visible,.masthead :focus-visible{outline-color:#ffcf6b}
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.skip{position:absolute;left:12px;top:-64px;z-index:20;background:var(--ink);color:#fff;
+  padding:10px 18px;font-weight:700;text-decoration:none}
+.skip:focus{top:12px}
+[hidden]{display:none!important}
+
+/* ── masthead ───────────────────────────────────────────────── */
+.masthead{background:var(--dark);color:#eef2f1;border-bottom:6px solid var(--signal)}
+.masthead a,.masthead a:visited{color:#ffc38f;text-decoration:underline;text-underline-offset:3px}
+.masthead-inner{max-width:1360px;margin:0 auto;padding:clamp(30px,5vw,62px) clamp(20px,4vw,56px) clamp(28px,4vw,50px)}
+.filekey{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:baseline;
+  font:700 11.5px/1.5 var(--mono);letter-spacing:.18em;color:#8fa6a9;text-transform:uppercase}
+.filekey b{color:#ffb887;font-weight:700}
+h1{margin:26px 0 0;font-size:clamp(1.9rem,4.6vw,3.5rem);line-height:1.18;
+  letter-spacing:-.035em;font-weight:800;max-width:17ch}
+h1 em{font-style:normal;color:#ffb083;display:block}
+.lede{margin-top:22px;max-width:62ch;font-size:clamp(15px,1.5vw,18px);color:#c3cfd0;line-height:1.8}
+.lede b{color:#fff;font-weight:700}
+
+/* 검증 원장 */
+.ledger{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,276px),1fr));gap:1px;
+  margin-top:34px;background:var(--dark-line);border:1px solid var(--dark-line)}
+.ledger>div{background:var(--dark-2);padding:20px 22px}
+.ledger h2{font:700 11.5px/1.5 var(--mono);letter-spacing:.16em;text-transform:uppercase;
+  display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.ledger .yes h2{color:#7fe0b0}
+.ledger .no h2{color:#ffb887}
+.ledger .mark{width:18px;height:18px;flex:0 0 18px;border-radius:50%;display:grid;place-items:center;
+  font-size:11px;font-weight:800;color:var(--dark)}
+.ledger .yes .mark{background:#7fe0b0}
+.ledger .no .mark{background:#ffb887}
+.ledger ul{list-style:none;padding:0;font-size:13.5px;line-height:1.65;color:#cdd8d8}
+.ledger li{margin:0;padding:7px 0;border-top:1px solid var(--dark-line)}
+.ledger li:first-child{border-top:0}
+.ledger code{color:#ffd9c2}
+
+/* ── 골격 ───────────────────────────────────────────────────── */
+.shell{max-width:1360px;margin:0 auto;display:grid;grid-template-columns:242px minmax(0,1fr);
+  gap:clamp(24px,3.5vw,56px);padding:0 clamp(20px,4vw,56px) 40px;align-items:start}
+.rail{position:sticky;top:0;padding:38px 0 30px;min-width:0}
+.rail h2{font:700 11px/1.5 var(--mono);letter-spacing:.18em;color:var(--ink-3);
+  text-transform:uppercase;padding-bottom:10px;border-bottom:2px solid var(--ink)}
+.rail ol{list-style:none;padding:0;margin:0}
+.rail li{margin:0}
+.rail a{display:grid;grid-template-columns:26px 1fr;gap:8px;align-items:baseline;
+  padding:9px 4px;color:var(--ink-2);text-decoration:none;font-size:13.5px;line-height:1.45;
+  border-bottom:1px solid var(--rule)}
+.rail a span{font:700 11px var(--mono);color:var(--signal)}
+.rail a:hover{background:var(--panel);color:var(--ink)}
+.rail .note{margin-top:18px;font-size:11.5px;line-height:1.6;color:var(--ink-3)}
+
+main{min-width:0;padding-top:10px}
+.section{padding:44px 0 8px;border-top:2px solid var(--ink);margin-top:26px}
+.section:first-child{border-top:0;margin-top:0}
+.section-head{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;margin-bottom:26px}
+.section-num{font:800 clamp(28px,4vw,46px)/1 var(--mono);color:transparent;
+  -webkit-text-stroke:1.5px var(--rule-2);letter-spacing:-.04em}
+h2.title{font-size:clamp(1.35rem,2.6vw,2rem);line-height:1.3;letter-spacing:-.03em;font-weight:800}
+.section-head p{margin-top:10px;color:var(--ink-2);max-width:70ch;font-size:15px}
+h3{font-size:1.02rem;font-weight:750;line-height:1.5;letter-spacing:-.01em}
+h4{font:700 11.5px/1.5 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.p{margin-top:10px;color:var(--ink-2);font-size:14.5px}
+.p.tight{margin-top:6px}
+.p b,.p strong{color:var(--ink)}
+
+/* ── 공용 블록 ─────────────────────────────────────────────── */
+.panel{background:var(--panel);border:1px solid var(--rule);padding:22px}
+.panel.flat{background:var(--panel-2)}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,290px),1fr))}
+.grid.two{grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr))}
+.stack{display:grid;gap:16px}
+.mt{margin-top:20px}
+.mt-s{margin-top:12px}
+.note{border-left:4px solid var(--ink);background:var(--panel);padding:16px 18px;font-size:14px;color:var(--ink-2)}
+.note strong{color:var(--ink)}
+.note.warn{border-left-color:var(--signal);background:var(--signal-soft)}
+.note.ok{border-left-color:var(--ok);background:var(--ok-soft)}
+.foot{margin-top:18px;font-size:12.5px;line-height:1.75;color:var(--ink-3)}
+.tag{display:inline-flex;align-items:center;gap:6px;font:700 11px/1.35 var(--mono);
+  letter-spacing:.06em;padding:4px 8px;background:var(--idle-soft);color:var(--ink-2);white-space:nowrap}
+.tag.sig{background:var(--signal-soft);color:var(--signal)}
+.tag.run{background:var(--runtime-soft);color:var(--runtime)}
+.tag.ok{background:var(--ok-soft);color:var(--ok)}
+.tag.warn{background:var(--warn-soft);color:var(--warn)}
+.tag.fail{background:var(--fail-soft);color:var(--fail)}
+.tag.new::before{content:"NEW";font-size:9px;background:var(--ok);color:#fff;padding:1px 4px}
+.tags{display:flex;flex-wrap:wrap;gap:6px}
+
+.scroller{overflow-x:auto;border:1px solid var(--rule);background:var(--panel)}
+.scroller:focus-visible{outline-offset:-3px}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:13.5px}
+caption{text-align:left;padding:14px 16px;font:700 11.5px/1.5 var(--mono);
+  letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);border-bottom:1px solid var(--rule)}
+th,td{text-align:left;padding:12px 16px;border-bottom:1px solid var(--rule);vertical-align:top;line-height:1.6}
+thead th{background:var(--ink);color:#f4f1ea;font-weight:700;white-space:nowrap;border-bottom:0}
+tbody tr:last-child td{border-bottom:0}
+tbody th{font-weight:700;white-space:nowrap;background:var(--panel-2)}
+
+.code{background:var(--dark);color:#d7e6e2;padding:15px 17px;font-family:var(--mono);
+  font-size:12.5px;line-height:1.85;overflow-x:auto}
+.code b{color:#ffc38f;font-weight:700}
+.code .c{color:#8ba39f}
+
+/* 컨트롤 */
+.controls{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end;
+  padding:16px;background:var(--panel-2);border:1px solid var(--rule);border-bottom:0}
+.field{display:grid;gap:5px;min-width:0}
+.field>span{font:700 11px/1.4 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+select{background:var(--panel);border:1.5px solid var(--rule-2);padding:8px 10px;max-width:100%;border-radius:0}
+.btn{background:var(--panel);border:1.5px solid var(--ink);padding:8px 15px;font-size:14px;font-weight:700;border-radius:0}
+.btn:hover:not(:disabled){background:var(--ink);color:var(--panel)}
+.btn.primary{background:var(--ink);color:var(--panel)}
+.btn.primary:hover:not(:disabled){background:var(--signal);border-color:var(--signal)}
+.btn.quiet{border-color:var(--rule-2);font-weight:600}
+.btn[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.switch{display:flex;flex-wrap:wrap;gap:8px}
+.check{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;background:var(--panel);
+  border:1px solid var(--rule);font-size:14px;cursor:pointer}
+.check input{width:18px;height:18px;margin:3px 0 0;accent-color:var(--signal);flex:0 0 auto}
+.check em{display:block;font-style:normal;font-size:12.5px;color:var(--ink-3);line-height:1.55}
+.check:has(input:checked){border-color:var(--ink);background:var(--panel-2)}
+
+/* ── 01 대비 ───────────────────────────────────────────────── */
+.compare{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr))}
+.compare>div{background:var(--panel);padding:22px}
+.compare .before{background:var(--panel-2)}
+.chain{list-style:none;padding:0;margin:14px 0 0;display:grid;gap:8px}
+.chain li{margin:0;padding:11px 13px;border:1px solid var(--rule);background:var(--panel);
+  font-size:13.5px;line-height:1.55;display:grid;gap:3px}
+.chain li b{font-weight:700}
+.chain li span{font:11.5px/1.5 var(--mono);color:var(--ink-3)}
+.chain.after li{border-left:4px solid var(--signal)}
+
+/* ── 02 정의 vs 실행 ───────────────────────────────────────── */
+.axes{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr))}
+.axes>div{background:var(--panel);padding:20px}
+.axes .hd{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.axes ul{list-style:none;padding:0;display:grid;gap:6px;margin-top:12px}
+.axes li{margin:0;font:12.5px/1.5 var(--mono);padding:7px 10px;background:var(--panel-2);border:1px solid var(--rule)}
+.instance{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr))}
+.inst-card{border:1px solid var(--rule);background:var(--panel);padding:14px;display:grid;gap:6px;min-width:0}
+/* 긴 정의 이름이 좁은 화면에서 카드 밖으로 나가지 않도록 줄바꿈을 허용한다. */
+.inst-card .hd{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px 8px;align-items:baseline}
+.inst-card b{font:700 12.5px/1.5 var(--mono);min-width:0;overflow-wrap:anywhere}
+.inst-card dl{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 10px;font-size:12px}
+.inst-card dt{color:var(--ink-3);font-weight:600;white-space:nowrap}
+.inst-card dd{margin:0;font-family:var(--mono);font-size:11.5px;overflow-wrap:anywhere}
+
+/* ── 03 시뮬레이터 ─────────────────────────────────────────── */
+.sim{border:1px solid var(--rule);background:var(--panel)}
+.sim-body{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr)}
+.steps{list-style:none;margin:0;padding:8px 0}
+.steps li{margin:0;display:grid;grid-template-columns:34px minmax(0,1fr);gap:12px;
+  padding:13px 18px;border-bottom:1px solid var(--rule)}
+.steps li:last-child{border-bottom:0}
+.dot{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
+  font:700 12px var(--mono);background:var(--idle-soft);color:var(--ink-3);
+  border:1.5px solid var(--rule-2);margin-top:2px}
+.s-done .dot{background:var(--ok);border-color:var(--ok);color:#fff}
+.s-active .dot{background:var(--signal);border-color:var(--signal);color:#fff}
+.s-failed .dot{background:var(--fail);border-color:var(--fail);color:#fff}
+.s-active{background:#fffaf6}
+.step-title{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline;justify-content:space-between}
+.step-title b{font-weight:750;font-size:14.5px}
+.step-meta{font:11.5px/1.6 var(--mono);color:var(--ink-3);overflow-wrap:anywhere;margin-top:2px}
+.sub{list-style:none;margin:10px 0 2px;padding:0 0 0 2px;display:grid;gap:6px;
+  border-left:2px dashed var(--rule-2)}
+.sub li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;padding:6px 0 6px 12px;
+  border:0;font-size:12.5px;align-items:baseline}
+.sub .marker{font:700 10.5px var(--mono);letter-spacing:.08em;color:var(--ink-3)}
+.sub .s-on{color:var(--ok);font-weight:700}
+.sub .s-now{color:var(--signal);font-weight:700}
+.sim-side{background:var(--dark);color:#dbe6e4;padding:20px;display:grid;
+  gap:16px;align-content:start;min-width:0}
+.sim-side h4{color:#8fa6a9}
+.meter{height:8px;background:#2a373c;margin-top:10px;overflow:hidden}
+.meter i{display:block;height:100%;background:#7fe0b0;transition:width .25s ease}
+.count{font:800 26px/1.2 var(--mono);letter-spacing:-.02em;color:#fff;margin-top:12px}
+.count small{display:block;font:400 12px/1.6 var(--sans);color:#9fb3b3;letter-spacing:0;margin-top:6px}
+.log{background:#0a0f11;border:1px solid var(--dark-line);padding:14px;font-size:13px;
+  line-height:1.75;min-height:120px;color:#d3e2df}
+.log b{color:#ffc38f}
+.log a,.sim-side a{color:#ffc38f}
+.snapshot{border:1px solid var(--dark-line);padding:14px;background:#0a0f11}
+.snapshot pre{font-size:11.5px;line-height:1.7;color:#a8ded0}
+.snapshot .cap{font:700 10.5px/1.5 var(--mono);letter-spacing:.14em;color:#8fa6a9;
+  text-transform:uppercase;display:block;margin-bottom:8px}
+.state-line{display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+  padding:14px 18px;border-top:1px solid var(--rule);background:var(--panel-2);font-size:13px}
+
+/* ── 04 DB 맵 ──────────────────────────────────────────────── */
+.dbgroups{display:grid;gap:14px}
+.dbgroup{border:1px solid var(--rule);background:var(--panel-2);padding:14px}
+.dbgroup>h4{margin-bottom:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.entities{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(min(100%,208px),1fr))}
+.entity{text-align:left;background:var(--panel);border:1.5px solid var(--rule-2);
+  padding:13px;display:grid;gap:5px;border-radius:0;min-height:88px;align-content:start}
+.entity b{font:700 12.5px/1.4 var(--mono);overflow-wrap:anywhere}
+.entity span{font-size:12px;color:var(--ink-3);line-height:1.5}
+.entity:hover{border-color:var(--ink)}
+.entity[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink);background:var(--panel-2)}
+.entity.is-new{border-left:5px solid var(--ok)}
+.entity.is-changed{border-left:5px solid var(--signal)}
+.detail{border:1px solid var(--ink);background:var(--panel);padding:20px;display:grid;gap:12px}
+.detail .hd{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.detail .hd b{font:700 15px/1.5 var(--mono);min-width:0;overflow-wrap:anywhere}
+.fields{display:flex;flex-wrap:wrap;gap:6px}
+.fields code{background:var(--panel-2);border:1px solid var(--rule);padding:3px 7px;font-size:11.5px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px;color:var(--ink-3);margin-top:12px}
+.legend i{display:inline-block;width:12px;height:12px;margin-right:6px;vertical-align:-1px}
+
+/* ── 05 HTTP ───────────────────────────────────────────────── */
+.cases{display:flex;flex-wrap:wrap;gap:8px}
+.case-btn{background:var(--panel);border:1.5px solid var(--rule-2);padding:8px 12px;
+  font-size:13px;font-weight:650;display:flex;gap:8px;align-items:center}
+.case-btn:hover{border-color:var(--ink)}
+.case-btn[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.case-btn[aria-pressed="true"] .tag{background:rgba(255,255,255,.16);color:#fff}
+.wire{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))}
+.wire>div{background:var(--panel);padding:16px;min-width:0}
+.wire .cap{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.wire pre{background:var(--dark);color:#d7e6e2;padding:13px;font-size:11.5px;line-height:1.75;
+  min-height:104px;overflow-x:auto}
+.wire .null{color:#8ba39f;font-style:italic}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;font-size:12px;margin-top:10px}
+.kv dt{font-family:var(--mono);color:var(--ink-3);white-space:nowrap}
+.kv dd{margin:0;font-family:var(--mono);overflow-wrap:anywhere}
+.verdict{border:1px solid var(--ink);border-left:6px solid var(--signal);background:var(--panel);
+  padding:16px 18px;font-size:14px;line-height:1.75}
+.verdict .hd{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
+
+/* ── 06 TC 타임라인 ────────────────────────────────────────── */
+.rail-steps{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr))}
+.rail-steps>div{background:var(--panel);padding:16px;border-top:4px solid var(--runtime)}
+.rail-steps .ord{font:700 10.5px/1.5 var(--mono);letter-spacing:.14em;color:var(--runtime)}
+.rail-steps b{display:block;margin:6px 0;font-size:14.5px}
+.rail-steps p{font-size:12.5px;color:var(--ink-2);line-height:1.65}
+.deadline{display:grid;gap:14px}
+.dl-bar{position:relative;height:56px;border:1px solid var(--rule);background:
+  repeating-linear-gradient(90deg,var(--panel-2) 0 9px,var(--panel) 9px 10px)}
+.dl-seg{position:absolute;top:0;bottom:0;display:grid;place-items:center;
+  font:700 10.5px var(--mono);letter-spacing:.06em;color:#fff;overflow:hidden;white-space:nowrap;
+  transition:left .25s ease,width .25s ease}
+.dl-blocked{background:var(--idle)}
+.dl-queue{background:var(--runtime)}
+.dl-run{background:var(--signal)}
+.dl-marks{display:flex;justify-content:space-between;font:11px var(--mono);color:var(--ink-3)}
+
+/* ── 07 조회 ───────────────────────────────────────────────── */
+.latest{border:1px solid var(--ink);background:var(--panel);padding:16px 18px;display:grid;gap:6px}
+.latest b{font-size:15px}
+.pill{display:inline-flex;padding:3px 9px;font:700 11px var(--mono);letter-spacing:.05em}
+.pill.DONE{background:var(--ok-soft);color:var(--ok)}
+.pill.FAILED{background:var(--fail-soft);color:var(--fail)}
+.pill.RUNNING{background:var(--runtime-soft);color:var(--runtime)}
+.pill.CANCELLED{background:var(--idle-soft);color:var(--ink-2)}
+tr.hit td{background:#fffaf6}
+
+/* ── 08 게이트 ─────────────────────────────────────────────── */
+.gate-out{display:grid;gap:12px;border:1px solid var(--ink);background:var(--panel);padding:20px}
+.gate-out .big{font:800 clamp(17px,2.4vw,22px)/1.3 var(--sans);letter-spacing:-.02em}
+.gate-list{list-style:none;padding:0;counter-reset:g;display:grid;gap:10px}
+.gate-list li{margin:0;display:grid;grid-template-columns:30px minmax(0,1fr);gap:12px;
+  padding:14px;border:1px solid var(--rule);background:var(--panel)}
+.gate-list li::before{counter-increment:g;content:counter(g,decimal-leading-zero);
+  font:700 12px/26px var(--mono);color:var(--signal);background:var(--signal-soft);
+  width:26px;height:26px;text-align:center}
+.gate-list p{font-size:13px;color:var(--ink-2);margin-top:4px;line-height:1.7}
+
+footer{border-top:2px solid var(--ink);background:var(--panel);margin-top:40px}
+.footer-inner{max-width:1360px;margin:0 auto;padding:34px clamp(20px,4vw,56px) 48px;
+  display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))}
+.footer-inner h4{margin-bottom:10px}
+.footer-inner ul{list-style:none;padding:0;font-size:13px;color:var(--ink-2)}
+.footer-inner li{padding:5px 0;border-top:1px solid var(--rule)}
+.footer-inner li:first-child{border-top:0}
+
+/* ── 반응형 ────────────────────────────────────────────────── */
+@media (max-width:1080px){
+  .shell{grid-template-columns:1fr;gap:0;padding-bottom:32px}
+  .rail{position:sticky;top:0;z-index:10;padding:0;background:var(--paper);
+    border-bottom:1px solid var(--rule);margin:0 calc(-1*clamp(20px,4vw,56px));
+    padding-left:clamp(20px,4vw,56px);padding-right:clamp(20px,4vw,56px)}
+  .rail h2{border-bottom:0;padding:12px 0 6px}
+  .rail ol{display:flex;gap:6px;overflow-x:auto;padding-bottom:10px;scrollbar-width:thin}
+  .rail a{grid-template-columns:1fr;gap:2px;white-space:nowrap;border:1px solid var(--rule);
+    background:var(--panel);padding:7px 12px;font-size:12.5px}
+  .rail .note{display:none}
+  html{scroll-padding-top:108px}
+  main{padding-top:24px}
+  .sim-body{grid-template-columns:1fr}
+}
+@media (max-width:640px){
+  body{font-size:15px}
+  .masthead-inner{padding-top:26px}
+  .section{padding-top:32px}
+  .section-head{grid-template-columns:1fr;gap:6px}
+  .section-num{font-size:24px}
+  .panel,.compare>div,.axes>div,.wire>div{padding:16px}
+  .steps li{padding:12px 14px;grid-template-columns:28px minmax(0,1fr);gap:10px}
+  .controls{padding:12px}
+  .field,.field select{width:100%}
+  .switch,.cases{width:100%}
+  th,td{padding:10px 12px}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+    transition-duration:.01ms!important}
+}
+@media print{
+  .rail,.controls,.cases,.switch,.skip{display:none}
+  .shell{display:block;max-width:none}
+  .masthead{background:#fff;color:#000;border-bottom:3px solid #000}
+  .ledger>div,.sim-side,.log,.snapshot,.code,.wire pre{background:#fff;color:#000;border:1px solid #999}
+  .section{break-inside:avoid;border-top:1px solid #000}
+  body{background:#fff;font-size:10.5pt}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">본문으로 건너뛰기</a>
+<noscript>
+  <p style="margin:0;padding:14px 20px;background:#fbeed2;border-bottom:1px solid #c7c0b3;font-size:14px">
+    설명 본문·표·계약 조건은 그대로 읽을 수 있습니다. 재시도와 재시작의 정체성 비교표도 정적 표로 실려 있습니다.
+    실행 흐름·DB 맵·HTTP 응답·조회 필터·활성화 게이트·재시작 비교의
+    <b>대화형 예시</b>만 JavaScript가 필요합니다. 이 예시들은 페이지 안의 샘플 데이터만 바꾸며 어떤 API도 호출하지 않습니다.
+  </p>
+</noscript>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="filekey">
+      <span>Architecture decision record</span><b>ADR-023</b>
+      <span>pipeline-orchestrator</span><span>2026-09-09</span>
+    </p>
+    <h1>확정정보 재확정과 연결 테스트를<em>서버가 끝까지 실행합니다.</em></h1>
+    <p class="lede">
+      화면이 <b>추천 조회 → 편집 → 등록 → 테스트 시작 → 폴링</b>을 각각 호출하던 작업을,
+      복구 가능한 인프라 작업(코드·API의 <code>pipeline</code>) 안으로 옮깁니다.
+      핵심은 두 가지입니다. <b>추천 조회와 등록은 Task 하나</b>이고,
+      <b>테스트 접수 성공은 테스트 성공이 아닙니다.</b>
+      이 문서는 그 두 문장이 데이터·상태·실패 처리에서 어떤 모양이 되는지를 보여 줍니다.
+    </p>
+
+    <div class="ledger">
+      <div class="yes">
+        <h2><span class="mark" aria-hidden="true">✓</span>이 문서가 설명하는 범위</h2>
+        <ul>
+          <li><b>백엔드 내부 구현과 H2/fake 검증 반영</b> — 공통 Task 3개, RECONFIRM·TEST_CONNECTION Recipe, HTTP·TC executor</li>
+          <li>자동화 검증은 <b>H2 스키마와 fake client</b> 기준입니다 (기존 Terraform/Condition 회귀 포함)</li>
+          <li>스키마는 JPA annotation 선언 + H2에서의 동작 검증</li>
+          <li>재시도와 재시작의 경계는 구현된 계약 그대로 <a href="#s9">§09</a>에 정리했습니다</li>
+        </ul>
+      </div>
+      <div class="no">
+        <h2><span class="mark" aria-hidden="true">!</span>아직 확인하지 않은 것</h2>
+        <ul>
+          <li>실제 운영 upstream 계약 — 기본 <code>UnavailableInstallationOperationsClient</code>는 capability를 제공하지 않습니다</li>
+          <li>실제 MySQL에서의 컬럼·인덱스·길이·packet 검증 (H2 결과로 대신하지 않습니다)</li>
+          <li>프런트엔드 반영 — 별도 프런트엔드 저장소는 이번 작업 범위가 아닙니다</li>
+          <li>업무 소유 서비스와의 종단 상태 연동</li>
+        </ul>
+      </div>
+    </div>
+    <p class="lede" style="font-size:13.5px;color:#9fb3b3">
+      이 페이지는 <b>구현된 메커니즘</b>을 설명하고 검증 수치를 고정해 두지 않습니다.
+      통합 검증의 최신 결과는 <a href="https://github.com/bluefa/pipeline-orchestrator/pull/55">PR #55 검증·리뷰 증빙</a>을 기준으로 확인합니다.
+    </p>
+  </div>
+</header>
+
+<div class="shell">
+  <nav class="rail" aria-label="문서 구성">
+    <h2>구성</h2>
+    <ol>
+      <li><a href="#s1"><span>01</span>무엇이 달라지나</a></li>
+      <li><a href="#s2"><span>02</span>업무 축과 실행 축</a></li>
+      <li><a href="#s3"><span>03</span>재확정 실행 따라가기</a></li>
+      <li><a href="#s4"><span>04</span>테이블 6개 → 9개</a></li>
+      <li><a href="#s5"><span>05</span>HTTP 원문과 증거</a></li>
+      <li><a href="#s6"><span>06</span>연결 테스트의 정체성</a></li>
+      <li><a href="#s7"><span>07</span>유형별 조회</a></li>
+      <li><a href="#s8"><span>08</span>실행 활성화 게이트</a></li>
+      <li><a href="#s9"><span>09</span>재시도와 재시작</a></li>
+    </ol>
+    <p class="note">이 페이지의 모든 조작은 문서 안의 예시 데이터만 바꿉니다. 어떤 API도 호출하지 않고 네트워크를 사용하지 않습니다.</p>
+  </nav>
+
+  <main id="main">
+
+  <!-- ══ 01 ══════════════════════════════════════════════════ -->
+  <section id="s1" class="section" aria-labelledby="s1-t">
+    <div class="section-head">
+      <p class="section-num" aria-hidden="true">01</p>
+      <div>
+        <h2 class="title" id="s1-t">브라우저가 이어 붙이던 절차를, 하나의 실행이 소유합니다</h2>
+        <p>지금은 사용자가 화면을 떠나거나 탭을 닫으면 절차가 중간에서 끊깁니다. 재확정은 인프라 삭제까지 포함하므로
+        중간에서 끊기면 “확정정보도 인프라도 없는 상태”가 남습니다. ADR-023은 이 절차를 재시도 가능한 Task 체인으로 옮깁니다.</p>
+      </div>
+    </div>
+
+    <div class="compare">
+      <div class="before">
+        <h4>지금 · 화면이 순서를 기억</h4>
+        <h3 class="mt-s">각 버튼이 각각의 API를 호출</h3>
+        <ul class="chain">
+          <li><b>확정정보 삭제</b><span>Admin 모달 → CSP별 DELETE 1회</span></li>
+          <li><b>확정정보 입력</b><span>추천 GET → 편집기 초안 → 등록 POST · 두 호출을 화면이 연결</span></li>
+          <li><b>연결 테스트</b><span>async POST → latest 실행 4초 폴링 → 사용자가 acknowledgment</span></li>
+          <li><b>인프라</b><span>INSTALL / DELETE 인프라 작업만 서버가 실행</span></li>
+        </ul>
+        <p class="p tight">중간 실패의 복구·재시도·증거는 사람의 기억에 남습니다.</p>
+      </div>
+      <div>
+        <h4>ADR-023 · 실행이 순서를 소유</h4>
+        <h3 class="mt-s">업무 유형별 인프라 작업이 끝까지 진행</h3>
+        <ul class="chain after">
+          <li><b>RECONFIRM</b><span>CSP 테라폼 Destroy … → 확정정보 삭제 → 추천 기반 확정정보 입력</span></li>
+          <li><b>TEST_CONNECTION</b><span>요청 키로 시작한 그 실행의 종결만 인정</span></li>
+          <li><b>CUSTOM</b><span>공통 Task 하나만, 또는 같은 정의를 여러 번</span></li>
+          <li><b>INSTALL / DELETE</b><span>기존 유형과 Recipe를 그대로 유지</span></li>
+        </ul>
+        <p class="p tight">claim·lease·guarded write-back, 대상당 활성 실행 하나, 종단 상태 부활 금지는 <b>그대로</b>입니다.</p>
+      </div>
+    </div>
+
+    <div class="grid mt">
+      <div class="note"><strong>RECONFIRM의 DONE은 “새 확정정보 등록 완료”입니다.</strong>
+        인프라 재설치까지 포함하지 않습니다. 재설치는 이어지는 INSTALL 실행에서 확인합니다.</div>
+      <div class="note"><strong>TEST_CONNECTION의 DONE은 “그 실행이 SUCCESS”입니다.</strong>
+        사용자의 업무 완료 확인(acknowledgment)은 여전히 사람이 수행하는 별도 단계입니다.</div>
+      <div class="note warn"><strong>실패해도 자동 롤백은 없습니다.</strong>
+        이미 커밋된 삭제는 되돌리지 않고, 어디까지 진행됐는지를 남깁니다.</div>
+    </div>
+  </section>
+
+  <!-- ══ 02 ══════════════════════════════════════════════════ -->
+  <section id="s2" class="section" aria-labelledby="s2-t">
+    <div class="section-head">
+      <p class="section-num" aria-hidden="true">02</p>
+      <div>
+        <h2 class="title" id="s2-t">“업무가 무엇인가”와 “어떻게 실행되는가”는 다른 축입니다</h2>
+        <p>이 둘을 한 enum에 섞으면 HTTP 한 번으로 끝나는 작업과 수십 분짜리 비동기 테스트가 같은 완료 규칙을 갖게 됩니다.
+        ADR-023은 축을 나눕니다. 화면이 쓰는 <b>업무 유형</b>과 엔진이 쓰는 <b>실행 방식(mechanism)</b>입니다.</p>
+      </div>
+    </div>
+
+    <div class="axes">
+      <div>
+        <div class="hd"><span class="tag sig">업무 축</span><h3>PipelineType</h3></div>
+        <p class="p tight">운영자가 목록에서 고르고 화면이 필터로 쓰는 분류입니다. 별도 RecipeType enum은 만들지 않고 여기에 두 값만 추가합니다.</p>
+        <ul>
+          <li>INSTALL · DELETE · CUSTOM <span class="tag">기존</span></li>
+          <li>RECONFIRM <span class="tag sig new"></span></li>
+          <li>TEST_CONNECTION <span class="tag sig new"></span></li>
+        </ul>
+      </div>
+      <div>
+        <div class="hd"><span class="tag run">실행 축</span><h3>TaskType mechanism</h3></div>
+        <p class="p tight">엔진이 “무엇을 호출하고 언제 끝났다고 판정하는가”를 정합니다. Task 이름을 비교하지 않고 mechanism으로 라우팅합니다.</p>
+        <ul>
+          <li>TERRAFORM_JOB · CONDITION_CHECK <span class="tag">기존</span></li>
+          <li>HTTP_REQUEST <span class="tag run new"></span></li>
+          <li>TEST_CONNECTION_JOB <span class="tag run new"></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="scroller mt" tabindex="0" role="region" aria-label="실행 방식별 완료 판정 표">
+      <table>
+        <caption>실행 방식 4가지 · 완료 판정과 자원 점유</caption>
+        <thead><tr><th scope="col">mechanism</th><th scope="col">하는 일</th><th scope="col">완료 판정</th><th scope="col">시간 경계</th><th scope="col">Terraform slot</th></tr></thead>
+        <tbody>
+          <tr><th scope="row"><code>TERRAFORM_JOB</code></th><td>Terraform job 생성 후 상태 폴링</td><td>모든 job이 job 타입별 성공 상태</td><td><code>execution_timeout</code></td><td>소비</td></tr>
+          <tr><th scope="row"><code>CONDITION_CHECK</code></th><td>조건 확인 API 반복 호출</td><td>조건 충족 관측</td><td>재시도 예산</td><td>미소비</td></tr>
+          <tr><th scope="row"><code>HTTP_REQUEST</code></th><td>확정정보 DELETE · 추천 GET 후 등록 POST</td><td>계약 상태코드의 동기 응답(DELETE 200 / POST 201)</td><td>재시도 예산 <code>5초 · 24회</code></td><td>미소비</td></tr>
+          <tr><th scope="row"><code>TEST_CONNECTION_JOB</code></th><td>요청 키로 시작 접수 후 그 실행 version 폴링</td><td>해당 version의 <code>SUCCESS</code></td><td>고정 deadline <code>기본 50분</code></td><td>미소비</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="foot">HTTP_REQUEST는 코드에 등록된 operation만 호출합니다. 임의 URL·메서드를 입력받는 실행기가 아닙니다.
+      Terraform slot을 쓰지 않더라도 worker 수와 <code>running-pipeline-cap</code>, 호출별 timeout은 동일하게 적용됩니다.</p>
+
+    <h3 class="mt">공통 Task는 정확히 3개입니다</h3>
+    <div class="scroller mt-s" tabindex="0" role="region" aria-label="신규 공통 Task 정의 표">
+      <table>
+        <caption>신규 TaskDefinition · 모두 ALL_CSP</caption>
+        <thead><tr><th scope="col">TaskDefinition</th><th scope="col">표시명</th><th scope="col">내부 동작</th><th scope="col">mechanism</th><th scope="col">scope</th></tr></thead>
+        <tbody>
+          <tr><th scope="row"><code>DELETE_CONFIRMED_RESOURCES_V1</code></th><td>확정정보 삭제</td><td>확정정보 DELETE 1회</td><td>HTTP_REQUEST</td><td><span class="tag ok">ALL_CSP</span></td></tr>
+          <tr><th scope="row"><code>CONFIRM_RESOURCES_FROM_RECOMMENDATION_V1</code></th><td>추천 정보 기반 확정정보 입력</td><td>추천 GET → 입력 고정 → 등록 POST <b>(Task 하나)</b></td><td>HTTP_REQUEST</td><td><span class="tag ok">ALL_CSP</span></td></tr>
+          <tr><th scope="row"><code>TEST_CONNECTION_V1</code></th><td>연결 테스트</td><td>시작 접수·실행 회수 → 해당 실행 폴링</td><td>TEST_CONNECTION_JOB</td><td><span class="tag ok">ALL_CSP</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn mt-s"><strong>ALL_CSP는 “선택 가능 범위”이지 “호출 주소가 하나”라는 뜻이 아닙니다.</strong>
+      <code>CloudProvider</code>에 <code>COMMON</code> 같은 가짜 CSP를 만들지 않습니다. 공통 정의의 provider는 <code>null</code>이고,
+      실행할 때 executor가 <b>해당 인프라 작업 생성 시 고정된 <code>cloud_provider</code></b>를 읽어 실제 API를 고릅니다.
+      기존 Terraform 정의는 그대로 <code>CSP_SPECIFIC</code>이며, 대상 CSP와 다르면 생성에서 거절합니다.</div>
+
+    <h3 class="mt">정의(카탈로그)와 실행(행)은 1:N입니다</h3>
+    <p class="p">같은 공통 정의를 CUSTOM에 여러 번 담을 수 있습니다. 그때 무엇이 공유되고 무엇이 분리되는지가 이 설계의 핵심입니다.
+      아래에서 반복 횟수를 바꿔 보세요.</p>
+    <div class="controls mt-s">
+      <div class="field">
+        <label for="rep-count"><span>CUSTOM에 담은 “추천 기반 입력” 개수</span></label>
+        <select id="rep-count">
+          <option value="1">1개</option>
+          <option value="2" selected>2개</option>
+          <option value="3">3개</option>
+        </select>
+      </div>
+      <p class="p tight" style="margin:0;max-width:34ch">정의는 하나, 실행 행은 개수만큼 생깁니다.</p>
+    </div>
+    <div class="panel" style="border-top:0">
+      <div class="grid two">
+        <div>
+          <h4>카탈로그의 정의 · 1개</h4>
+          <div class="inst-card mt-s" style="border-left:5px solid var(--runtime)">
+            <div class="hd"><b>CONFIRM_RESOURCES_FROM_RECOMMENDATION_V1</b><span class="tag run">불변</span></div>
+            <dl>
+              <dt>scope</dt><dd>ALL_CSP · provider=null</dd>
+              <dt>mechanism</dt><dd>HTTP_REQUEST</dd>
+              <dt>custom</dt><dd>custom_allowed=true · 반복 가능</dd>
+            </dl>
+          </div>
+          <p class="p">정의는 버전이 고정된 계약입니다. 요청 키 파생식(<code>confirmation-input:v1:task:{id}</code>)도
+            이 V1 정의의 계약이라 새 배포에서 바꾸지 않습니다.</p>
+        </div>
+        <div>
+          <h4>실행 시 만들어지는 Task 행</h4>
+          <div class="instance mt-s" id="rep-out" role="status" aria-live="polite"></div>
+          <p class="p" id="rep-note"></p>
+        </div>
+      </div>
+    </div>
+    <p class="foot"><code>pipelineId + TaskDefinition.name()</code>은 CUSTOM의 반복을 구분하지 못하므로 정체성으로 쓰지 않습니다.
+      모든 키는 <code>task_id</code>에서 파생합니다.</p>
+  </section>
+
+  <!-- ══ 03 ══════════════════════════════════════════════════ -->
+  <section id="s3" class="section" aria-labelledby="s3-t">
+    <div class="section-head">
+      <p class="section-num" aria-hidden="true">03</p>
+      <div>
+        <h2 class="title" id="s3-t">재확정 한 건이 흘러가는 모습</h2>
+        <p>CSP와 상황을 고르고 <b>다음 turn 실행</b>을 눌러 보세요. 특히 마지막 Task를 보세요.
+        추천 GET이 성공해도 <b>완료 Task 수는 늘지 않습니다.</b> GET은 Task 안의 단계이지 Task가 아니기 때문입니다.</p>
+        <p>이 예시는 진행을 한 줄로 보여 주기 위해 <b>Terraform Task 한 칸을 job 생성 dispatch와 그 뒤의 여러 폴 turn을 합친 요약</b>으로 그립니다.
+        실제로는 worker 한 번의 외부 호출이 job을 만들면서 동시에 완료시키지 않습니다. 반면 HTTP Task의 GET·POST는 각각 실제로 turn 하나입니다.</p>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="field"><label for="sim-csp"><span>대상 CSP</span></label>
+        <select id="sim-csp"><option value="AWS">AWS</option><option value="GCP">GCP</option><option value="AZURE">Azure</option><option value="IDC">IDC</option></select>
+      </div>
+      <div class="field"><label for="sim-case"><span>상황</span></label>
+        <select id="sim-case">
+          <option value="success">정상 완료</option>
+          <option value="retry">등록 POST 일시 실패 → 재시도</option>
+          <option value="timeout">등록 POST 무응답(호출 timeout)</option>
+          <option value="missing">등록 직전 입력 행 유실</option>
+        </select>
+      </div>
+      <div class="switch">
+        <button class="btn primary" id="sim-next">다음 turn 실행</button>
+        <button class="btn" id="sim-cancel">취소 요청</button>
+        <button class="btn quiet" id="sim-reset">처음부터</button>
+      </div>
+    </div>
+
+    <div class="sim">
+      <div class="sim-body">
+        <ol class="steps" id="sim-steps" aria-label="Task 체인 진행 상태"></ol>
+        <div class="sim-side">
+          <div>
+            <h4>인프라 작업 상태</h4>
+            <p class="count" id="sim-count">0 / 5<small>완료 Task 수 · 호출 수나 경과 시간이 아닙니다</small></p>
+            <div class="meter" aria-hidden="true"><i id="sim-meter" style="width:0%"></i></div>
+          </div>
+          <div>
+            <h4 id="sim-log-label">이번 turn에 일어난 일</h4>
+            <div class="log" id="sim-log" role="status" aria-live="polite" aria-labelledby="sim-log-label"></div>
+          </div>
+          <div class="snapshot">
+            <span class="cap" id="sim-snap-cap">task_confirmation_input · recommendation_body</span>
+            <pre id="sim-snap">(아직 없음)</pre>
+          </div>
+        </div>
+      </div>
+      <p class="state-line" id="sim-state"></p>
+    </div>
+
+    <div class="grid mt">
+      <div class="panel">
+        <h4>왜 Task 하나인가</h4>
+        <h3 class="mt-s">호출은 둘, 작업 단위는 하나</h3>
+        <p class="p">추천 GET이 성공하면 원문·digest·GET metadata·source attempt 번호·검증된 맥락을 한 번만 저장하고
+          <b>같은 Task를 IN_PROGRESS로 둡니다.</b> 후속 Task는 BLOCKED입니다. 다음 turn에 같은 Task가 저장된 본문으로 POST하고,
+          그때 비로소 DONE이 되며 후속 Task가 READY로 승격합니다.</p>
+        <p class="p">저장된 본문은 write-once입니다. 등록이 일시 실패해 재시도 READY가 되어도 executor는 이미 저장된 입력을 발견하고
+          <b>POST부터 재개</b>합니다. 추천 GET을 다시 호출하지 않습니다.</p>
+        <p class="p">반대로 <b>새 실행으로 재시작</b>하면 이 스냅샷을 물려받지 않습니다. 새 입력 Task가 새 GET으로 자기 본문을 캡처합니다
+          (<a href="#s9">§09</a>).</p>
+      </div>
+      <div class="panel">
+        <h4>입력 유실과 관찰 유실은 다릅니다</h4>
+        <h3 class="mt-s">쓰기를 막는 실패 / 복구 가능한 실패</h3>
+        <p class="p">입력 행이 없으면 <code>EXECUTION_INPUT_MISSING</code>, 본문·digest·맥락이 손상되면
+          <code>EXECUTION_INPUT_INVALID</code>로 <b>쓰기 API를 호출하지 않고</b> 종결 실패합니다.
+          이미 IN_PROGRESS인데 본문이 없다면 새 GET으로 “복구”하지 않습니다. 그건 다른 세대의 추천값이 될 수 있습니다.</p>
+        <p class="p">반대로 관찰용 <code>task_attempt</code>만 유실되고 입력이 정상이면 POST를 재개할 수 있습니다.
+          guarded write-back에서 현재 attempt가 없으면 복구 생성해 응답을 남깁니다.</p>
+      </div>
+    </div>
+
+    <div class="note warn mt"><strong>취소·크래시로 폐기된 결과는 “외부에서 아무 일도 없었다”는 증거가 아닙니다.</strong>
+      보존 단위는 정상 guarded write-back에서 <b>채택된 결과</b>입니다. stale token으로 거절된 결과, 취소가 우선한 결과,
+      커밋 전 크래시한 결과는 기록되지 않지만 upstream에는 이미 도달했을 수 있습니다.
+      화면은 “커밋된 삭제 단계”와 “확인 불가인 외부 효과”를 구분해 표시해야 합니다. claim token은 DB 쓰기를 막을 뿐
+      이미 나간 요청을 취소하지 못합니다.</div>
+  </section>
+
+  <!-- ══ 04 ══════════════════════════════════════════════════ -->
+  <section id="s4" class="section" aria-labelledby="s4-t">
+    <div class="section-head">
+      <p class="section-num" aria-hidden="true">04</p>
+      <div>
+        <h2 class="title" id="s4-t">상태를 늘리는 대신 데이터를 분리합니다</h2>
+        <p>새 상태 enum은 하나도 추가하지 않습니다. 대신 <b>판정에 반드시 필요한 데이터</b>와
+        <b>사람이 보는 진단</b>을 다른 테이블로 나눕니다. 아래에서 기준선과 확장을 전환하고, 테이블을 눌러 역할을 확인하세요.</p>
+      </div>
+    </div>
+
+    <div class="switch">
+      <button class="btn" id="db-before" aria-pressed="false">현재 기준선 · 6개</button>
+      <button class="btn" id="db-after" aria-pressed="true">ADR-023 이후 · 9개</button>
+    </div>
+
+    <div class="dbgroups mt" id="db-groups"></div>
+    <p class="legend"><span><i style="background:var(--ok)"></i>신규 테이블</span>
+      <span><i style="background:var(--signal)"></i>기존 테이블 · 컬럼 추가</span>
+      <span><i style="background:var(--rule-2)"></i>변경 없음</span></p>
+
+    <div class="detail mt" id="db-detail" role="status" aria-live="polite"></div>
+
+    <div class="grid mt">
+      <div class="panel flat">
+        <h4>관계</h4>
+        <div class="code mt-s"><b>pipeline</b> 1 ─ N <b>task</b> 1 ─ N <b>task_attempt</b>
+<b>task</b> 1 ─ 0..1 <b>task_confirmation_input</b>
+<b>task</b> 1 ─ 0..1 <b>task_external_execution</b> 1 ─ 0..1 <b>test_connection_result</b></div>
+        <p class="p">입력 행과 실행 행은 <b>판정에 쓰이는 도메인 데이터</b>라 관찰 보존 정책으로 지우지 않습니다.
+          종단 실행 전체를 정리할 때 함께 제거합니다.</p>
+      </div>
+      <div class="panel flat">
+        <h4>원자성</h4>
+        <h3 class="mt-s">GET 저장과 미완료 상태는 한 커밋</h3>
+        <p class="p">소유권(claim token) 확인 → 원문·digest 저장 → 같은 Task IN_PROGRESS 유지 → 후속 BLOCKED.
+          하나라도 실패하면 write-back 전체를 롤백합니다. 추천 입력의 DB 쓰기는 executor의 외부 호출 단계에서 하지 않습니다.</p>
+        <p class="p">POST 성공도 마찬가지로 Task DONE과 후속 READY 승격을 <b>같은 커밋</b>에 담습니다.</p>
+      </div>
+    </div>
+    <p class="foot">모든 스키마는 JPA annotation(<code>@Table</code>/<code>@Index</code>/<code>@UniqueConstraint</code>)으로 선언합니다.
+      Flyway나 손으로 쓴 SQL migration을 추가하지 않습니다. 실제 MySQL에서의 컬럼 타입·인덱스·길이 검증은 별도로 남아 있습니다.</p>
+  </section>
+
+  <!-- ══ 05 ══════════════════════════════════════════════════ -->
+  <section id="s5" class="section" aria-labelledby="s5-t">
+    <div class="section-head">
+      <p class="section-num" aria-hidden="true">05</p>
+      <div>
+        <h2 class="title" id="s5-t">응답 원문은 “해석하기 전의 문자열”입니다</h2>
+        <p>JSON parse와 재직렬화를 하기 <b>전에</b> 캡처한 UTF-8 본문 그대로를 남깁니다. 공백·필드 순서·모르는 필드도 유지합니다.
+        wrapper로 감싸거나 pretty print하지 않습니다. TLS·압축·전체 header·wire byte는 범위 밖입니다.</p>
+      </div>
+    </div>
+
+    <h4>상황을 골라 무엇이 어디에 남는지 보세요</h4>
+    <div class="cases mt-s" id="http-cases" role="group" aria-label="HTTP 응답 상황 선택"></div>
+
+    <div class="wire mt" id="http-wire">
+      <div>
+        <p class="cap"><span class="tag">수신</span><b>실제로 받은 것</b></p>
+        <pre id="w-recv"></pre>
+        <dl class="kv" id="w-recv-meta"></dl>
+      </div>
+      <div>
+        <p class="cap"><span class="tag sig">저장</span><b>task_attempt</b></p>
+        <pre id="w-attempt"></pre>
+        <dl class="kv" id="w-attempt-meta"></dl>
+      </div>
+      <div>
+        <p class="cap"><span class="tag ok">고정</span><b>task_confirmation_input</b></p>
+        <pre id="w-input"></pre>
+        <dl class="kv" id="w-input-meta"></dl>
+      </div>
+    </div>
+
+    <div class="verdict mt" id="w-verdict" role="status" aria-live="polite"></div>
+
+    <div class="grid mt">
+      <div class="panel">
+        <h4>컬럼 분리</h4>
+        <h3 class="mt-s">기존 <code>response</code>는 건드리지 않습니다</h3>
+        <p class="p">Terraform/Condition이 쓰던 <code>task_attempt.response</code> TEXT와 그 의미는 그대로입니다.
+          HTTP 캡처는 신규 <code>http_response</code> LONGTEXT에 저장하고, <code>http_operation</code>·<code>http_status_code</code>·
+          <code>response_content_type</code>·<code>response_received_at</code>·<code>response_truncated</code>·
+          <code>confirmation_input_id</code>가 함께 붙습니다. <code>response_truncated</code>는 HTTP 캡처 전용이고
+          기존 Condition의 절단 여부를 뜻하지 않습니다.</p>
+      </div>
+      <div class="panel">
+        <h4>조회</h4>
+        <h3 class="mt-s">큰 본문은 목록에 절대 실리지 않습니다</h3>
+        <p class="p">Task 상세의 attempts는 <b>본문을 제외한 metadata projection</b>으로 읽습니다.
+          DB에서 큰 본문을 읽고 응답에서만 버리는 방식이 아닙니다. 원문은 소유 관계를 검증하는 전용 endpoint로 제공합니다.</p>
+        <div class="code mt-s"><span class="c">// 현재 코드의 실제 경로</span>
+GET /api/v1/pipelines/{pipelineId}/tasks/{taskId}
+        /attempts/{attemptNumber}/<b>http-response</b>
+GET /api/v1/pipelines/{pipelineId}/tasks/{taskId}/<b>confirmation-input</b></div>
+        <p class="p">두 번째는 고정된 성공 GET 원문·metadata와 등록 입력을 제공합니다. 아직 조회 전이면 미완료 metadata를,
+          행이 없으면 typed 404를 반환합니다. 목록·최근 카드·Slack 알림에는 본문을 싣지 않고, 렌더링은 escape합니다.</p>
+      </div>
+    </div>
+
+    <div class="note warn mt"><strong>크기 초과의 처리는 성공과 실패가 다릅니다.</strong>
+      상한은 응답·입력 각각 기본 1 MiB(<code>pipeline.installation.http-response-max-bytes</code> /
+      <code>confirmation-input-max-bytes</code>)이며 UTF-8 경계에서 자르고 <code>response_truncated=true</code>로 표시합니다.
+      <b>성공 응답이 상한을 넘으면</b> <code>RESPONSE_TOO_LARGE</code> 종결 실패이며 잘린 추천값을 등록에 쓰지 않습니다.
+      <b>오류 응답이 상한을 넘으면</b> bounded 원문만 보존하되 원래 오류의 재시도/종결 분류를 그대로 유지합니다.
+      진단 metadata 길이도 report 전에 제한하지만, 승인·세대 같은 <b>정체성 필드는 자르지 않고 초과를 거절</b>합니다.</div>
+  </section>
+
+  <!-- ══ 06 ══════════════════════════════════════════════════ -->
+  <section id="s6" class="section" aria-labelledby="s6-t">
+    <div class="section-head">
+      <p class="section-num" aria-hidden="true">06</p>
+      <div>
+        <h2 class="title" id="s6-t">연결 테스트는 “내가 시작한 실행”만 인정합니다</h2>
+        <p>가장 흔한 오해가 여기 있습니다. 시작 요청이 <code>success=true</code>로 접수됐다는 것과
+        테스트가 성공했다는 것은 다른 사건입니다. 그리고 “가장 최근 실행이 성공”이라는 사실은 <b>내 실행</b>의 근거가 아닙니다.</p>
+      </div>
+    </div>
+
+    <div class="rail-steps">
+      <div><p class="ord">01 · 호출 전</p><b>요청 키 고정</b><p>Task 생성 시 <code>test-connection:v1:task:{id}</code>를 저장합니다. attempt가 바뀌어도 같은 키입니다.</p></div>
+      <div><p class="ord">02 · 접수</p><b>시작 · 실행 회수</b><p>요청 키와의 상관관계가 증명된 응답에서 external version을 <b>한 번</b> 바인딩합니다. latest에서 처음 본 version을 그냥 쓰지 않습니다.</p></div>
+      <div><p class="ord">03 · 관찰</p><b>그 version만 폴링</b><p>PENDING·RUNNING은 대기입니다. 기본 4초 간격이며, 전송 오류는 같은 attempt를 유지한 채 다시 관찰합니다.</p></div>
+      <div><p class="ord">04 · 종결</p><b>SUCCESS / FAIL</b><p>같은 version의 SUCCESS만 Task DONE입니다. FAIL은 <code>JOB_FAILED</code>, 마감 초과는 <code>EXECUTION_TIMEOUT</code> 종결 실패입니다.</p></div>
+    </div>
+
+    <h3 class="mt">deadline은 Task마다 “최초 READY”에 한 번만 고정됩니다</h3>
+    <p class="p">앞 Task가 오래 걸렸다고 뒤 TC의 허용 시간을 깎지 않습니다. 대신 READY 이후의 큐 대기는 포함되고,
+      재시도는 마감을 절대 연장하지 않습니다. 조건을 바꿔 보세요.</p>
+    <div class="controls mt-s">
+      <div class="field"><label for="dl-pos"><span>이 TC Task의 위치</span></label>
+        <select id="dl-pos">
+          <option value="first">체인의 첫 Task</option>
+          <option value="next" selected>앞 Task 뒤의 후속 Task</option>
+        </select>
+      </div>
+      <div class="field"><label for="dl-wait"><span>앞 Task 소요(BLOCKED)</span></label>
+        <select id="dl-wait"><option value="0">없음</option><option value="12" selected>12분</option><option value="40">40분</option></select>
+      </div>
+      <label class="check"><input type="checkbox" id="dl-retry"><span>접수 오류로 재시도(READY 재진입)가 있었다<em>readyAt은 바뀌지만 deadline은 그대로입니다</em></span></label>
+    </div>
+    <div class="panel" style="border-top:0">
+      <div class="deadline">
+        <div class="dl-bar" id="dl-bar" role="img" aria-label="Task 시간 구간" aria-describedby="dl-text"></div>
+        <p class="dl-marks"><span id="dl-t0">00:00</span><span id="dl-t1"></span></p>
+        <p class="p" id="dl-text" role="status" aria-live="polite" style="margin:0"></p>
+      </div>
+    </div>
+    <p class="foot">기본값은 <code>pipeline.test-connection</code>에서 옵니다 — <code>execution-timeout PT50M</code>,
+      <code>polling-interval PT4S</code>, 접수 <code>max-fail-count 24</code>. 생성 시 Task 행에 고정하므로 설정을 바꿔도 실행 중 Task는 흔들리지 않습니다.
+      BLOCKED 동안 <code>deadline_at</code>은 <code>null</code>이며, READY/IN_PROGRESS에서 마감이 유실되면 새 마감으로 복구하지 않고
+      <code>EXECUTION_INPUT_INVALID</code>로 종결합니다.</p>
+
+    <div class="grid mt">
+      <div class="panel">
+        <h4>폴 전송 오류</h4>
+        <h3 class="mt-s">짧은 실패 횟수로 죽이지 않습니다</h3>
+        <p class="p">일시적인 폴 전송 오류는 <code>TaskType.handleCallFailure</code>의 TestConnection 구현이 전용 poll 결과로 바꿔
+          <b>같은 attempt에서 다음 폴을 예약</b>합니다. Task 이름 비교는 하지 않습니다.
+          오류 횟수는 <code>task_check</code>·진단에만 남고 <b>종결 판정에서 읽지 않습니다.</b> 대기를 끝내는 것은 고정 deadline뿐입니다.</p>
+        <p class="p">반대로 401·403 같은 non-retryable 계약 오류는 즉시 종결합니다. 접수(시작) 오류만 기존 attempt 재시도 예산을 쓰되
+          <b>같은 요청 키로 같은 실행을 회수</b>합니다. 실행 행이 유실돼도 새 테스트를 만들지 않습니다.</p>
+        <p class="p">이 Task 안의 재시도와 <b>새 실행으로 다시 테스트하는 재시작</b>은 다릅니다. 재시작은 새 task id·새 요청 키·
+          다른 external version·자기 마감을 갖습니다 — <a href="#s9">§09</a>에서 나란히 비교합니다.</p>
+      </div>
+      <div class="panel">
+        <h4>진단 조회</h4>
+        <h3 class="mt-s">정상 관측과 마지막 오류를 따로 보관</h3>
+        <div class="code mt-s">GET /api/v1/pipelines/{pipelineId}/tasks/{taskId}/<b>test-connection-result</b></div>
+        <p class="p">실행 행이 있으나 폴링 전이면 요청 키·바인딩된 version·마감만 200으로 돌려줍니다.
+          종결 진단을 pending이나 통신 실패로 덮어쓰지 않고, 정상 본문과 마지막 오류를 각각 보관합니다.
+          엔진의 판정은 typed 현재 poll 결과와 도메인 deadline만 사용하고 이 진단 테이블을 읽지 않습니다.</p>
+        <p class="p"><code>last_error_operation</code>이 <code>null</code>이면 <b>호출 없는 사전검사 실패</b>라
+          오류 metadata 자체가 없습니다. 실제 폴 무응답은 operation이 있고 status/body만 <code>null</code>이라 구분됩니다.</p>
+      </div>
+    </div>
+
+    <div class="note mt"><strong>업무 완료 확인은 여전히 사람의 단계입니다.</strong>
+      <code>completion-status</code>는 논리 DB 정책을 반영한 별도 업무 상태이고 <code>acknowledgment</code>는 사용자가 수행합니다.
+      Task가 이를 자동 호출하지 않고, 테스트 성공 뒤 정책이 바뀌었다고 끝난 Task를 뒤집지도 않습니다.</div>
+    <div class="note warn mt-s"><strong>지금의 API로는 상관관계가 증명되지 않습니다.</strong>
+      현재 시작 응답에는 <code>success</code>만 있고 화면은 latest version을 조회합니다.
+      요청 키로 같은 실행을 회수하고 결과 version을 검증하는 계약, 이전 실행 중 신규 시작을 막는 보장을 확인하기 전에는 실제 실행을 열지 않습니다.
+      version별 조회를 우선하며, latest 검증은 종결까지 다른 진입점이 실행을 덮어쓰지 못한다는 보장이 있을 때만 허용합니다.</div>
+  </section>
+
+  <!-- ══ 07 ══════════════════════════════════════════════════ -->
+  <section id="s7" class="section" aria-labelledby="s7-t">
+    <div class="section-head">
+      <p class="section-num" aria-hidden="true">07</p>
+      <div>
+        <h2 class="title" id="s7-t">유형을 고르면 그 업무의 최신 실행을 봅니다</h2>
+        <p>Step3은 재확정을, Step5는 연결 테스트를 봐야 합니다. 필터를 <b>DB에서 먼저 적용</b>하고
+        그 결과에서 <code>created_at DESC, id DESC</code>로 최신과 페이지를 고릅니다. 메모리에서 자르지 않습니다.</p>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="field"><label for="q-type"><span>PipelineType</span></label>
+        <select id="q-type">
+          <option value="">지정 없음 · 기존 동작</option>
+          <option value="INSTALL">INSTALL</option>
+          <option value="DELETE">DELETE</option>
+          <option value="RECONFIRM" selected>RECONFIRM</option>
+          <option value="TEST_CONNECTION">TEST_CONNECTION</option>
+          <option value="CUSTOM">CUSTOM · 예시 이력 없음</option>
+        </select>
+      </div>
+      <div class="field"><label for="q-recipe"><span>recipeDefinition · exact</span></label>
+        <select id="q-recipe">
+          <option value="">제한 없음</option>
+          <option value="AWS_RECONFIRM_V1">AWS_RECONFIRM_V1</option>
+          <option value="AWS_TEST_CONNECTION_V1">AWS_TEST_CONNECTION_V1</option>
+          <option value="AWS_RECONFIRM_LEGACY">AWS_RECONFIRM_LEGACY · 과거 이름</option>
+        </select>
+      </div>
+    </div>
+    <div class="code" id="q-url"></div>
+    <div class="latest mt" id="q-latest" role="status" aria-live="polite"></div>
+
+    <div class="scroller mt" tabindex="0" role="region" aria-label="예시 실행 이력 표">
+      <table>
+        <caption id="q-cap">TargetSource 42의 예시 이력 · created_at DESC, id DESC</caption>
+        <thead><tr><th scope="col">id</th><th scope="col">유형 / Recipe</th><th scope="col">상태</th><th scope="col">완료 Task</th><th scope="col">생성 시각</th></tr></thead>
+        <tbody id="q-rows"></tbody>
+      </table>
+    </div>
+    <p class="p" id="q-note"></p>
+
+    <div class="grid mt">
+      <div class="panel flat">
+        <h4>정렬 tie-break</h4>
+        <p class="p tight">예시의 <b>#106</b>과 <b>#105</b>는 <code>created_at</code>이 같고 유형도 같습니다.
+          유형 필터로도 갈리지 않으므로 <code>id DESC</code>가 최신을 결정하고, 최신은 항상 #106입니다.
+          정렬이 흔들리면 페이지 경계에서 행이 중복되거나 사라집니다.</p>
+      </div>
+      <div class="panel flat">
+        <h4>활성 실행의 유일성</h4>
+        <p class="p tight">조회는 유형별이지만 <b>활성 실행은 유형과 무관하게 대상당 하나</b>입니다.
+          RECONFIRM이 돌고 있으면 같은 대상의 TEST_CONNECTION을 동시에 시작할 수 없습니다.
+          <code>active_target</code>은 모든 종단 경로에서 해제됩니다.</p>
+      </div>
+      <div class="panel flat">
+        <h4>완료 수의 의미</h4>
+        <p class="p tight">완료/전체는 <b>Task 개수</b>입니다. API 호출 수도, 시간 기반 진행률도 아닙니다.
+          추천 GET까지 끝났어도 그 입력 Task의 완료 수는 <b>0</b>입니다.
+          전체 수는 Recipe의 Task 목록에서 옵니다 — 예시의 <code>AWS_INSTALL_V1</code>은 plan·apply 3쌍과
+          네트워크 준비 확인을 합쳐 <b>7개</b>, <code>AWS_RECONFIRM_V1</code>은 Destroy 3개와 공통 Task 2개로 <b>5개</b>입니다.</p>
+      </div>
+    </div>
+
+    <div class="note mt"><strong>type을 Task 종류로 역추론하지 않습니다.</strong>
+      CUSTOM에서 공통 입력 Task를 실행해도 유형은 CUSTOM입니다.
+      그리고 “가장 최근 RECONFIRM이 DONE”이라는 사실만으로 현재 승인이 완료됐다고 판단하지 않습니다 —
+      업무 소유 서비스가 승인·설정 버전과 <code>pipelineId</code>를 연결해 기록해야 합니다.
+      잘못된 enum 값은 400, 결과 없는 latest는 기존과 같은 204입니다.</div>
+  </section>
+
+  <!-- ══ 08 ══════════════════════════════════════════════════ -->
+  <section id="s8" class="section" aria-labelledby="s8-t">
+    <div class="section-head">
+      <p class="section-num" aria-hidden="true">08</p>
+      <div>
+        <h2 class="title" id="s8-t">“고를 수 있다”와 “실행할 수 있다”는 다릅니다</h2>
+        <p>공통 Task는 모든 CSP에서 <b>선택</b>할 수 있습니다. 하지만 실제 실행은 설정과 client capability가 <b>둘 다</b> 있어야 열립니다.
+        기본값은 닫힘입니다. 아래 조건을 켜고 꺼 보세요.</p>
+      </div>
+    </div>
+
+    <div class="grid two">
+      <div class="stack">
+        <label class="check"><input type="checkbox" id="g-enabled">
+          <span><code>pipeline.installation.enabled-operations</code>에 해당 operation 포함
+          <em>기본값은 빈 집합입니다. 설정만으로는 열리지 않습니다.</em></span></label>
+        <label class="check"><input type="checkbox" id="g-capable">
+          <span>해당 provider·operation의 client capability 존재
+          <em>기본 <code>UnavailableInstallationOperationsClient</code>는 아무 capability도 제공하지 않습니다.</em></span></label>
+        <label class="check"><input type="checkbox" id="g-reconfirm">
+          <span><code>supportsReconfirmation(provider)</code> = true
+          <em>삭제 순서·삭제 후 추천 가능 여부를 선언하는 RECONFIRM 전용 capability. 기본 false.</em></span></label>
+        <div class="field">
+          <label for="g-target"><span>무엇을 만들려고 하나요</span></label>
+          <select id="g-target">
+            <option value="reconfirm">RECONFIRM 인프라 작업 생성 (AWS)</option>
+            <option value="custom-input">CUSTOM · 추천 기반 입력 Task 단독</option>
+            <option value="custom-tc">CUSTOM · 연결 테스트 Task 단독</option>
+            <option value="unsupported">RECONFIRM · Recipe 자체가 없는 조합</option>
+          </select>
+        </div>
+      </div>
+      <div class="gate-out" id="g-out" role="status" aria-live="polite"></div>
+    </div>
+
+    <h3 class="mt">활성화 전에 upstream에서 확인해야 하는 계약</h3>
+    <ol class="gate-list mt-s">
+      <li><div><strong>서비스 주소·서버 계정 인증·응답과 맥락 검증·timeout</strong>
+        <p>없으면 해당 공통 operation의 실제 실행을 비활성으로 둡니다. 사용자 SSO 쿠키를 저장하거나 재사용하지 않습니다.
+        호출 대상은 설치 업무를 소유한 서버 서비스이며, 프런트 Next.js API나 Terraform InfraManager API를 대용으로 호출하지 않습니다.</p></div></li>
+      <li><div><strong>Task별 요청 키의 멱등성과 세대 보호</strong>
+        <p>같은 요청의 재시도가 같은 효과를 내야 하고, 이전 실행의 늦은 DELETE·POST가 다음 세대 정보를 훼손하지 않아야 합니다.
+        Admin 직접 쓰기를 포함한 <b>모든 진입점</b>에 같은 보호나 동등한 직렬화가 있어야 합니다.</p></div></li>
+      <li><div><strong>삭제 후 추천 조회 가능 여부와 CSP 삭제 순서</strong>
+        <p>확정정보를 지운 뒤에도 해당 승인 버전의 추천을 조회할 수 있어야 합니다. AWS·IDC 삭제 순서와 자원 참조 보존은
+        활성화 전에 확인합니다. 못 갖추면 그 CSP의 RECONFIRM만 비활성입니다.</p></div></li>
+      <li><div><strong>TC 요청 키로 실행 회수 · version 검증 · 중복 실행 제한</strong>
+        <p>없으면 실제 연결 테스트 실행을 열지 않습니다. timeout은 “실행되지 않았다”는 증거가 아닙니다.</p></div></li>
+      <li><div><strong>업무 소유 서비스의 종단 상태 소비</strong>
+        <p>성공·최종 업무 실패·취소를 멱등하게, 재전달 가능하게 처리해야 합니다. 최종 업무 실패 시 승인 완료 정보를 제거하는
+        기존 정책(ADR-006 D-007)을 유지하고 일시 retry·취소와 구분합니다. Slack 알림을 업무 콜백으로 쓰지 않습니다.</p></div></li>
+    </ol>
+
+    <div class="note warn mt"><strong>실제 adapter 없이 endpoint나 header를 발명해 활성화하지 않습니다.</strong>
+      내부 executor·저장·fake 기반 테스트는 먼저 구현할 수 있고 실제로 구현했습니다.
+      추천 응답의 승인·세대 맥락도 opaque JSON에 필드를 지어내지 않고, 실제 adapter가 원문과 함께 검증한 맥락을 반환해
+      등록에 그대로 사용해야 합니다. 그 전까지는 client boundary의 typed 계약으로만 표현합니다.
+      <code>enabled-operations</code>는 <b>생성 검증에만</b> 쓰며, 설정을 바꿔 실행 중인 Recipe를 재조립하거나 중단하지 않습니다.
+      실행 중 capability가 사라지면 <code>OPERATION_UNAVAILABLE</code> 값으로 종결합니다.</div>
+  </section>
+
+  <!-- ══ 09 ══════════════════════════════════════════════════ -->
+  <section id="s9" class="section" aria-labelledby="s9-t">
+    <div class="section-head">
+      <p class="section-num" aria-hidden="true">09</p>
+      <div>
+        <h2 class="title" id="s9-t">다시 하는 길은 두 갈래이고, 둘은 같은 것이 아닙니다</h2>
+        <p>하나는 <b>이미 있는 Task 안에서의 attempt 재시도</b>입니다. 같은 정체성으로 같은 요청을 이어서 냅니다.
+        다른 하나는 <b>새 인프라 작업을 만드는 재시작</b>입니다. 재시작은 지원되는 정상 경로이지만,
+        끊긴 실행을 이어 붙이는 것이 아니라 <b>정체성이 전부 새로 발급되는 별개의 실행</b>입니다.</p>
+      </div>
+    </div>
+
+    <div class="compare">
+      <div class="before">
+        <h4>A · Task 내부 재시도</h4>
+        <h3 class="mt-s">같은 실행 · 같은 Task · 같은 키</h3>
+        <ul class="chain">
+          <li><b>같은 task id를 유지</b><span>HTTP·TC 접수 재시도는 attempt 증가 · TC 폴 오류는 같은 attempt 유지</span></li>
+          <li><b>같은 요청 키</b><span>upstream 멱등성이 같은 요청임을 알아볼 수 있습니다</span></li>
+          <li><b>고정된 입력 그대로</b><span>추천 POST 재시도는 저장된 본문·digest를 재사용하고 GET을 다시 호출하지 않습니다</span></li>
+          <li><b>같은 논리 실행 회수</b><span>TC는 같은 요청 키로 같은 실행·같은 version을 되찾습니다</span></li>
+          <li><b>마감 연장 없음</b><span>TC의 최초 READY 마감은 재시도로 늘어나지 않습니다</span></li>
+        </ul>
+        <p class="p tight">엔진이 알아서 합니다. 운영자가 다시 무언가를 만들지 않습니다.</p>
+      </div>
+      <div>
+        <h4>B · 새 파이프라인 재시작</h4>
+        <h3 class="mt-s">새 실행 · 새 Task · 새 키 · 선택된 뒷부분만</h3>
+        <ul class="chain after">
+          <li><b>새 인프라 작업 한 건</b><span>기존 실행을 되살리지 않고 생성 경로를 그대로 탑니다</span></li>
+          <li><b>복제 범위는 선택된 뒷부분(suffix)</b><span>기본은 원본 체인의 <b>첫 non-DONE Task부터 끝까지</b>입니다. Recipe 전체를 다시 돌리지 않습니다</span></li>
+          <li><b><code>fromSequence</code>는 더 앞으로만</b><span>앞 단계를 포함시킬 수는 있어도 실패 지점을 건너뛸 수는 없습니다(뒤로 가면 400)</span></li>
+          <li><b>유형·Recipe·계보는 승계</b><span><code>type</code>/<code>recipe_definition</code>을 그대로 물려받고 <code>origin_pipeline_id</code>·<code>origin_task_id</code>로 계보를 남깁니다</span></li>
+          <li><b>새 task id → 새 요청 키</b><span>키가 <code>task_id</code>에서 파생되므로 자동으로 전부 새 값입니다</span></li>
+          <li><b>추천 실행 입력 중에서는 NLB 옵션만 승계</b><span>“NLB만 이어받는다”는 <b>추천 기반 입력 데이터에 한정된 말</b>입니다 — 파이프라인 메타데이터 전반이 아닙니다. 원문·승인 맥락은 <b>새 GET</b>으로 다시 얻습니다</span></li>
+          <li><b>TC는 새 실행·새 version·새 마감</b><span>자기 최초 READY 기준으로 마감을 새로 고정합니다</span></li>
+        </ul>
+        <p class="p tight">생성 시점의 <a href="#s8">활성화 게이트(§08)</a>를 다시 통과해야 합니다.</p>
+      </div>
+    </div>
+
+    <div class="scroller mt" tabindex="0" role="region" aria-label="Task 내부 재시도와 새 파이프라인 재시작 비교 표">
+      <table>
+        <caption>정체성 축별 비교 · 무엇이 유지되고 무엇이 새로 발급되는가</caption>
+        <thead><tr><th scope="col">축</th><th scope="col">A · Task 내부 재시도</th><th scope="col">B · 새 파이프라인 재시작</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">pipeline</th><td>같은 실행이 계속 진행</td><td><b>새 실행</b> · 이전 실행은 종결 상태 그대로 보존</td></tr>
+          <tr><th scope="row">task id</th><td>동일</td><td><b>신규</b> · 단, <b>선택된 뒷부분의 Task만</b> 새로 생성</td></tr>
+          <tr><th scope="row">범위</th><td>실패한 그 Task 하나</td><td>기본 = 첫 non-DONE Task부터 끝까지 · <code>fromSequence</code>로 더 앞에서 시작 가능(실패 지점 건너뛰기는 불가)</td></tr>
+          <tr><th scope="row">유형 / Recipe / 계보</th><td>같은 실행이므로 그대로</td><td><b>원본에서 승계</b> · <code>origin_pipeline_id</code>·<code>origin_task_id</code>로 계보 기록</td></tr>
+          <tr><th scope="row">요청 키</th><td>동일 (<code>…:v1:task:{같은 id}</code>)</td><td><b>신규</b> (<code>…:v1:task:{새 id}</code>)</td></tr>
+          <tr><th scope="row">추천 입력 스냅샷</th><td>저장된 본문·digest 재사용 · GET 재호출 없음 · <code>source_attempt_number</code> 불변</td><td><b>새 GET으로 새로 캡처</b> · 이전 스냅샷을 옮겨 오지 않음</td></tr>
+          <tr><th scope="row">TC 외부 실행 / version</th><td>같은 논리 실행을 회수 · 바인딩된 version 유지</td><td><b>다른 실행 · 다른 version</b>이 시작 시 새로 바인딩</td></tr>
+          <tr><th scope="row">TC deadline</th><td>최초 READY에 고정된 값 · <b>연장 없음</b></td><td>새 Task의 <b>자기 최초 READY</b> 기준 새 마감</td></tr>
+          <tr><th scope="row">가용성 검증</th><td>이미 생성된 실행이라 생성 검증을 다시 하지 않음<br>실행 중 capability가 사라지면 <code>OPERATION_UNAVAILABLE</code>로 종결</td><td>provider·operation capability와 RECONFIRM 추가 계약 게이트를 <b>다시 검증</b></td></tr>
+          <tr><th scope="row">원래 외부 요청</th><td>같은 키로 이어서 냄 · 멱등성은 upstream 책임</td><td><b>취소됐다는 증거가 없음</b> · 아직 진행 중일 수 있고 중복 효과가 남을 수 있음</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid mt">
+      <div class="panel">
+        <h4>정확한 예시 하나</h4>
+        <h3 class="mt-s">AWS RECONFIRM · 앞 4개 DONE, 입력 Task FAILED</h3>
+        <p class="p"><code>AWS_RECONFIRM_V1</code>은 Task 5개(Destroy 3 → 확정정보 삭제 → 추천 기반 입력)입니다.
+          앞 4개가 <b>DONE</b>이고 마지막 <b>추천 기반 입력 Task가 FAILED</b>로 실행이 종결됐다고 합시다.</p>
+        <ul class="chain">
+          <li><b>기본 재시작</b><span>첫 non-DONE = sequence 5 → 새 실행에는 <b>추천 기반 입력 Task 하나만</b> 생깁니다. 유형은 그대로 RECONFIRM이고, 그 Task 안에서 <b>새 GET → POST</b>를 합니다</span></li>
+          <li><b>Task 개수</b><span>새 실행의 완료/전체는 <b>0 / 1</b>에서 시작합니다. Destroy 3개와 확정정보 삭제는 다시 실행하지 않습니다</span></li>
+          <li><b>여전히 Task 하나</b><span>GET과 POST는 같은 Task 안의 두 단계입니다. 재시작해도 “추천 조회 Task”가 따로 생기지 않습니다</span></li>
+          <li><b><code>fromSequence</code>로 더 앞을 고르면</b><span>예를 들어 4를 고르면 확정정보 삭제부터, 1을 고르면 Destroy부터 <b>다시 실행됩니다</b>. 반대로 6을 고를 수는 없습니다 — 실패 지점을 건너뛰면 설치 완전성이 깨집니다</span></li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h4>재시작할 수 있는 실행</h4>
+        <h3 class="mt-s">대상의 <b>최신</b> 실행이면서 FAILED / CANCELLED일 때만</h3>
+        <ul class="chain">
+          <li><b>RUNNING · PENDING · DONE</b><span><code>PIPELINE_NOT_RESTARTABLE</code> · typed 409. 진행 중이면 취소가 먼저이고, DONE에는 재시작할 실패 지점이 없습니다</span></li>
+          <li><b>종결됐지만 최신이 아님</b><span><code>PIPELINE_NOT_LATEST</code> · typed 409. 그 뒤에 이미 다른 실행이 있습니다</span></li>
+          <li><b>최종 심판은 여전히 유니크 제약</b><span>이 검사들은 best-effort 읽기이고, 동시 재시작·생성 경합은 삽입 시점의 <code>active_target</code> 유니크 제약이 막습니다</span></li>
+        </ul>
+        <p class="p tight">진행 중인 실행에서도 <b>Task 내부 재시도(A)</b>는 정상 동작합니다 — 막히는 것은 B뿐입니다.
+          아래 종결 사례들은 모두 “그 대상의 최신 실행”이라는 전제 위에서 읽어 주세요.</p>
+      </div>
+    </div>
+
+    <h3 class="mt">상황을 고르고 두 갈래를 비교해 보세요</h3>
+    <p class="p">같은 실패라도 어떤 상황에서는 A가 아예 불가능합니다. 종결된 실행은 이어서 진행할 수 없기 때문입니다.</p>
+    <div class="controls mt-s">
+      <div class="field"><label for="rs-case"><span>직전에 일어난 일</span></label>
+        <select id="rs-case">
+          <option value="post503">추천 입력 Task · 등록 POST 503</option>
+          <option value="tcpoll">연결 테스트 Task · 폴 전송 오류</option>
+          <option value="tcdead">연결 테스트 Task · 마감 초과로 종결</option>
+          <option value="inputlost">추천 입력 Task · 입력 행 유실로 종결</option>
+          <option value="cancelled">운영자 취소로 종결</option>
+        </select>
+      </div>
+      <div class="switch" role="group" aria-label="대응 방식 선택">
+        <button type="button" class="btn" id="rs-retry" aria-pressed="true">A · Task 내부 재시도</button>
+        <button type="button" class="btn" id="rs-restart" aria-pressed="false">B · 새 파이프라인 재시작</button>
+      </div>
+    </div>
+    <div class="panel" style="border-top:0" role="status" aria-live="polite">
+      <div class="verdict" id="rs-verdict"></div>
+      <div class="instance mt" id="rs-cards"></div>
+      <p class="p" id="rs-note"></p>
+    </div>
+
+    <div class="grid mt">
+      <div class="panel">
+        <h4>재시작해도 Task 모양은 그대로</h4>
+        <h3 class="mt-s">추천 조회는 여전히 별도 Task가 아닙니다</h3>
+        <p class="p">새 실행의 <code>CONFIRM_RESOURCES_FROM_RECOMMENDATION_V1</code>도 <b>Task 하나</b>입니다.
+          그 Task 안에서 새 추천 GET을 하고, 자기 <code>task_confirmation_input</code> 행에 본문을 write-once로 고정한 뒤 POST합니다.
+          재시작을 위해 “추천 조회 Task”를 따로 만들지 않고, 이전 실행의 스냅샷을 복사해 오지도 않습니다.</p>
+        <p class="p">공통 Task는 <span class="tag ok">ALL_CSP</span>라 CUSTOM에 같은 정의를 여러 번 담을 수 있고,
+          그때도 Task마다 요청 키·입력 행·재시도 예산이 독립입니다(<a href="#s2">§02</a>). 재시작으로 만든 실행의 Task도 마찬가지로 독립입니다.</p>
+      </div>
+      <div class="panel">
+        <h4>재시작이 지우지 못하는 것</h4>
+        <h3 class="mt-s">DB 취소는 외부 취소가 아닙니다</h3>
+        <p class="p">이전 실행의 취소·펜스(claim token, 종단 상태)는 <b>DB 쓰기를 막는 장치</b>입니다.
+          이미 나간 DELETE·POST·테스트 시작 요청을 회수하지 못합니다. 재시작 시점에도 원래 요청이 upstream에서 진행 중일 수 있고,
+          그 결과가 늦게 도착할 수 있습니다.</p>
+        <p class="p">그래서 재시작의 안전성은 upstream의 <b>요청 키 멱등성과 세대 보호</b>에 의존합니다(<a href="#s8">§08</a>의 2번 계약).
+          새 실행은 새 키를 쓰므로 이전 요청과 자동으로 합쳐지지 않습니다 — 두 요청이 모두 반영될 가능성을 화면과 운영 절차가 인지해야 합니다.</p>
+      </div>
+    </div>
+
+    <div class="note warn mt"><strong>재시작은 “확인 불가”를 “없던 일”로 바꾸지 않습니다.</strong>
+      화면은 이전 실행이 어디까지 커밋했는지와 확인 불가한 외부 효과를 함께 보여 주고,
+      재시작이 만든 실행은 <b>별도 이력 행</b>으로 남습니다(<a href="#s7">§07</a>의 목록에서 각각 보입니다).
+      대상당 활성 실행은 하나이므로, 이전 실행이 종결돼 <code>active_target</code>이 해제된 뒤에만 재시작할 수 있습니다.</div>
+  </section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="footer-inner">
+    <div>
+      <h4>이 문서에 대해</h4>
+      <ul>
+        <li>대상 문서 — ADR-023 <code>023-reconfirmation-http-tasks-and-execution-input.md</code></li>
+        <li>이 해설 페이지의 설계·구현은 Opus가 작성했습니다. 코드 리뷰 기록(Fable 5.1)은 저장소의 별도 문서에 있습니다.</li>
+        <li>설명 범위는 <b>백엔드 내부 구현과 H2/fake 검증</b>입니다. 통합 검증의 최신 결과는 PR 증빙을 기준으로 확인합니다.</li>
+      </ul>
+    </div>
+    <div>
+      <h4>함께 보는 문서 (저장소 안의 파일 이름 · 이 페이지에서 열리지 않습니다)</h4>
+      <ul>
+        <li><code>016-install-delete-pipeline-domain-model.md</code> — 도메인 모델</li>
+        <li><code>021-pipeline-execution-model.md</code> — claim/lease 실행 모델</li>
+        <li><code>022-terminal-state-notification.md</code> — 종단 알림</li>
+        <li><code>adr-023-fable-5-1-review.md</code> — 설계·코드 리뷰 기록</li>
+        <li>프런트엔드는 별도 저장소에서 관리하며 이 작업 범위 밖입니다.</li>
+      </ul>
+    </div>
+    <div>
+      <h4>읽을 때의 전제</h4>
+      <ul>
+        <li>예시 JSON·id·시각·요청 키는 모두 설명용이며 실제 API schema를 정의하지 않습니다.</li>
+        <li>승인 API의 미확정 필드를 확정 계약처럼 가정하지 않습니다.</li>
+        <li>운영 adapter·MySQL·프런트엔드는 아직 연결되지 않았습니다. 이 페이지의 실행 설명은 그 전제 위에 있습니다.</li>
+        <li>이 페이지는 오프라인 단독 HTML 한 개입니다. 외부 스크립트·폰트·이미지·네트워크 요청이 없고, 모든 링크는 문서 내부 앵커입니다.</li>
+      </ul>
+    </div>
+  </div>
+</footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (value) => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/* ════════ 02 · 정의 1개 → 실행 N개 ════════════════════════ */
+const repeatSelect = $("rep-count");
+function renderRepeats() {
+  const count = Number(repeatSelect.value);
+  const rows = [];
+  for (let index = 0; index < count; index += 1) {
+    const taskId = 8801 + index;
+    rows.push(
+      '<div class="inst-card">' +
+        '<div class="hd"><b>task #' + taskId + '</b><span class="tag sig">sequence ' + (index + 1) + '</span></div>' +
+        '<dl>' +
+          '<dt>요청 키</dt><dd>confirmation-input:v1:task:' + taskId + '</dd>' +
+          '<dt>입력 행</dt><dd>task_confirmation_input · 이 Task 전용</dd>' +
+          '<dt>추천 본문</dt><dd>독립 write-once 스냅샷</dd>' +
+          '<dt>attempt</dt><dd>독립 재시도 예산</dd>' +
+        "</dl>" +
+      "</div>"
+    );
+  }
+  $("rep-out").innerHTML = rows.join("");
+  $("rep-note").innerHTML = count === 1
+    ? "Task 하나. 입력 행 하나, 요청 키 하나입니다."
+    : "정의는 하나지만 실행 행은 <b>" + count + "개</b>이고, 요청 키·입력 스냅샷·재시도 예산이 모두 분리됩니다. "
+      + "앞의 입력이 뒤의 입력을 덮어쓰지 않고, 하나가 실패해도 나머지의 입력은 그대로 남습니다.";
+}
+repeatSelect.addEventListener("change", renderRepeats);
+
+/* ════════ 03 · 재확정 실행 시뮬레이터 ═════════════════════ */
+const destroyChain = {
+  AWS: [
+    ["AWS BDC Service Level 테라폼 Destroy", "AWS_BDC_SERVICE_LEVEL_DESTROY_V1"],
+    ["AWS BDC Common 테라폼 Destroy", "AWS_BDC_COMMON_DESTROY_V1"],
+    ["AWS Service Level 테라폼 Destroy", "AWS_SERVICE_DESTROY_V1"]
+  ],
+  GCP: [
+    ["GCP BDC 테라폼 Destroy", "GCP_BDC_DESTROY_V1"],
+    ["GCP Service 테라폼 Destroy", "GCP_SERVICE_DESTROY_V1"]
+  ],
+  AZURE: [["Azure BDC 테라폼 Destroy", "AZURE_BDC_DESTROY_V1"]],
+  IDC: [
+    ["IDC BDP 테라폼 Destroy", "IDC_BDP_DESTROY_V1"],
+    ["IDC CX 테라폼 Destroy", "IDC_CX_DESTROY_V1"]
+  ]
+};
+const recommendationBody = '{ "resources": [ {"name": "example-a"} ],\n  "extension": { "keep": true } }';
+let sim;
+
+function simSteps() {
+  const provider = $("sim-csp").value;
+  const steps = destroyChain[provider].map(([title, definition]) => ({
+    kind: "terraform", title, definition,
+    meta: "TERRAFORM_JOB · CSP_SPECIFIC · execution_timeout 경계"
+  }));
+  steps.push({
+    kind: "delete", title: "확정정보 삭제", definition: "DELETE_CONFIRMED_RESOURCES_V1",
+    meta: "HTTP_REQUEST · ALL_CSP · DELETE 200 · key confirmation-delete:v1:task:{id}"
+  });
+  steps.push({
+    kind: "confirm", title: "추천 정보 기반 확정정보 입력", definition: "CONFIRM_RESOURCES_FROM_RECOMMENDATION_V1",
+    meta: "HTTP_REQUEST · ALL_CSP · 내부 GET → POST · key confirmation-input:v1:task:{id}"
+  });
+  return steps;
+}
+function simReset() {
+  sim = {
+    index: 0, completed: 0, status: "RUNNING", captured: false, retried: false,
+    awaitingRetry: false, attempt: 1, subPhase: "none", frozen: false,
+    log: "예시 실행이 준비됐습니다. <b>다음 turn 실행</b>은 worker 한 번의 claim → 외부 호출 → guarded write-back을 요약합니다."
+  };
+  simRender();
+}
+function simRender() {
+  const steps = simSteps();
+  const total = steps.length;
+  const rows = steps.map((step, index) => {
+    const done = index < sim.completed;
+    const active = index === sim.index && sim.status === "RUNNING";
+    const failedHere = index === sim.index && sim.status === "FAILED";
+    let cls = "";
+    if (done) cls = "s-done";
+    else if (failedHere) cls = "s-failed";
+    else if (active) cls = "s-active";
+
+    let state = "BLOCKED";
+    if (done) state = "DONE";
+    else if (index === sim.index) {
+      /* POST가 재시도 가능한 실패로 끝나면 같은 Task가 재시도 READY로 되돌아간다.
+         GET 성공만으로 멈춰 있는 상태(IN_PROGRESS)와 구분해서 그린다. */
+      if (sim.status === "RUNNING") state = sim.awaitingRetry ? "READY" : sim.captured ? "IN_PROGRESS" : "READY";
+      else state = sim.status;
+    } else if (sim.status === "CANCELLED" || sim.status === "FAILED") state = "CANCELLED";
+
+    const stateTag = state === "DONE" ? "ok" : state === "FAILED" ? "fail"
+      : state === "IN_PROGRESS" ? "sig" : state === "READY" ? "run" : "";
+
+    let sub = "";
+    if (step.kind === "confirm") {
+      const getOn = sim.captured || (done && sim.completed > index);
+      const postOn = done;
+      const getCls = getOn ? "s-on" : (index === sim.index && sim.status === "RUNNING" ? "s-now" : "");
+      const postCls = postOn ? "s-on" : (sim.captured && sim.status === "RUNNING" ? "s-now" : "");
+      sub =
+        '<ul class="sub">' +
+          '<li><span class="marker ' + getCls + '">GET</span><span>추천 조회 · ' +
+            (getOn ? "성공 · 원문·digest·맥락 고정" : "아직 수행 전") +
+            " <b>— 완료 Task 수에 포함되지 않음</b></span></li>" +
+          '<li><span class="marker ' + postCls + '">POST</span><span>등록 · ' +
+            (postOn ? "201 · 이 시점에 Task DONE"
+              : sim.awaitingRetry ? "<b>재시도 READY 대기</b> · 같은 task id·같은 요청 키·저장된 본문 그대로"
+              : sim.captured ? "저장된 본문으로 다음 turn 수행" : "입력 고정 후 수행") +
+          "</span></li>" +
+        "</ul>";
+    }
+    return (
+      '<li class="' + cls + '">' +
+        '<span class="dot" aria-hidden="true">' + (done ? "✓" : failedHere ? "!" : index + 1) + "</span>" +
+        "<div>" +
+          '<div class="step-title"><b>' + step.title + '</b><span class="tag ' + stateTag + '">' + state + "</span></div>" +
+          '<p class="step-meta">' + step.definition + "<br>" + step.meta + "</p>" +
+          sub +
+        "</div>" +
+      "</li>"
+    );
+  });
+  $("sim-steps").innerHTML = rows.join("");
+  $("sim-count").innerHTML = sim.completed + " / " + total +
+    "<small>완료 Task 수 · 호출 수나 경과 시간이 아닙니다</small>";
+  $("sim-meter").style.width = Math.round((sim.completed / total) * 100) + "%";
+  $("sim-log").innerHTML = sim.log;
+  $("sim-snap").textContent = sim.frozen === "lost"
+    ? "(행 유실 · POST 호출 차단)"
+    : sim.captured ? recommendationBody : "(아직 없음)";
+  $("sim-snap-cap").textContent = sim.captured && sim.frozen !== "lost"
+    ? "task_confirmation_input · write-once · source_attempt_number=1 고정 · 현재 attempt " + sim.attempt + "에서도 같은 본문"
+    : "task_confirmation_input · recommendation_body";
+  $("sim-state").innerHTML =
+    '<span class="tag ' + (sim.status === "DONE" ? "ok" : sim.status === "RUNNING" ? "sig" : sim.status === "FAILED" ? "fail" : "") + '">' +
+    sim.status + "</span>" +
+    "<span>recipe <code>" + $("sim-csp").value + "_RECONFIRM_V1</code></span>" +
+    "<span>attempt <code>" + sim.attempt + "</code></span>" +
+    "<span>active_target <code>" + (sim.status === "RUNNING" ? "점유 중" : "해제됨") + "</code></span>";
+  $("sim-next").disabled = sim.status !== "RUNNING";
+  $("sim-cancel").disabled = sim.status !== "RUNNING";
+  const steps2 = steps;
+  $("sim-next").textContent = sim.status !== "RUNNING" ? "종료됨"
+    : sim.index === steps2.length - 1
+      ? (sim.captured ? (sim.retried ? "같은 Task에서 POST 재시도" : "같은 Task에서 POST 수행") : "입력 Task 내부 GET 수행")
+      : "다음 turn 실행";
+}
+function simAdvance() {
+  if (sim.status !== "RUNNING") return;
+  const steps = simSteps();
+  const step = steps[sim.index];
+  const scenario = $("sim-case").value;
+
+  if (step.kind !== "confirm") {
+    sim.completed += 1;
+    sim.index += 1;
+    sim.attempt = 1;
+    sim.log = step.kind === "terraform"
+      ? "<b>" + step.title + "</b> 완료. 이 한 번의 클릭은 <b>job 생성 dispatch와 그 뒤 여러 번의 폴 turn</b>을 합쳐 요약한 것입니다 — "
+        + "worker 한 번의 외부 호출이 job을 만들면서 동시에 완료시키지는 않습니다. "
+        + "모든 job이 job 타입별 성공 상태로 관측된 뒤 결과를 커밋하고 다음 Task를 READY로 승격합니다."
+      : "<b>확정정보 삭제</b> DELETE 200. 파생 요청 키 <code>confirmation-delete:v1:task:{id}</code>로 호출했고, "
+        + "503 같은 일시 실패에서도 같은 키를 재사용합니다. 단순 404를 같은 요청의 성공으로 추정하지 않습니다.";
+    simRender();
+    return;
+  }
+
+  if (!sim.captured) {
+    sim.captured = true;
+    sim.log = "추천 <b>GET 200</b>. 유효한 JSON object와 client가 검증한 맥락을 확인했습니다. "
+      + "원문·digest·GET metadata·source attempt 번호를 <code>task_confirmation_input</code>에 한 번 고정하고, "
+      + "<b>같은 Task를 IN_PROGRESS로 유지</b>합니다. 후속 Task는 BLOCKED입니다. "
+      + "<b>완료 Task 수는 그대로 " + sim.completed + "입니다.</b>";
+    simRender();
+    return;
+  }
+
+  if (scenario === "missing") {
+    sim.status = "FAILED";
+    sim.frozen = "lost";
+    sim.log = "<b>EXECUTION_INPUT_MISSING</b>. IN_PROGRESS인데 입력 행이 없습니다. "
+      + "새 GET으로 복구하지 않습니다 — 다른 세대의 추천값을 등록할 수 있기 때문입니다. "
+      + "<b>POST를 호출하지 않고</b> 종결 실패하며, 이미 커밋된 삭제는 롤백하지 않습니다.";
+    simRender();
+    return;
+  }
+  if (scenario === "retry" && !sim.retried) {
+    sim.retried = true;
+    sim.awaitingRetry = true;
+    sim.attempt = 2;
+    sim.log = "등록 POST가 <b>503</b>으로 실패했습니다. HTTP 재시도 예산(기본 5초 간격·24회) 안에서 같은 Task가 "
+      + "<b>재시도 READY</b>로 되돌아가 다음 dispatch를 기다립니다(IN_PROGRESS가 아닙니다). "
+      + "attempt 번호는 2가 되지만 고정된 입력의 <code>source_attempt_number</code>는 <b>1 그대로</b>입니다 — "
+      + "다음 turn의 executor는 저장된 입력을 발견해 <b>POST부터 재개</b>하고, 추천 GET은 다시 호출하지 않으며 요청 키도 그대로입니다.";
+    simRender();
+    return;
+  }
+  if (scenario === "timeout" && !sim.retried) {
+    sim.retried = true;
+    sim.awaitingRetry = true;
+    sim.attempt = 2;
+    sim.log = "등록 POST가 <b>per-call timeout</b>으로 응답을 받지 못했습니다(<code>CALL_TIMEOUT</code>). "
+      + "attempt에는 <code>http_operation=CONFIRMATION_POST</code>가 남고 <code>http_status_code</code>·본문은 <code>null</code>입니다 — "
+      + "이 기록이 직전 GET 증거를 대체하지만 <b>입력 행의 성공 GET 원문은 그대로</b>입니다. "
+      + "같은 Task가 <b>재시도 READY</b>로 돌아가 대기하고, timeout은 서버가 처리하지 않았다는 증거가 아니므로 같은 요청 키로 재시도합니다.";
+    simRender();
+    return;
+  }
+
+  sim.awaitingRetry = false;
+  sim.completed += 1;
+  sim.index += 1;
+  sim.status = "DONE";
+  sim.log = "등록 <b>POST 201</b>. 고정한 추천값 그대로 확정정보를 등록했고, 이제서야 입력 Task가 DONE입니다. "
+    + (sim.retried ? "재시도 동안 추천 GET을 다시 호출하지 않았고 task id·요청 키·본문이 모두 같았습니다. " : "")
+    + "RECONFIRM을 종료하고 <code>active_target</code>을 해제합니다. "
+    + "<b>이 DONE은 등록 완료이지 인프라 재설치 완료가 아닙니다.</b>";
+  simRender();
+}
+function simCancel() {
+  if (sim.status !== "RUNNING") return;
+  sim.status = "CANCELLED";
+  sim.log = "취소가 우선 적용됐습니다. 남은 Task를 중단하고 <code>active_target</code>을 해제합니다. "
+    + "이미 커밋된 외부 삭제는 롤백하지 않고 저장된 입력은 보존합니다. "
+    + "<b>취소 직전에 나갔지만 report가 채택하지 못한 호출의 실제 효과는 확인 불가</b>입니다 — "
+    + "늦게 도착하는 외부 쓰기는 upstream의 요청 키·세대 검증이 막아야 합니다. "
+    + "종결된 실행을 이어서 진행할 수는 없고, 다시 하려면 <b>새 실행으로 재시작</b>합니다(<a href=\"#s9\">§09</a>).";
+  simRender();
+}
+$("sim-next").addEventListener("click", simAdvance);
+$("sim-cancel").addEventListener("click", simCancel);
+$("sim-reset").addEventListener("click", simReset);
+$("sim-csp").addEventListener("change", simReset);
+$("sim-case").addEventListener("change", simReset);
+
+/* ════════ 04 · DB 맵 ══════════════════════════════════════ */
+const tables = [
+  { name: "pipeline", group: "state", kind: "changed", role: "업무 실행 상태",
+    detail: "유형과 Recipe를 그대로 재사용하고 상태 enum도 그대로입니다. 유형별 최신·이력 조회를 위해 (target, type, created_at, id), (type, created_at, id), (recipe_definition, created_at, id) 인덱스를 추가합니다. 대상당 활성 실행 하나라는 규칙은 유형과 무관하게 유지됩니다.",
+    fields: ["type", "recipe_definition", "cloud_provider", "active_target", "next_due_at", "created_at"] },
+  { name: "task", group: "state", kind: "", role: "순서와 단계 상태",
+    detail: "정의·operation·mechanism 컬럼을 그대로 씁니다. READY → IN_PROGRESS → DONE/FAILED/CANCELLED 상태를 유지하며 새 상태 값을 추가하지 않습니다. 동기 HTTP 완료는 한 번의 write-back 안에서 READY → IN_PROGRESS → 종결을 함께 적용합니다.",
+    fields: ["pipeline_id", "sequence", "task_definition", "operation", "status", "fail_count"] },
+  { name: "task_attempt", group: "observation", kind: "changed", role: "attempt별 응답·오류",
+    detail: "기존 response TEXT와 Terraform/Condition 의미는 그대로 두고, HTTP 캡처용 컬럼을 따로 추가합니다. 한 attempt의 현재/최종 HTTP 호출을 기록하므로 GET 뒤 POST가 같은 필드를 덮을 수 있습니다. 성공 GET의 원문·metadata는 입력 행에 별도로 고정돼 사라지지 않습니다. 실제 빈 응답은 status가 있고 본문이 \"\", 전송 실패는 status·본문이 모두 null입니다.",
+    fields: ["response(기존 TEXT)", "http_response(LONGTEXT)", "http_operation", "http_status_code", "response_content_type", "response_received_at", "response_truncated", "confirmation_input_id", "failure_detail"] },
+  { name: "task_check", group: "observation", kind: "", role: "기존 폴 요약",
+    detail: "Terraform/Condition의 폴 관찰 요약 테이블로 그대로 유지합니다. 연결 테스트의 폴 전송 오류 횟수도 이 관찰 계열에 진단으로 남을 수 있지만, 종결 판정에서는 읽지 않습니다. 추천 입력을 이 테이블이나 이전 attempt의 관측에서 복구하지 않습니다.",
+    fields: ["기존 폴 관찰 모델 유지"] },
+  { name: "terraform_result", group: "observation", kind: "", role: "Terraform 종결 로그",
+    detail: "종결된 job의 terraform log를 job당 1행으로 저장하는 기존 진단입니다. 연결 테스트 진단이 이 구조를 복제하지 않고 자기 테이블을 갖습니다.",
+    fields: ["기존 진단 모델 유지"] },
+  { name: "terraform_job_state", group: "observation", kind: "", role: "job별 진행 관측",
+    detail: "job별 진행 상태·응답·호출 오류를 남기는 best-effort 관측입니다. 상태 판정의 도메인 입력으로 승격하지 않습니다.",
+    fields: ["task_id", "attempt_number", "job_id", "last_response", "상태/오류 metadata"] },
+  { name: "task_confirmation_input", group: "input", kind: "new", role: "입력 Task별 write-once 추천값",
+    detail: "추천 기반 입력 Task마다 0..1행이며 task_id와 request_key가 각각 UNIQUE입니다. Task 생성과 같은 트랜잭션에서 요청 키 confirmation-input:v1:task:{task_id}와 AWS 옵션을 저장하고, 추천 본문은 처음에 null입니다. 추천 성공 응답을 채택하는 guarded write-back에서 원문·digest·시각·source_attempt_number·GET metadata·검증된 승인/세대 맥락을 한 번 채웁니다. 이후 POST는 digest를 검증한 본문을 그대로 전송합니다. 아직 조회하지 않은 정상 행(null body)과 행 유실은 다른 상황입니다.",
+    fields: ["task_id UNIQUE", "request_key UNIQUE", "apply_nlb_security_group", "recommendation_body(LONGTEXT)", "body_digest", "source_attempt_number", "GET metadata", "검증된 승인/세대 맥락", "captured_at"] },
+  { name: "task_external_execution", group: "input", kind: "new", role: "연결 테스트 실행 정체성과 고정 마감",
+    detail: "Task 생성 시 요청 키 test-connection:v1:task:{task_id}를 미리 저장합니다. task_id와 request_key가 각각 UNIQUE입니다. external version은 요청 키와의 상관관계가 증명된 시작/회수 응답에서만 한 번 고정하고, latest에서 처음 본 version을 바인딩하지 않습니다. deadline_at은 그 Task가 최초 READY가 되는 트랜잭션에서 한 번만 채우며 재시도로 연장되지 않습니다. BLOCKED 동안에는 null입니다.",
+    fields: ["task_id UNIQUE", "request_key UNIQUE", "external_execution_version", "created_at", "deadline_at"] },
+  { name: "test_connection_result", group: "observation", kind: "new", role: "연결 테스트 최신·최종 진단",
+    detail: "실행 행당 0..1개이며 전체 폴 이력이 아니라 최신 스냅샷입니다. 정상 본문과 마지막 오류를 따로 보관해, 통신 실패가 이미 관측한 정상 응답을 지우지 못하게 합니다. terminal 진단은 pending이나 오류로 덮어쓰지 않습니다. last_error_operation이 null이면 호출 없는 사전검사 실패이고, 실제 폴 무응답은 operation이 있는 metadata로 구분합니다.",
+    fields: ["external_execution_id UNIQUE", "last_connection_status", "last_response(LONGTEXT)", "HTTP metadata", "last_observed_at", "terminal_observed_at", "last_error_code", "last_error_response", "last_error_operation"] }
+];
+const groupLabels = {
+  state: ["상태 · 판정의 주체", "여기서만 Task와 실행의 상태가 바뀝니다"],
+  input: ["실행 필수 입력 · 정체성", "없거나 손상되면 외부 쓰기를 하지 않고 종결 실패합니다"],
+  observation: ["관찰 · 진단", "사람이 보는 증거입니다. 판정 입력으로 승격되지 않습니다"]
+};
+let dbExtended = true;
+let dbSelected = "task_confirmation_input";
+
+function renderDatabase() {
+  $("db-before").setAttribute("aria-pressed", String(!dbExtended));
+  $("db-after").setAttribute("aria-pressed", String(dbExtended));
+  const visible = tables.filter((table) => dbExtended || table.kind !== "new");
+  if (!visible.some((table) => table.name === dbSelected)) dbSelected = "pipeline";
+
+  const html = ["state", "input", "observation"].map((group) => {
+    const rows = visible.filter((table) => table.group === group);
+    if (!rows.length) return "";
+    const [label, hint] = groupLabels[group];
+    const cards = rows.map((table) => {
+      const kind = dbExtended && table.kind === "new" ? " is-new"
+        : dbExtended && table.kind === "changed" ? " is-changed" : "";
+      return '<button type="button" class="entity' + kind + '" data-table="' + table.name + '" ' +
+        'aria-pressed="' + (table.name === dbSelected) + '">' +
+        "<b>" + table.name + "</b><span>" + table.role + "</span>" +
+        (dbExtended && table.kind === "new" ? '<span class="tag ok">신규</span>'
+          : dbExtended && table.kind === "changed" ? '<span class="tag sig">컬럼 추가</span>' : "") +
+        "</button>";
+    }).join("");
+    return '<div class="dbgroup"><h4>' + label + ' <span class="tag">' + rows.length + '개</span></h4>' +
+      '<p class="p tight" style="margin:0 0 10px">' + hint + "</p>" +
+      '<div class="entities">' + cards + "</div></div>";
+  }).join("");
+  $("db-groups").innerHTML = html;
+
+  document.querySelectorAll("[data-table]").forEach((button) => {
+    button.addEventListener("click", () => { dbSelected = button.dataset.table; renderDatabase(); });
+  });
+
+  const table = tables.find((candidate) => candidate.name === dbSelected);
+  const baselineNote = {
+    pipeline: "현재 기준선의 업무 상태 테이블입니다. INSTALL / DELETE / CUSTOM을 구분하고 대상당 활성 실행 하나를 유지합니다. 유형 추가와 조회 인덱스는 확장 보기에서 확인하세요.",
+    task_attempt: "현재 기준선은 attempt별 response TEXT와 짧은 failure_detail을 저장합니다. HTTP 원문용 LONGTEXT와 metadata·입력 참조는 확장 보기에 있습니다."
+  };
+  const body = !dbExtended && baselineNote[table.name] ? baselineNote[table.name] : table.detail;
+  const fields = dbExtended
+    ? table.fields.map((field) => "<code>" + esc(field) + "</code>").join("")
+    : "<code>기존 스키마 기준선</code>";
+  $("db-detail").innerHTML =
+    '<div class="hd"><b>' + table.name + "</b>" +
+      '<span class="tag ' + (table.kind === "new" && dbExtended ? "ok" : table.kind === "changed" && dbExtended ? "sig" : "") + '">' +
+      (dbExtended ? (table.kind === "new" ? "신규 테이블" : table.kind === "changed" ? "기존 · 컬럼 추가" : "변경 없음") : "기준선") + "</span></div>" +
+    "<p>" + esc(body) + "</p>" +
+    '<div class="fields">' + fields + "</div>" +
+    '<p class="foot" style="margin:0">' +
+      (dbExtended ? "총 9개 · 상태 2 + 실행 필수 2 + 관찰 5" : "총 6개 · 상태 2 + 관찰 4") + "</p>";
+}
+$("db-before").addEventListener("click", () => { dbExtended = false; renderDatabase(); });
+$("db-after").addEventListener("click", () => { dbExtended = true; renderDatabase(); });
+
+/* ════════ 05 · HTTP 원문 케이스 ═══════════════════════════ */
+const NULL = '<span class="null">NULL</span>';
+const httpCases = [
+  { id: "get200", label: "추천 GET 200", tone: "ok",
+    recv: recommendationBody,
+    recvMeta: { status: "200", "content-type": "application/json; charset=utf-8", bytes: "82 B" },
+    attempt: recommendationBody,
+    attemptMeta: { http_operation: "RECOMMENDATION_GET", http_status_code: "200", response_truncated: "false" },
+    input: recommendationBody,
+    inputMeta: { body_digest: "sha-256:9f2c…", source_attempt_number: "1", captured_at: "고정" },
+    verdictTone: "ok", verdictTitle: "입력 고정 · Task는 아직 IN_PROGRESS",
+    verdict: "공백과 필드 순서를 그대로 유지한 같은 문자열입니다. 유효한 JSON object와 client가 검증한 맥락을 확인한 뒤 write-once로 고정합니다. 이 성공 GET 원문은 이어지는 POST 응답으로 덮이지 않습니다." },
+  { id: "post201", label: "등록 POST 201 · 빈 본문", tone: "ok",
+    recv: "(본문 길이 0)",
+    recvMeta: { status: "201", "content-type": "없음 또는 헤더 값", bytes: "0 B" },
+    attempt: '""  ← 길이 0인 문자열',
+    attemptMeta: { http_operation: "CONFIRMATION_POST", http_status_code: "201", confirmation_input_id: "4471" },
+    input: recommendationBody,
+    inputMeta: { 상태: "변경 없음 · write-once", 용도: "이 POST가 실제 전송한 본문" },
+    verdictTone: "ok", verdictTitle: "Task DONE · 후속 Task READY 승격",
+    verdict: "등록 성공 계약이 201이므로 빈 본문도 유효합니다. 응답이 실제로 있었기 때문에 status는 201이고 본문은 빈 문자열입니다 — 전송 실패의 null과 구분됩니다. attempt의 confirmation_input_id로 어떤 입력을 보냈는지 추적합니다. (확정정보 삭제의 현재 성공 계약은 200입니다.)" },
+  { id: "err503", label: "삭제 503 오류 본문", tone: "warn",
+    recv: '{ "error": "temporarily unavailable" }',
+    recvMeta: { status: "503", "content-type": "application/json", bytes: "38 B" },
+    attempt: '{ "error": "temporarily unavailable" }',
+    attemptMeta: { http_operation: "CONFIRMATION_DELETE", http_status_code: "503", failure_detail: "짧은 요약" },
+    input: "(이 Task에는 입력 행이 없습니다)",
+    inputMeta: { 대상: "확정정보 삭제 Task" },
+    verdictTone: "warn", verdictTitle: "CHECK_ERROR · 예산 안에서 재시도",
+    verdict: "실패 응답도 원문과 metadata를 함께 남깁니다. 외부 시스템 오류는 controlled call 예외로 올라와 StepRunner 한 경계에서 ErrorCode 값으로 번역되며, 원문을 예외 메시지로 대체하지 않습니다. 429·5xx만 재시도 대상이고 재시도는 같은 요청 키를 씁니다." },
+  { id: "nocall", label: "호출 없는 종결", tone: "fail",
+    recv: "외부 호출을 하지 않음 (exchange = null)",
+    recvMeta: { 상황: "입력 유실 · capability 부재 · 마감 초과" },
+    attempt: "직전 호출의 원문이 그대로 남아 있음",
+    attemptMeta: { http_operation: "직전 값 유지", http_status_code: "직전 값 유지", 갱신: "failure_detail / ErrorCode만" },
+    input: "행이 있으면 그대로 보존",
+    inputMeta: { 원칙: "호출 없음은 증거를 지우지 않음" },
+    verdictTone: "fail", verdictTitle: "EXECUTION_INPUT_MISSING · OPERATION_UNAVAILABLE 등",
+    verdict: "외부 호출 자체가 없었던 종결은 같은 attempt의 직전 HTTP 원문·metadata를 지우지 않습니다. attempt의 http_operation에는 직전 호출 값이 그대로 남고, 갱신되는 것은 failure_detail과 ErrorCode뿐입니다. 입력 참조와 현재 attempt 확보도 호출 없는 실패에서 유지합니다. (연결 테스트 진단에서 새로 기록되는 오류 metadata의 last_error_operation이 null인 것은 '호출 없는 사전검사 실패'를 가리키는 별개의 사실입니다 — §06을 보세요.)" },
+  { id: "timeout", label: "POST 무응답(timeout)", tone: "fail",
+    recv: "요청은 나갔고 응답을 받지 못함",
+    recvMeta: { 상황: "per-call timeout", 주의: "미실행의 증거가 아님" },
+    attempt: NULL,
+    attemptMeta: { http_operation: "CONFIRMATION_POST", http_status_code: "NULL", http_response: "NULL" },
+    input: recommendationBody,
+    inputMeta: { 상태: "그대로 보존", 재시도: "같은 본문·같은 키" },
+    verdictTone: "fail", verdictTitle: "CALL_TIMEOUT · 직전 GET 증거를 대체",
+    verdict: "실제로 호출했지만 응답이 없었으므로 operation은 남기고 status와 본문만 null로 기록합니다. 이 기록이 같은 attempt의 직전 GET 원문을 대체하지만, 성공 GET의 원문은 task_confirmation_input에 따로 고정돼 있어 사라지지 않습니다. timeout은 서버가 처리하지 않았다는 증거가 아니므로 재시도는 upstream의 멱등성 보장에 의존합니다." },
+  { id: "big-ok", label: "성공 응답 1 MiB 초과", tone: "fail",
+    recv: "[상한을 넘는 UTF-8 본문 · 설명용 표기]",
+    recvMeta: { status: "200", bytes: "1 MiB 초과" },
+    attempt: "[UTF-8 경계까지의 prefix만 저장]",
+    attemptMeta: { response_truncated: "true", http_status_code: "200" },
+    input: "채우지 않음",
+    inputMeta: { 이유: "잘린 추천값을 등록에 쓸 수 없음" },
+    verdictTone: "fail", verdictTitle: "RESPONSE_TOO_LARGE · 종결 실패",
+    verdict: "성공 응답이 상한을 넘으면 잘린 값을 입력으로 채택하지 않고 종결 실패합니다. 상한은 응답·입력 각각 기본 1 MiB이며 UTF-8 경계에서 자르고 truncated로 표시합니다. 진단 metadata 길이도 제한하지만 승인·세대 같은 정체성 필드는 자르지 않고 초과 자체를 거절합니다." },
+  { id: "big-err", label: "오류 응답 1 MiB 초과", tone: "warn",
+    recv: "[상한을 넘는 오류 본문 · 설명용 표기]",
+    recvMeta: { status: "500", bytes: "1 MiB 초과" },
+    attempt: "[UTF-8 경계까지의 prefix만 저장]",
+    attemptMeta: { response_truncated: "true", http_status_code: "500" },
+    input: "변경 없음",
+    inputMeta: { 원칙: "크기와 분류는 독립" },
+    verdictTone: "warn", verdictTitle: "원래 분류 유지 · 크기로 바뀌지 않음",
+    verdict: "오류 응답이 상한을 넘으면 bounded 원문만 보존하고, 그 오류가 원래 가지고 있던 재시도/종결 분류를 그대로 유지합니다. 본문이 컸다는 이유로 재시도 가능한 오류가 종결 실패로 바뀌지 않습니다." }
+];
+function renderKv(target, entries) {
+  target.innerHTML = Object.entries(entries)
+    .map(([key, value]) => "<dt>" + esc(key) + "</dt><dd>" + (value === NULL ? NULL : esc(value)) + "</dd>")
+    .join("");
+}
+function renderHttpCase(id) {
+  const item = httpCases.find((candidate) => candidate.id === id);
+  document.querySelectorAll("[data-case]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.case === id));
+  });
+  $("w-recv").innerHTML = item.recv === NULL ? NULL : esc(item.recv);
+  $("w-attempt").innerHTML = item.attempt === NULL ? NULL : esc(item.attempt);
+  $("w-input").innerHTML = item.input === NULL ? NULL : esc(item.input);
+  renderKv($("w-recv-meta"), item.recvMeta);
+  renderKv($("w-attempt-meta"), item.attemptMeta);
+  renderKv($("w-input-meta"), item.inputMeta);
+  $("w-verdict").innerHTML =
+    '<div class="hd"><span class="tag ' + item.verdictTone + '">' + esc(item.verdictTitle) + "</span></div>" +
+    esc(item.verdict);
+  $("w-verdict").style.borderLeftColor =
+    item.verdictTone === "ok" ? "var(--ok)" : item.verdictTone === "fail" ? "var(--fail)" : "var(--warn)";
+}
+$("http-cases").innerHTML = httpCases.map((item, index) =>
+  '<button type="button" class="case-btn" data-case="' + item.id + '" aria-pressed="' + (index === 0) + '">' +
+  '<span class="tag ' + item.tone + '">' + (index + 1) + "</span>" + item.label + "</button>").join("");
+document.querySelectorAll("[data-case]").forEach((button) => {
+  button.addEventListener("click", () => renderHttpCase(button.dataset.case));
+});
+
+/* ════════ 06 · deadline 계산 ══════════════════════════════ */
+function renderDeadline() {
+  const isFirst = $("dl-pos").value === "first";
+  $("dl-wait").disabled = isFirst;
+  const blocked = isFirst ? 0 : Number($("dl-wait").value);
+  const retried = $("dl-retry").checked;
+  const timeout = 50;
+  const span = blocked + timeout;
+  const pct = (minutes) => (minutes / span) * 100;
+
+  $("dl-bar").innerHTML =
+    (blocked > 0
+      ? '<span class="dl-seg dl-blocked" style="left:0;width:' + pct(blocked) + '%">BLOCKED ' + blocked + "분</span>"
+      : "") +
+    '<span class="dl-seg dl-queue" style="left:' + pct(blocked) + "%;width:" + pct(3) + '%">큐</span>' +
+    '<span class="dl-seg dl-run" style="left:' + pct(blocked + 3) + "%;width:" + pct(timeout - 3) + '%">' +
+      "deadline까지 " + timeout + "분</span>";
+  $("dl-t1").textContent = String(span) + ":00 이후";
+  $("dl-bar").setAttribute("aria-label",
+    (blocked > 0 ? "BLOCKED " + blocked + "분, " : "") + "최초 READY 시점부터 " + timeout + "분 후 마감");
+
+  const origin = isFirst
+    ? "체인의 첫 Task라 <b>생성 트랜잭션</b>에서 <code>pipeline.next_due_at + 50분</code>으로 고정합니다."
+    : "후속 Task라 앞 Task가 끝나 <b>최초 READY로 승격되는 report</b>에서 <code>승격 시각 + 50분</code>으로 고정합니다.";
+  const notWait = blocked > 0
+    ? " 앞 Task가 " + blocked + "분을 썼지만 그 시간은 <b>차감하지 않습니다</b> — BLOCKED 구간은 마감에 들어가지 않습니다."
+    : "";
+  const queue = " READY가 된 뒤의 큐 대기(worker를 못 잡은 시간)는 <b>마감 안에 포함</b>됩니다.";
+  const retryText = retried
+    ? " 접수 오류로 재시도 READY가 되어 <code>readyAt</code>은 갱신됐지만 <b><code>deadline_at</code>은 연장되지 않습니다.</b>"
+    : " 재시도가 발생해도 <code>deadline_at</code>은 절대 연장되지 않습니다.";
+  $("dl-text").innerHTML = origin + notWait + queue + retryText +
+    " READY 재dispatch 전과 IN_PROGRESS 폴 전에 모두 마감을 검사하고, 응답이 늦게 도착하면 수신 직후에도 검사해" +
+    " <code>EXECUTION_TIMEOUT</code>으로 종결하되 bounded 응답은 보존합니다." +
+    " 반대로 마감 전에 받은 결과를 짧은 write-back 지연 때문에 timeout으로 바꾸지는 않습니다.";
+}
+["dl-pos", "dl-wait", "dl-retry"].forEach((id) => $(id).addEventListener("change", renderDeadline));
+
+/* ════════ 07 · 유형별 조회 ════════════════════════════════ */
+const runs = [
+  { id: 106, type: "TEST_CONNECTION", recipe: "AWS_TEST_CONNECTION_V1", status: "RUNNING", done: 0, total: 1, at: "09-08 11:40" },
+  { id: 105, type: "TEST_CONNECTION", recipe: "AWS_TEST_CONNECTION_V1", status: "DONE", done: 1, total: 1, at: "09-08 11:40" },
+  { id: 104, type: "INSTALL", recipe: "AWS_INSTALL_V1", status: "DONE", done: 7, total: 7, at: "09-08 10:50" },
+  { id: 103, type: "RECONFIRM", recipe: "AWS_RECONFIRM_V1", status: "DONE", done: 5, total: 5, at: "09-08 10:00" },
+  { id: 102, type: "RECONFIRM", recipe: "AWS_RECONFIRM_LEGACY", status: "FAILED", done: 4, total: 5, at: "09-08 09:30" },
+  { id: 101, type: "DELETE", recipe: "AWS_DELETE_V1", status: "DONE", done: 3, total: 3, at: "09-07 16:00" }
+];
+function renderQuery() {
+  const type = $("q-type").value;
+  const recipe = $("q-recipe").value;
+  const hits = runs.filter((run) => (!type || run.type === type) && (!recipe || run.recipe === recipe));
+  const params = [];
+  if (type) params.push("type=" + type);
+  if (recipe) params.push("recipeDefinition=" + recipe);
+  const suffix = params.length ? "?" + params.join("&") : "";
+
+  $("q-url").innerHTML = recipe
+    ? "GET /api/v1/pipelines" + esc(suffix) + '   <span class="c">// 전역 목록 · type과 recipe는 AND</span>'
+    : "GET /api/v1/target-sources/42/pipelines/latest" + esc(suffix) +
+      '\nGET /api/v1/target-sources/42/pipelines' + esc(suffix) + '   <span class="c">// 이력 페이지</span>';
+
+  const latest = hits[0];
+  $("q-latest").innerHTML = latest
+    ? "<b>최신 실행 · #" + latest.id + " · " + latest.type + '</b><span class="p tight" style="margin:0">' +
+      '<span class="pill ' + latest.status + '">' + latest.status + "</span> " + latest.done + " / " + latest.total +
+      " Task 완료 · " + latest.at + (recipe ? " · 전역 목록 정렬의 첫 결과" : " · 종단 실행도 latest에 포함") + "</span>"
+    : recipe
+      ? "<b>결과 없음</b><span>전역 목록은 빈 페이지를 반환합니다. 다른 유형의 실행을 대신 보여 주지 않습니다.</span>"
+      : "<b>결과 없음 · latest는 HTTP 204</b><span>다른 유형의 최근 실행을 대신 표시하지 않습니다.</span>";
+
+  $("q-rows").innerHTML = runs.map((run) => {
+    const hit = hits.includes(run);
+    return '<tr class="' + (hit ? "hit" : "") + '" style="' + (hit ? "" : "opacity:.4") + '">' +
+      "<td>#" + run.id + "</td><td>" + run.type + "<br><code>" + esc(run.recipe) + "</code></td>" +
+      '<td><span class="pill ' + run.status + '">' + run.status + "</span></td>" +
+      "<td>" + run.done + " / " + run.total + "</td><td>" + run.at + "</td></tr>";
+  }).join("");
+
+  $("q-note").innerHTML = "흐린 행은 <b>DB에서 필터로 제외된</b> 행입니다. 페이지를 자른 뒤 걸러내는 것이 아니라 " +
+    "필터를 먼저 적용하고 그 결과를 정렬·페이지합니다. " +
+    (recipe === "AWS_RECONFIRM_LEGACY"
+      ? "<b>과거 Recipe 이름도 exact 문자열로 조회됩니다</b> — enum에서 사라진 이름이라도 이력을 찾을 수 있어야 하기 때문입니다."
+      : recipe
+        ? "recipeDefinition은 전역 목록의 필터이며 대상별 latest API에 추가한 값이 아닙니다."
+        : "RECONFIRM을 고르면 전체 최신인 #106이 아니라 #103을 최신으로 조회합니다.");
+}
+["q-type", "q-recipe"].forEach((id) => $(id).addEventListener("change", renderQuery));
+
+/* ════════ 08 · 활성화 게이트 ══════════════════════════════ */
+function renderGate() {
+  const enabled = $("g-enabled").checked;
+  const capable = $("g-capable").checked;
+  const reconfirm = $("g-reconfirm").checked;
+  const target = $("g-target").value;
+
+  let tone = "ok";
+  let headline = "";
+  let code = "—";
+  let reason = "";
+
+  if (target === "unsupported") {
+    tone = "fail";
+    headline = "생성 거절 · typed 400";
+    code = "UNSUPPORTED_RECIPE";
+    reason = "그 유형·provider 조합을 지원하는 Recipe가 애초에 없습니다. 이건 활성화 문제가 아니라 " +
+      "존재하지 않는 조합이라 기존 UnsupportedRecipeException 경로를 그대로 씁니다. " +
+      "설정을 켜도 달라지지 않습니다.";
+  } else if (!enabled || !capable) {
+    tone = "fail";
+    headline = "생성 거절 · typed 400";
+    code = "OPERATION_UNAVAILABLE";
+    reason = "정의와 Recipe는 존재하지만 실행 가용성이 없습니다. " +
+      (!enabled && !capable ? "설정의 활성 집합에도 없고 client capability도 없습니다."
+        : !enabled ? "client capability는 있어도 pipeline.installation.enabled-operations에 없습니다."
+        : "설정에는 있어도 실제 client capability가 없습니다(기본 delegate는 아무것도 제공하지 않습니다).") +
+      " 두 조건의 교집합만 실행할 수 있습니다. catalog 미리보기와 CUSTOM 생성에 같은 검증을 적용합니다.";
+  } else if (target === "reconfirm" && !reconfirm) {
+    tone = "fail";
+    headline = "생성 거절 · typed 400";
+    code = "OPERATION_UNAVAILABLE";
+    reason = "두 공통 operation은 열렸지만 RECONFIRM은 조건이 하나 더 있습니다 — " +
+      "supportsReconfirmation(provider)가 삭제 순서와 '삭제 후에도 추천을 조회할 수 있는가'를 선언해야 합니다. " +
+      "기본값은 false입니다. 이 조건은 RECONFIRM Recipe에만 요구하며, 같은 Task를 CUSTOM으로 단독 구성할 때는 요구하지 않습니다.";
+  } else {
+    tone = "ok";
+    headline = "생성 가능 · 실제 실행이 열립니다";
+    code = "—";
+    reason = target === "reconfirm"
+      ? "삭제 → 확정정보 삭제 → 추천 기반 입력 전체 체인을 생성합니다. 생성 시점에 모든 Task의 operation 가용성을 검사합니다."
+      : "공통 Task 하나만으로 CUSTOM 실행을 만듭니다. 다른 CSP 전용 Task 없이도 유효한 구성입니다. " +
+        "같은 정의를 여러 번 담아도 각각 독립된 요청 키와 입력을 갖습니다.";
+  }
+
+  $("g-out").innerHTML =
+    '<span class="tag ' + tone + '">판정</span>' +
+    '<p class="big">' + esc(headline) + "</p>" +
+    '<p class="p" style="margin:0">ErrorCode / code: <code>' + esc(code) + "</code></p>" +
+    '<p class="p" style="margin:0">' + esc(reason) + "</p>" +
+    '<p class="foot" style="margin:0">현재 기본 배포 상태 = 활성 집합 비어 있음 + ' +
+      "<code>UnavailableInstallationOperationsClient</code> → 어떤 공통 operation도 실행되지 않습니다.</p>";
+}
+["g-enabled", "g-capable", "g-reconfirm", "g-target"].forEach((id) => $(id).addEventListener("change", renderGate));
+
+/* ════════ 09 · 재시도 vs 재시작 ═══════════════════════════ */
+const rsCases = {
+  post503: { tc: false, terminal: false, restart: "live", taskId: 7104, newTaskId: 7204,
+    what: "추천 입력 Task의 등록 POST가 503으로 실패했고 HTTP 재시도 예산이 남아 있습니다." },
+  tcpoll: { tc: true, terminal: false, restart: "live", taskId: 7301, newTaskId: 7401,
+    what: "연결 테스트의 폴 전송이 실패했지만 고정 마감 전이라 관찰을 계속할 수 있습니다." },
+  tcdead: { tc: true, terminal: true, restart: "ok", code: "EXECUTION_TIMEOUT", taskId: 7301, newTaskId: 7401,
+    what: "연결 테스트가 고정 마감을 넘겨 종결 실패했습니다. Task도 실행도 종단 상태입니다(그 대상의 최신 실행이라고 가정합니다)." },
+  inputlost: { tc: false, terminal: true, restart: "missing-input", code: "EXECUTION_INPUT_MISSING",
+    taskId: 7104, newTaskId: 7204,
+    snapshot: "입력 행이 <b>없습니다</b> · 이전 attempt의 진단·로그 증거는 남아 있을 수 있습니다",
+    what: "IN_PROGRESS인데 입력 행이 없어 POST를 호출하지 않고 종결 실패했습니다(그 대상의 최신 실행이라고 가정합니다)." },
+  cancelled: { tc: false, terminal: true, restart: "ok", code: "CANCELLED", taskId: 7104, newTaskId: 7204,
+    what: "운영자 취소가 우선 적용돼 남은 Task가 중단되고 실행이 종결됐습니다(그 대상의 최신 실행이라고 가정합니다)." }
+};
+let rsMode = "retry";
+
+function rsCard(title, tone, badge, rows) {
+  return '<div class="inst-card" style="border-left:5px solid var(--' + tone + ')">' +
+    '<div class="hd"><b>' + esc(title) + '</b><span class="tag ' +
+      (tone === "ok" ? "ok" : tone === "signal" ? "sig" : tone === "fail" ? "fail" : "") + '">' + esc(badge) + "</span></div>" +
+    "<dl>" + rows.map(([key, value]) => "<dt>" + esc(key) + "</dt><dd>" + value + "</dd>").join("") + "</dl></div>";
+}
+function renderRestart() {
+  const item = rsCases[$("rs-case").value];
+  $("rs-retry").setAttribute("aria-pressed", String(rsMode === "retry"));
+  $("rs-restart").setAttribute("aria-pressed", String(rsMode === "restart"));
+
+  const key = (id) => (item.tc ? "test-connection:v1:task:" : "confirmation-input:v1:task:") + id;
+  const origin = rsCard("이전 실행 · pipeline #7001", "idle", item.terminal ? (item.code || "종결") : "진행 중", [
+    ["유형", item.tc ? "TEST_CONNECTION · AWS_TEST_CONNECTION_V1" : "RECONFIRM · AWS_RECONFIRM_V1"],
+    ["task id", "#" + item.taskId],
+    ["요청 키", key(item.taskId)],
+    [item.tc ? "외부 실행" : "추천 입력 행",
+      item.tc ? "version <code>v-8842</code> 바인딩됨"
+        : item.snapshot || "본문 고정 · <code>digest sha-256:9f2c…</code> · <code>source_attempt_number=1</code>"],
+    [item.tc ? "deadline" : "재시도 예산",
+      item.tc ? "최초 READY + 50분 · 고정" : "5초 간격 · 24회"]
+  ]);
+
+  let answer;
+  let tone;
+  let headline;
+  let note;
+  if (rsMode === "retry" && item.terminal) {
+    tone = "fail";
+    headline = "A는 불가능합니다 · 종결된 Task는 attempt를 더 쓰지 않습니다";
+    answer = rsCard("Task 내부 재시도", "fail", "불가", [
+      ["이유", "Task와 실행이 이미 종단 상태입니다(<code>" + esc(item.code) + "</code>)"],
+      ["부활 여부", "종단 상태는 되살리지 않습니다 — 이건 정책이 아니라 실행 모델의 불변식입니다"],
+      ["남는 것", "커밋된 단계·증거·진단은 그대로 보존됩니다"],
+      ["다음 수단", item.restart === "missing-input"
+        ? "B도 승계할 입력 행이 없어 <code>CONFIRMATION_INPUT_NOT_FOUND</code>로 거절됩니다 — 옵션을 다시 지정해 새로 생성해야 합니다"
+        : "B · 새 파이프라인 재시작 (그 대상의 <b>최신</b> 실행일 때)"]
+    ]);
+    note = "종결 실패나 취소 뒤에는 같은 Task를 다시 밀어 넣을 수 없습니다. 다시 하려면 <b>새 실행</b>을 만들어야 하고, "
+      + "그 순간부터 정체성은 전부 새 값입니다.";
+  } else if (rsMode === "retry") {
+    tone = "ok";
+    headline = "A 가능 · 같은 정체성으로 이어서 냅니다";
+    answer = rsCard("Task 내부 재시도", "signal", item.tc ? "attempt 1 그대로" : "attempt 1 → 2", [
+      ["pipeline", "#7001 · <b>동일</b>"],
+      ["task id", "#" + item.taskId + " · <b>동일</b>"],
+      ["attempt", item.tc
+        ? "<b>같은 attempt(1) 그대로</b> · 폴 재시도는 attempt를 늘리지 않고 다음 폴만 예약합니다"
+        : "<b>attempt 1 → 2</b> · 시작 재시도는 새 attempt를 열지만 요청 키와 논리 실행은 그대로입니다"],
+      ["요청 키", key(item.taskId) + " · <b>동일</b>"],
+      [item.tc ? "외부 실행" : "추천 스냅샷",
+        item.tc ? "같은 요청 키로 <b>같은 실행 회수</b> · version <code>v-8842</code> 유지"
+          : "저장된 본문·digest 재사용 · <b>GET 재호출 없음</b> · <code>source_attempt_number=1</code> 불변"],
+      [item.tc ? "deadline" : "재시도 예산",
+        item.tc ? "<b>연장 없음</b> · 최초 READY + 50분 그대로" : "같은 예산에서 다음 시도"],
+      ["가용성 검증", "생성 검증을 다시 하지 않음 · 실행 중 capability 소실은 <code>OPERATION_UNAVAILABLE</code> 종결"],
+      ["외부 효과", "같은 키의 재전송 · 멱등성은 upstream 계약에 의존"]
+    ]);
+    note = item.tc
+      ? "폴 재시도와 시작 재시도는 다릅니다 — <b>폴 전송 오류는 같은 attempt 안에서</b> 다음 폴만 예약하고 attempt 번호를 늘리지 않습니다. "
+        + "시작 접수 오류의 재시도는 새 attempt를 열지만, 요청 키가 같아 <b>같은 논리 실행</b>을 되찾습니다. "
+        + "어느 쪽도 새 테스트를 시작하지 않으므로 version은 바뀌지 않습니다."
+      : "executor는 이미 저장된 입력을 발견하고 <b>POST부터 재개</b>합니다. attempt 번호는 늘지만 "
+        + "고정된 입력의 <code>source_attempt_number</code>는 최초 GET이 성공한 attempt 그대로입니다.";
+  } else if (item.restart === "live") {
+    tone = "fail";
+    headline = "아직 재시작 불가 · 진행 중 원본";
+    answer = rsCard("새 파이프라인 재시작", "fail", "차단됨", [
+      ["판정", "<code>PIPELINE_NOT_RESTARTABLE</code> · typed 409"],
+      ["이유", "원본이 아직 진행 중입니다. 재시작은 <b>FAILED / CANCELLED</b>로 끝난 실행에만 열립니다"],
+      ["새 실행", "<b>만들어지지 않습니다</b> · 대상당 활성 실행은 하나이고 <code>active_target</code>도 아직 잡혀 있습니다"],
+      ["지금 할 일", "A · Task 내부 재시도가 그대로 진행 중입니다. 굳이 새로 시작하려면 먼저 취소해야 합니다"]
+    ]);
+    note = "진행 중인 실행을 재시작 요청으로 갈아탈 수 없습니다. RUNNING·PENDING은 물론 DONE도 " +
+      "<code>PIPELINE_NOT_RESTARTABLE</code>이고, 종결됐더라도 그 대상의 최신 실행이 아니면 " +
+      "<code>PIPELINE_NOT_LATEST</code>입니다. 두 검사 모두 best-effort 읽기이고 동시 경합의 최종 심판은 " +
+      "삽입 시점의 <code>active_target</code> 유니크 제약입니다.";
+  } else if (item.restart === "missing-input") {
+    tone = "fail";
+    headline = "재시작이 통제된 실패로 거절됩니다 · 승계할 입력 행이 없습니다";
+    answer = rsCard("새 파이프라인 재시작", "fail", "404", [
+      ["판정", "<code>CONFIRMATION_INPUT_NOT_FOUND</code> · typed 404"],
+      ["이유", "새 Task를 만들려면 원본 입력 Task의 <code>task_confirmation_input</code> 행에서 " +
+        "<code>applyNlbSecurityGroup</code>을 읽어야 하는데, <b>행 자체가 없습니다</b>"],
+      ["새 실행", "<b>만들어지지 않습니다</b> · 미리보기와 실행이 같은 지점에서 거절되므로 부분 생성도 없습니다"],
+      ["다시 GET하면 되지 않나", "안 됩니다 — 새 GET이 채워 주는 것은 추천 원문이고, NLB 옵션은 운영자가 지정한 값이라 " +
+        "행이 사라지면 어디서도 복구되지 않습니다"],
+      ["행이 남아 있었다면", "본문이 손상·거절됐더라도 새 실행은 <b>본문을 버리고 새 GET으로 다시 캡처</b>하며 옵션만 승계합니다"]
+    ]);
+    note = "“입력 행 유실”과 “입력 행은 있는데 본문이 손상됨”은 다른 사건입니다. 후자는 재시작이 정상 동작하고 " +
+      "(본문은 어차피 새로 캡처합니다), 전자는 승계할 옵션이 없어 <b>아무것도 만들지 않고</b> typed 404로 끝납니다. " +
+      "재시작이 “다시 조회하면 된다”고 약속하지 않는 이유입니다.";
+  } else {
+    tone = "ok";
+    headline = "B 가능 · 선택된 뒷부분만 새 실행으로 생깁니다";
+    answer = rsCard("새 파이프라인 재시작", "ok", "신규 실행", [
+      ["pipeline", "#7002 · <b>신규</b> · #7001은 이력으로 남음 · 유형/Recipe 승계 · <code>origin_pipeline_id=7001</code>"],
+      ["범위", "기본 = 원본의 <b>첫 non-DONE Task부터 끝까지</b> · 이미 DONE인 앞 단계는 다시 실행하지 않습니다"],
+      ["task id", "#" + item.newTaskId + " · <b>신규</b> · 그 뒷부분의 Task만 새로 생성"],
+      ["요청 키", key(item.newTaskId) + " · <b>신규</b>"],
+      [item.tc ? "외부 실행" : "추천 스냅샷",
+        item.tc ? "새 시작 접수 → <b>다른 실행 · 다른 version</b> <code>v-9107</code>"
+          : "새 입력 Task가 <b>새 GET</b>으로 자기 본문 캡처 → 새 행에 write-once · 이전 스냅샷 재사용 없음"],
+      [item.tc ? "deadline" : "재시도 예산",
+        item.tc ? "새 Task의 <b>자기 최초 READY</b> + 50분 · 원래 마감을 물려받지 않음" : "새 Task의 새 예산"],
+      ["이어받는 값", "유형·Recipe·계보는 승계하고, <b>추천 실행 입력 데이터 중에서는</b> " +
+        "<code>applyNlbSecurityGroup</code> 옵션만 승계합니다(원문·승인 맥락은 새 GET)"],
+      ["가용성 검증", "provider·operation capability" + (item.tc ? "" : "와 RECONFIRM 추가 계약 게이트") + "를 <b>다시 검증</b>"],
+      ["외부 효과", "<b>이전 요청의 취소를 증명하지 못함</b> · 중복·불명 효과가 남을 수 있음"]
+    ]);
+    note = "재시작은 지원되는 정상 경로입니다. 다만 이어 붙이기가 아니라 <b>새로 시작하기</b>입니다 — "
+      + "원래 실행의 외부 요청이 아직 살아 있을 수 있고, 새 실행은 새 요청 키를 쓰므로 upstream에서 두 요청이 자동으로 합쳐지지 않습니다.";
+  }
+
+  $("rs-verdict").innerHTML =
+    '<div class="hd"><span class="tag ' + (tone === "fail" ? "fail" : "ok") + '">판정</span>' +
+    "<b>" + esc(headline) + "</b></div>" + esc(item.what);
+  $("rs-verdict").style.borderLeftColor = tone === "fail" ? "var(--fail)" : "var(--ok)";
+  $("rs-cards").innerHTML = origin + answer;
+  $("rs-note").innerHTML = note;
+}
+$("rs-case").addEventListener("change", renderRestart);
+$("rs-retry").addEventListener("click", () => { rsMode = "retry"; renderRestart(); });
+$("rs-restart").addEventListener("click", () => { rsMode = "restart"; renderRestart(); });
+
+/* ════════ 초기 렌더 ═══════════════════════════════════════ */
+renderRepeats();
+simReset();
+renderDatabase();
+renderHttpCase("get200");
+renderDeadline();
+renderQuery();
+renderGate();
+renderRestart();
+</script>
+</body>
+</html>
