@@ -2,26 +2,20 @@ package com.bff.pipeline.model;
 
 import com.bff.pipeline.enums.CheckSignal;
 import com.bff.pipeline.enums.ErrorCode;
+import lombok.Builder;
 
 /**
- * run 단계(외부 호출, 트랜잭션 밖)의 결과를 write-back 단계(write-back 트랜잭션)가 그대로 적용하도록 담아 나르는 봉인(sealed) 값 타입이다(ADR-021).
- * {@code StepRunner}가 run 단계에서 만들고, {@code StepReporter}가 write-back 단계(write-back 트랜잭션) 안에서 {@code TaskStateMachine}에 넘긴다.
- * 빈(bean)이 아니라 도메인 값 객체이며, 두 트랜잭션 경계를 잇는 정보 전달 매체다.
+ * 트랜잭션 밖 실행 결과를 점유 소유권을 확인한 상태 기록 단계로 전달한다. 외부 호출 결과 자체를 넘기므로
+ * 여기서는 DB를 읽거나 쓰지 않는다. Dispatched는 기존 비동기 응답, 추천 입력 준비, HTTP 완료를
+ * 구분하는 DispatchResult를 담고 한 번의 attempt 생성을 요청한다.
  *
- * <p>{@code dispatchPhase()}가 true이면 write-back 트랜잭션은 {@code applyOutcome}에 앞서 {@code beginAttempt}를 먼저 기록해야
- * 한다(Dispatched와 dispatch CallFailure — 시도가 이미 시작된 것으로 본다).
- *
- * <p>{@link Dispatched}는 dispatch가 돌려준 {@link DispatchResult}를 담는다. 원시 response를 해석 없이 실어 나를
- * 뿐이고, 형식 해석은 task type 몫이며 write-back 트랜잭션은 {@code task_attempt.response}에 그대로 기록한다(ADR-016 ed97ec0).
- *
- * <p>정적 팩토리({@code unblock}, {@code dispatched}, {@code pending}, {@code succeeded},
- * {@code failed}, {@code callTimeout}, {@code callFailed}, {@code conditionMet},
- * {@code conditionNotMet}, {@code unknownTask})로 만든다.
+ * HttpCompleted는 같은 입력 Task의 후속 POST 결과이며 기존 attempt를 사용한다. CallFailure는 엔진이 번역한
+ * 오류 코드와 재시도 여부, 실제 HTTP 응답을 보존한다. 인터럽트나 예상하지 못한 코드 오류를 값으로 숨기지 않는다.
  */
 public sealed interface StepOutcome
         permits StepOutcome.Unblock, StepOutcome.Dispatched, StepOutcome.Pending,
                 StepOutcome.Succeeded, StepOutcome.Failed, StepOutcome.CallFailure,
-                StepOutcome.ConditionMet, StepOutcome.ConditionNotMet, StepOutcome.UnknownTask {
+                StepOutcome.ConditionMet, StepOutcome.ConditionNotMet, StepOutcome.UnknownTask, StepOutcome.HttpCompleted {
 
     /** write-back 트랜잭션이 applyOutcome에 앞서 beginAttempt를 기록해야 하는가. */
     boolean dispatchPhase();
@@ -47,8 +41,10 @@ public sealed interface StepOutcome
         public boolean dispatchPhase() { return false; }
     }
 
-    /** {@code detail}은 호출 실패 예외의 메시지다(HTTP status·URL 등) — task_attempt.failure_detail로 영속된다. */
-    record CallFailure(ErrorCode reason, CheckSignal signal, boolean dispatch, String detail) implements StepOutcome {
+    /** 호출 실패의 짧은 설명과 원문 응답을 분리하며, 재시도 여부는 외부 경계에서 판정한 정책을 유지한다. */
+    @Builder
+    record CallFailure(ErrorCode reason, CheckSignal signal, boolean dispatch, String detail,
+            boolean retryable, HttpExchange exchange) implements StepOutcome {
         public boolean dispatchPhase() { return dispatch; }
     }
 
@@ -62,6 +58,11 @@ public sealed interface StepOutcome
         public boolean dispatchPhase() { return false; }
     }
 
+    record HttpCompleted(HttpTaskResult result) implements StepOutcome {
+        public boolean dispatchPhase() { return false; }
+    }
+
+
     record UnknownTask() implements StepOutcome {
         public boolean dispatchPhase() { return false; }
     }
@@ -71,8 +72,14 @@ public sealed interface StepOutcome
     static StepOutcome pending(CheckSignal signal) { return new Pending(signal); }
     static StepOutcome succeeded() { return new Succeeded(); }
     static StepOutcome failed(ErrorCode reason, boolean retryable, String detail) { return new Failed(reason, retryable, detail); }
-    static StepOutcome callTimeout(boolean dispatch, String detail) { return new CallFailure(ErrorCode.CALL_TIMEOUT, CheckSignal.CALL_TIMEOUT, dispatch, detail); }
-    static StepOutcome callFailed(boolean dispatch, String detail) { return new CallFailure(ErrorCode.CHECK_ERROR, CheckSignal.API_ERROR, dispatch, detail); }
+    static CallFailure callTimeout(boolean dispatch, String detail) {
+        return CallFailure.builder().reason(ErrorCode.CALL_TIMEOUT).signal(CheckSignal.CALL_TIMEOUT)
+                .dispatch(dispatch).detail(detail).retryable(true).build();
+    }
+    static StepOutcome callFailed(boolean dispatch, String detail) {
+        return CallFailure.builder().reason(ErrorCode.CHECK_ERROR).signal(CheckSignal.API_ERROR)
+                .dispatch(dispatch).detail(detail).retryable(true).build();
+    }
     static StepOutcome conditionMet(String response) { return new ConditionMet(response); }
     static StepOutcome conditionNotMet(String response) { return new ConditionNotMet(response); }
     static StepOutcome unknownTask() { return new UnknownTask(); }

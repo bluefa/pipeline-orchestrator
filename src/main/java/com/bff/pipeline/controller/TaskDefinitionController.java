@@ -2,6 +2,8 @@ package com.bff.pipeline.controller;
 
 import com.bff.pipeline.dto.pipeline.TaskCatalogResponse;
 import com.bff.pipeline.enums.CloudProvider;
+import com.bff.pipeline.service.lifecycle.InstallationOperationAvailability;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -14,10 +16,12 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/task-definitions")
+@RequiredArgsConstructor
 public class TaskDefinitionController {
+    private final InstallationOperationAvailability availability;
 
     @GetMapping
     public TaskCatalogResponse list(@RequestParam(required = false) CloudProvider provider) {
-        return TaskCatalogResponse.of(provider);
+        return TaskCatalogResponse.of(provider, definition -> availability.isAvailable(provider, definition));
     }
 }

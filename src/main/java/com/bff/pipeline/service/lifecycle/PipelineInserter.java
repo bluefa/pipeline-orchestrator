@@ -1,6 +1,8 @@
 package com.bff.pipeline.service.lifecycle;
 
 import com.bff.pipeline.config.PipelineSettings;
+import com.bff.pipeline.config.InstallationSettings;
+import com.bff.pipeline.service.task.TaskConfirmationInputs;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.enums.PipelineStatus;
@@ -40,6 +42,8 @@ public class PipelineInserter {
     private final TaskRepository taskRepository;
     private final PipelineSettings pipelineSettings;
     private final Clock clock;
+    private final TaskConfirmationInputs confirmationInputs;
+    private final InstallationSettings installationSettings;
 
     @Transactional
     public Pipeline insert(PipelinePlan plan) {
@@ -59,29 +63,33 @@ public class PipelineInserter {
                 .nextDueAt(delayed ? now.plus(pipelineSettings.startDelay()) : now)   // LIN-17: 시작 지연을 스케줄링으로 반영(sleep 금지)
                 .cancelRequested(false)
                 .build());
-        taskRepository.saveAll(buildChain(pipeline.getId(), plan.steps(), now));
+        insertTasks(pipeline, plan.steps(), now);
         return pipeline;
+    }
+
+    private void insertTasks(Pipeline pipeline, List<PlannedStep> steps, Instant now) {
+        List<Task> chain = taskRepository.saveAll(buildChain(pipeline.getId(), steps, now));
+        IntStream.range(0, chain.size()).forEach(sequence -> {
+            Task task = chain.get(sequence);
+            confirmationInputs.initialize(task, steps.get(sequence).applyNlbSecurityGroup());
+        });
     }
 
     private List<Task> buildChain(Long pipelineId, List<PlannedStep> steps, Instant now) {
         return IntStream.range(0, steps.size())
-                .mapToObj(sequence -> {
-                    PlannedStep step = steps.get(sequence);
-                    boolean first = sequence == 0;
-                    return Task.builder()
-                            .pipelineId(pipelineId)
-                            .sequence(sequence)
-                            .taskName(step.definition().mechanism())
-                            .operation(step.definition().operation())
-                            .taskDefinition(step.definition().name())
-                            .consumesTerraformSlot(step.definition().consumesTerraformSlot())
-                            .description(step.description())
-                            .originTaskId(step.originTaskId())
-                            .status(first ? TaskStatus.READY : TaskStatus.BLOCKED)
-                            .readyAt(first ? now : null)
-                            .failCount(0)
-                            .build();
-                })
-                .toList();
+                .mapToObj(sequence -> buildTask(pipelineId, steps.get(sequence), sequence, now)).toList();
+    }
+
+    private Task buildTask(Long pipelineId, PlannedStep step, int sequence, Instant now) {
+        boolean first = sequence == 0;
+        boolean httpRetryPolicy = step.definition().operation().usesHttpRetryPolicy();
+        return Task.builder().pipelineId(pipelineId).sequence(sequence)
+                .taskName(step.definition().mechanism()).operation(step.definition().operation())
+                .taskDefinition(step.definition().name()).consumesTerraformSlot(step.definition().consumesTerraformSlot())
+                .description(step.description()).originTaskId(step.originTaskId()).status(first ? TaskStatus.READY : TaskStatus.BLOCKED)
+                .readyAt(first ? now : null).failCount(0)
+                .pollingInterval(httpRetryPolicy ? installationSettings.httpRetryInterval() : null)
+                .maxFailCount(httpRetryPolicy ? installationSettings.httpMaxFailCount() : null).build();
+
     }
 }

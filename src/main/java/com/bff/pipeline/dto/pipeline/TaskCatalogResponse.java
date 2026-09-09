@@ -5,6 +5,7 @@ import com.bff.pipeline.enums.TaskDefinition;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Predicate;
 
 /**
  * TaskDefinition 카탈로그 조회 응답이다(LIN-27). {@code provider}가 주어지면 그 provider의 Task만, null이면 전체를
@@ -13,10 +14,10 @@ import java.util.List;
 public record TaskCatalogResponse(@JsonProperty("task_definitions") List<TaskCatalogEntry> taskDefinitions) {
 
     /** provider(nullable)로 카탈로그를 필터링해 응답을 만든다. 잘못된 provider 값 거절은 컨트롤러 바인딩(400)이 맡는다. */
-    public static TaskCatalogResponse of(CloudProvider provider) {
+    public static TaskCatalogResponse of(CloudProvider provider, Predicate<TaskDefinition> available) {
         List<TaskCatalogEntry> entries = Arrays.stream(TaskDefinition.values())
-                .filter(definition -> provider == null || definition.provider() == provider)
-                .map(TaskCatalogEntry::from)
+                .filter(definition -> provider == null || definition.supportsProvider(provider))
+                .map(definition -> TaskCatalogEntry.from(definition, available.test(definition)))
                 .toList();
         return new TaskCatalogResponse(entries);
     }

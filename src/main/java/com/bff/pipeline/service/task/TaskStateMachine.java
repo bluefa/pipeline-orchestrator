@@ -8,6 +8,7 @@ import com.bff.pipeline.enums.CheckSignal;
 import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.model.DispatchResult;
+import com.bff.pipeline.model.HttpTaskResult;
 import com.bff.pipeline.model.StepOutcome;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.utils.TaskSettingsResolver;
@@ -18,30 +19,16 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
- * ADR-021 write-back 단계: {@link StepRunner}가 트랜잭션 밖에서 계산해 둔 {@link StepOutcome}을 write-back 트랜잭션({@link StepReporter}) 안에서
- * 관리 태스크에 적용한다(ADR-016 §2, §6의 태스크 전환을 소유한다). 이 클래스에는 외부 호출이 전혀 없다 — run 단계가 닫힌
- * 어휘(InfraManager 호출 실패)로 번역해 {@code StepOutcome}으로 넘겨주면, 여기서는 그것을 태스크 상태 전환으로 매핑하기만 한다.
+ * 외부 호출이 끝난 뒤 결과를 Task 상태와 attempt 기록에 적용한다. 호출자는 Pipeline 행을 잠그고 점유 토큰을
+ * 확인한 뒤 취소가 우선인지 검사한다. 이 클래스는 그 트랜잭션에 참여하며 외부 API를 호출하지 않는다.
  *
- * <pre>
- *   BLOCKED      → Unblock      → READY
- *   READY        → Dispatched   → IN_PROGRESS  (beginAttempt + recordResponse 포함)
- *   IN_PROGRESS  → Pending      → reschedule(pollingInterval)
- *                  Succeeded    → DONE
- *                  Failed       → retryOrFail / failOutright
- *                  CallFailure  → recordCheck(poll phase) + retryOrFail
- *                  ConditionMet → recordResponse + recordCheck(MET) + DONE
- *                  ConditionNotMet → recordResponse + recordCheck(NOT_MET) + retryOrFail(CONDITION_NOT_MET)
- *   any          → UnknownTask  → FAILED(UNKNOWN_TASK)
- * </pre>
+ * 기존 Terraform/Condition은 응답 기록과 폴 결과에 따라 진행한다. HTTP 추천 GET은 입력을 고정하고 같은
+ * Task를 IN_PROGRESS로 유지한다. 삭제 또는 저장된 입력의 POST는 HTTP 완료 값으로 종결한다.
+ * 응답과 입력 저장이 실패하면 모든 상태 변경이 함께 롤백된다.
  *
- * <p>유일한 진입점은 {@link #applyOutcome(Task, StepOutcome)}이고, {@link StepReporter}가 write-back 트랜잭션 안에서 호출한다.
- *
- * <p><b>불변식.</b> 디스패치는 멱등적이다(ADR-016 §5). 재시도할 때는 {@code failCount}가 늘기 전에 시도를 먼저 종료 처리해
- * 정확한 {@code attempt_number}에 기록한다. 재시도는 {@code nextCheckAt}을 {@code now + pollingInterval}로 잡는데,
- * ADR-021 claim 루프에서 곧바로 재디스패치가 InfraManager를 난타(hammer)하지 않도록 일부러 둔 케이던스다(재디스패치는 멱등이라 안전하다).
- *
- * <p><b>예외 전략.</b> 외부 호출 실패를 {@code ErrorCode}로 바꾸는 일은 {@link StepRunner}가 run 단계 경계에서 처리한다.
- * 비즈니스 결과는 결코 예외가 아니라 행에 기록되는 {@code ErrorCode} 값이다({@code docs/exception-strategy.md} 참조).
+ * 재시도는 현재 attempt를 종료한 뒤 failCount를 증가시키고 정해진 간격 뒤 READY로 전환한다. 종결 성공과
+ * 실패는 호출자의 수렴 단계가 후속 승격 또는 Pipeline 종료로 반영한다. 새로운 결과는 exhaustive switch로
+ * 빠짐없이 처리하며 mechanism 이름 문자열로 실행 종류를 추측하지 않는다.
  */
 @Component
 @RequiredArgsConstructor
@@ -51,18 +38,21 @@ public class TaskStateMachine {
     private final ObservationRecorder observationRecorder;
     private final PipelineSettings pipelineSettings;
     private final Clock clock;
+    private final TaskConfirmationInputs confirmationInputs;
 
     public void applyOutcome(Task task, StepOutcome outcome) {
         if (outcome.dispatchPhase()) observationRecorder.beginAttempt(task);
         switch (outcome) {
             case StepOutcome.Unblock ignored -> unblock(task);
             case StepOutcome.Dispatched dispatched -> markInProgress(task, dispatched.dispatchResult());
+            case StepOutcome.HttpCompleted completed -> completeHttp(task, completed.result());
             case StepOutcome.Pending pending -> recordPendingAndReschedule(task, pending.observed());
             case StepOutcome.Succeeded ignored -> complete(task);
             case StepOutcome.Failed failed -> applyFailure(task, failed.reason(), failed.retryable(), failed.detail());
             case StepOutcome.CallFailure callFailure -> {
+                if (callFailure.exchange() != null) observationRecorder.recordHttpResponse(task, callFailure.exchange(), null);
                 if (!callFailure.dispatch()) observationRecorder.recordCheck(task, callFailure.signal());
-                retryOrFail(task, callFailure.reason(), callFailure.detail());
+                applyFailure(task, callFailure.reason(), callFailure.retryable(), callFailure.detail());
             }
             case StepOutcome.ConditionMet met -> completeCondition(task, met.response());
             case StepOutcome.ConditionNotMet notMet -> retryCondition(task, notMet.response());
@@ -95,15 +85,38 @@ public class TaskStateMachine {
         taskRepository.save(task);
     }
 
-    private void markInProgress(Task task, DispatchResult dispatchResult) {
-        if (dispatchResult instanceof DispatchResult.WithResponse withResponse) {
-            observationRecorder.recordResponse(task, withResponse.response());
+    private void markInProgress(Task task, DispatchResult result) {
+        switch (result) {
+            case DispatchResult.WithResponse response -> {
+                observationRecorder.recordResponse(task, response.response());
+                start(task);
+            }
+            case DispatchResult.None ignored -> start(task);
+            case DispatchResult.HttpPrepared prepared -> {
+                Long inputId = confirmationInputs.capture(task, prepared.recommendation());
+                observationRecorder.recordHttpResponse(task, prepared.recommendation().exchange(), inputId);
+                start(task);
+            }
+            case DispatchResult.HttpCompleted completed -> {
+                start(task);
+                completeHttp(task, completed.result());
+            }
         }
+    }
+
+
+    private void start(Task task) {
         Instant now = clock.instant();
         task.setStatus(TaskStatus.IN_PROGRESS);
         task.setStartedAt(now);
         task.setNextCheckAt(now);
         taskRepository.save(task);
+    }
+
+    private void completeHttp(Task task, HttpTaskResult result) {
+        observationRecorder.recordHttpResponse(task, result.exchange(), result.confirmationInputId());
+        if (result.success()) complete(task);
+        else applyFailure(task, result.errorCode(), result.retryable(), result.detail());
     }
 
     private void recordPendingAndReschedule(Task task, CheckSignal observed) {

@@ -3,6 +3,7 @@ package com.bff.pipeline.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.bff.pipeline.InstallationTestConfiguration;
 import com.bff.pipeline.client.FakeInfraManagerClient;
 import com.bff.pipeline.config.PipelineSettings;
 import com.bff.pipeline.entity.Pipeline;
@@ -44,7 +45,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({PipelineCreator.class, PipelineInserter.class, RecipeCatalog.class, PipelineUniquenessTest.Wiring.class})
+@Import({InstallationTestConfiguration.class,PipelineCreator.class, PipelineInserter.class, RecipeCatalog.class, PipelineUniquenessTest.Wiring.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class PipelineUniquenessTest {
 

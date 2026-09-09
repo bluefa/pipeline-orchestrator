@@ -55,8 +55,11 @@ public enum TaskOperation {
 
     // ── CONDITION_CHECK mechanism ──
     /** 네트워크가 준비됐는지 확인(condition check)하는 액션. (실제 API 미확정 — 가정 엔드포인트) */
-    NETWORK_READY(Mechanism.CONDITION_CHECK);
-
+    NETWORK_READY(Mechanism.CONDITION_CHECK),
+    /** 검증된 설치 서비스에서 확정정보를 동기로 삭제한다. */
+    DELETE_CONFIRMED_RESOURCES(Mechanism.HTTP_REQUEST, InstallationPolicy.HTTP_RETRY),
+    /** 추천값 조회와 등록을 하나의 입력 Task로 수행한다. */
+    CONFIRM_RESOURCES_FROM_RECOMMENDATION(Mechanism.HTTP_REQUEST, InstallationPolicy.HTTP_RETRY);
 
     /** mechanism 이름 리터럴 — 값은 각 TaskType.NAME과 일치해야 하며 부팅 시 검증된다. */
     public static final class Mechanism {
