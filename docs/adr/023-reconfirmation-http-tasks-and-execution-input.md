@@ -58,7 +58,23 @@ TaskDefinition은 명시적 scope와 nullable provider를 갖고, ALL_CSP의 pro
 CSP_SPECIFIC에는 provider가 필수이고 ALL_CSP에는 provider를 지정하지 않도록 정의 생성 시 검증한다.
 
 공통 executor는 Task가 속한 Pipeline의 생성 시 고정된 cloud_provider를 짧은 DB read로 읽어
-실제 API를 선택한다. TaskDefinition의 nullable provider를 호출 대상으로 사용하지 않는다.
+클라이언트 요청에 전달한다. TaskDefinition의 nullable provider를 호출 대상으로 사용하지 않는다.
+
+요청 값의 `confirmedResourcePath()`와 `recommendationPath()`, 등록 요청의 `confirmationPath()`가
+아래 경로 계약을 제공한다. 기준은 프런트엔드 `/Users/study/pii-agent-demo`의
+`lib/bff/http.ts`, `lib/infra-api.ts`, `docs/swagger/install-v1.yaml`이다.
+
+| CSP | DELETE / POST 경로 | GET 추천 경로 |
+|---|---|---|
+| AWS | `/install/v1/target-sources/{id}/aws-resources` | 왼쪽 경로 + `/approved-recommendations` |
+| GCP | `/install/v1/target-sources/{id}/gcp-resources` | 왼쪽 경로 + `/approved-recommendations` |
+| AZURE | `/install/v1/target-sources/{id}/azure-resources` | 왼쪽 경로 + `/approved-recommendations` |
+| IDC | `/install/v1/target-sources/{id}/idc-resources` | 왼쪽 경로 + `/approved-recommendations` |
+
+경로는 `/install/v1`을 포함하므로 어댑터는 서비스 원점에 결합한다. 대상 ID는 단일 path segment로
+인코딩한다. `applyNLBSecurityGroup=true`는 AWS POST에만 붙는다. CSP별 본문 스키마를 공통화하거나
+추천 JSON을 재구성하지 않는다. 이 경로 계약은 운영 HTTP 어댑터·인증·멱등성 연동을 대신하지 않으며,
+결정 8의 활성화 조건은 그대로 유지한다.
 
 ## 결정 2. CUSTOM과 CSP별 Recipe
 
