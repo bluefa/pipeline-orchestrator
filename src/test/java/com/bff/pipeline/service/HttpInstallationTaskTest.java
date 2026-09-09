@@ -75,6 +75,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import org.hibernate.resource.jdbc.spi.StatementInspector;
 import org.junit.jupiter.api.AfterEach;
@@ -152,7 +153,7 @@ class HttpInstallationTaskTest {
 
     @ParameterizedTest
     @EnumSource(CloudProvider.class)
-    void standaloneInputUsesTwoCallsWithinOneTaskForEveryProvider(CloudProvider provider) {
+    void standaloneInputUsesStoredProviderPathsForBothCalls(CloudProvider provider) {
         infraManager.onCloudProvider(provider);
         Pipeline pipeline = inputPipeline();
         assertThat(chain(pipeline)).hasSize(1);
@@ -162,10 +163,14 @@ class HttpInstallationTaskTest {
         assertThat(status(pipeline)).isEqualTo(PipelineStatus.RUNNING);
         assertThat(client.confirmations).isEmpty();
         assertThat(input(task).getRecommendationBody()).isEqualTo(FakeInstallationOperationsClient.BODY);
+        infraManager.onCloudProvider(provider == CloudProvider.AWS ? CloudProvider.GCP : CloudProvider.AWS);
         worker.pollOnce();
         assertThat(status(pipeline)).isEqualTo(PipelineStatus.DONE);
-        assertThat(client.recommendations).hasSize(1);
+        String expectedPath = "/install/v1/target-sources/input/" + provider.name().toLowerCase(Locale.ROOT) + "-resources";
+        assertThat(client.recommendations).singleElement().satisfies(request ->
+                assertThat(request.recommendationPath()).isEqualTo(expectedPath + "/approved-recommendations"));
         assertThat(client.confirmations).singleElement().satisfies(request -> {
+            assertThat(request.confirmationPath()).isEqualTo(expectedPath);
             assertThat(request.body()).isEqualTo(FakeInstallationOperationsClient.BODY);
             assertThat(request.request().provider()).isEqualTo(provider);
         });
@@ -356,13 +361,17 @@ class HttpInstallationTaskTest {
         assertThat(input(task(pipeline)).getRecommendationBody()).isNull();
     }
 
-    @Test
-    void standaloneDeleteUsesStableTaskIdentityAndDoesNotRequireRecommendation() {
+    @ParameterizedTest
+    @EnumSource(CloudProvider.class)
+    void standaloneDeleteUsesStableTaskIdentityAndDoesNotRequireRecommendation(CloudProvider provider) {
+        infraManager.onCloudProvider(provider);
         Pipeline pipeline = creator.createCustom("delete", List.of(new CustomTaskRequest("DELETE_CONFIRMED_RESOURCES_V1", null)));
         worker.pollOnce();
         assertThat(status(pipeline)).isEqualTo(PipelineStatus.DONE);
         assertThat(client.deletions).singleElement().satisfies(request ->
                 assertThat(request.requestKey()).isEqualTo("confirmation-delete:v1:task:" + task(pipeline).getId()));
+        assertThat(client.deletions.getFirst().confirmedResourcePath()).isEqualTo(
+                "/install/v1/target-sources/delete/" + provider.name().toLowerCase(Locale.ROOT) + "-resources");
         assertThat(inputs.findAll()).isEmpty();
         assertThat(client.recommendations).isEmpty();
     }
@@ -489,7 +498,10 @@ class HttpInstallationTaskTest {
         Pipeline pipeline = creator.createCustom("option", List.of(new CustomTaskRequest(inputRequest().name(), null, true)));
         worker.pollOnce();
         worker.pollOnce();
-        assertThat(client.confirmations).singleElement().satisfies(request -> assertThat(request.applyNlbSecurityGroup()).isTrue());
+        assertThat(client.confirmations).singleElement().satisfies(request -> {
+            assertThat(request.applyNlbSecurityGroup()).isTrue();
+            assertThat(request.confirmationPath()).isEqualTo("/install/v1/target-sources/option/aws-resources?applyNLBSecurityGroup=true");
+        });
     }
 
     @ParameterizedTest
