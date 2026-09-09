@@ -138,14 +138,16 @@ class DtoSnakeCaseSerializationTest {
 
     @Test
     void taskCatalogResponseSerializesSnakeCase() throws Exception {
-        TaskCatalogEntry entry = TaskCatalogEntry.from(TaskDefinition.AWS_SERVICE_APPLY_V1);
+        TaskCatalogEntry entry = TaskCatalogEntry.from(TaskDefinition.AWS_SERVICE_APPLY_V1, true);
 
         String json = mapper.writeValueAsString(new TaskCatalogResponse(List.of(entry)));
 
         assertThat(json).contains("\"task_definitions\":", "\"name\":\"AWS_SERVICE_APPLY_V1\"", "\"display_name\":",
                 "\"description\":", "\"provider\":\"AWS\"", "\"kind\":\"TERRAFORM_JOB\"",
-                "\"terraform_action\":\"APPLY\"", "\"consumes_terraform_slot\":true");
-        assertThat(json).doesNotContain("taskDefinitions", "displayName", "consumesTerraformSlot");
+                "\"terraform_action\":\"APPLY\"", "\"consumes_terraform_slot\":true",
+                "\"provider_scope\":\"CSP_SPECIFIC\"", "\"custom_allowed\":true", "\"execution_available\":true");
+        assertThat(json).doesNotContain("taskDefinitions", "displayName", "consumesTerraformSlot",
+                "providerScope", "customAllowed", "executionAvailable");
     }
 
     @Test

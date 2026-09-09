@@ -59,7 +59,20 @@ public enum RecipeDefinition {
 
     IDC_DELETE_V1(CloudProvider.IDC, PipelineType.DELETE,
             "IDC 인프라 삭제", "IDC BDP와 CX 인프라를 Terraform destroy로 제거한다(BDP destroy는 pod 삭제 동반, 순서는 설치의 역순 가정).",
-            List.of(TaskDefinition.IDC_BDP_DESTROY_V1, TaskDefinition.IDC_CX_DESTROY_V1));
+            List.of(TaskDefinition.IDC_BDP_DESTROY_V1, TaskDefinition.IDC_CX_DESTROY_V1)),
+    AWS_RECONFIRM_V1(CloudProvider.AWS, PipelineType.RECONFIRM, "AWS 재확정", "인프라 삭제 뒤 확정정보를 삭제하고 추천값으로 입력한다.",
+            List.of(TaskDefinition.AWS_BDC_SERVICE_LEVEL_DESTROY_V1, TaskDefinition.AWS_BDC_COMMON_DESTROY_V1,
+                    TaskDefinition.AWS_SERVICE_DESTROY_V1, TaskDefinition.DELETE_CONFIRMED_RESOURCES_V1,
+                    TaskDefinition.CONFIRM_RESOURCES_FROM_RECOMMENDATION_V1)),
+    GCP_RECONFIRM_V1(CloudProvider.GCP, PipelineType.RECONFIRM, "GCP 재확정", "인프라 삭제 뒤 확정정보를 삭제하고 추천값으로 입력한다.",
+            List.of(TaskDefinition.GCP_BDC_DESTROY_V1, TaskDefinition.GCP_SERVICE_DESTROY_V1,
+                    TaskDefinition.DELETE_CONFIRMED_RESOURCES_V1, TaskDefinition.CONFIRM_RESOURCES_FROM_RECOMMENDATION_V1)),
+    AZURE_RECONFIRM_V1(CloudProvider.AZURE, PipelineType.RECONFIRM, "Azure 재확정", "인프라 삭제 뒤 확정정보를 삭제하고 추천값으로 입력한다.",
+            List.of(TaskDefinition.AZURE_BDC_DESTROY_V1, TaskDefinition.DELETE_CONFIRMED_RESOURCES_V1,
+                    TaskDefinition.CONFIRM_RESOURCES_FROM_RECOMMENDATION_V1)),
+    IDC_RECONFIRM_V1(CloudProvider.IDC, PipelineType.RECONFIRM, "IDC 재확정", "인프라 삭제 뒤 확정정보를 삭제하고 추천값으로 입력한다.",
+            List.of(TaskDefinition.IDC_BDP_DESTROY_V1, TaskDefinition.IDC_CX_DESTROY_V1,
+                    TaskDefinition.DELETE_CONFIRMED_RESOURCES_V1, TaskDefinition.CONFIRM_RESOURCES_FROM_RECOMMENDATION_V1));
 
     private final CloudProvider provider;
     private final PipelineType pipelineType;

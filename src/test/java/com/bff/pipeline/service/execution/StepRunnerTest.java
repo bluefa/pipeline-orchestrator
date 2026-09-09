@@ -13,14 +13,13 @@ import com.bff.pipeline.model.TaskProgress;
 import com.bff.pipeline.model.TaskType;
 import com.bff.pipeline.service.task.TaskTypeRegistry;
 import java.util.List;
+import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 
 /** StepRunner가 외부 호출 전에 행을 진실원(task_definition)으로 검증하는 부분을 다룬다. */
 class StepRunnerTest {
 
-    private final StepRunner stepRunner = new StepRunner(new TaskTypeRegistry(List.of(
-            fake(TaskOperation.Mechanism.TERRAFORM_JOB),
-            fake(TaskOperation.Mechanism.CONDITION_CHECK))));
+    private final StepRunner stepRunner = new StepRunner(new TaskTypeRegistry(Arrays.stream(TaskOperation.values()).map(TaskOperation::mechanism).distinct().map(StepRunnerTest::fake).toList()));
 
     @Test
     void dispatchesWhenTheRowAgreesWithItsDefinition() {

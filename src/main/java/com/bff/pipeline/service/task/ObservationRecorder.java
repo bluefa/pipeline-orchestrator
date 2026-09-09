@@ -4,6 +4,8 @@ import com.bff.pipeline.entity.Task;
 import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.entity.TaskCheck;
 import com.bff.pipeline.enums.CheckSignal;
+import com.bff.pipeline.model.HttpExchange;
+import com.bff.pipeline.repository.TaskConfirmationInputRepository;
 import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.repository.TaskAttemptRepository;
@@ -14,20 +16,14 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
- * 관찰 테이블({@code task_attempt}, {@code task_check}; ADR-016 §3)의 유일한 기록자(writer)다. 엔진은 완료 판정을 위해
- * {@link #currentAttempt}의 최신 행만 읽고(§3 invariant 1), claim/스케줄링/전이는 관찰을 아예 읽지 않는다. attempt 행이 없는
- * 흔한 경우에는 no-op으로 넘어가 복원력을 유지한다. 엔진의 {@code advance} 트랜잭션에 얹혀 동작하며, 별도의
- * {@code REQUIRES_NEW} 트랜잭션을 쓰지 않는다(비동기로 관찰을 떼어내는 방안은 기각됐다). 쓰기가 실패하면 advance 전체가
- * 롤백된 뒤 재시도되므로 상태가 깨질 여지가 없다. {@code docs/exception-strategy.md} 참조.
+ * Task별 attempt와 폴링 요약을 상태 기록 트랜잭션에 함께 저장한다. 현재 attempt 번호는 failCount + 1이며
+ * 실패 횟수를 올리기 전에 해당 attempt를 종결한다. 기존 응답 계약은 유지하고 HTTP 본문·metadata는 별도 컬럼에
+ * 기록한다. HTTP 입력/실행이 정상인데 관찰 행만 유실된 경우 현재 attempt를 복구해 실제 결과를 보존한다.
  *
- * <p>현재 시도는 {@code (task.id, attemptNumber = task.failCount + 1)}로 식별한다. {@code failCount}는 시도가 끝날 때만
- * 바뀌므로 한 시도 내내 값이 안정적이다.
- *
- * <p>{@code beginAttempt}는 task가 디스패치 단계에 들어설 때 새 시도를 연다. {@code recordResponse}는 디스패치가 돌려준
- * 원시 {@code response}(형식은 불문, 해석은 task type의 몫)를 최신 시도에 저장한다. {@code recordCheck}는 폴 한 번의 결과를
- * 시도의 단일 check 행에 요약한다 — 처음 호출 때 만들고 이후에는 제자리에서 갱신한다(RUNNING 신호는 호출 횟수만 올리고,
- * 나머지 신호는 각자의 서브 카운터를 올린다). {@code endAttempt}는 시도의 최종 결과를 기록한다 — 실패 종결에는
- * 원인 텍스트({@code failureDetail})를 함께 남기되, 외부 유래 텍스트이므로 컬럼 길이로 잘라 저장 실패를 막는다.
+ * 이 클래스는 자체 독립 트랜잭션을 열지 않는다. 점유 소유권과 취소를 확인한 호출자의 트랜잭션에 참여하므로
+ * 응답 저장 실패는 Task 상태 변경까지 롤백한다. 입력 참조는 등록에 사용한 Task별 스냅샷을 추적한다.
+ * 호출 없는 종결의 빈 exchange는 기존 HTTP 증적을 유지한다. 실제 호출의 무응답은 operation이 있는 exchange로
+ * 구분하며, 이때는 이전 응답 대신 해당 호출의 빈 본문과 상태를 기록한다.
  */
 @Component
 @RequiredArgsConstructor
@@ -36,6 +32,7 @@ public class ObservationRecorder {
     private final TaskAttemptRepository taskAttemptRepository;
     private final TaskCheckRepository taskCheckRepository;
     private final Clock clock;
+    private final TaskConfirmationInputRepository confirmationInputs;
 
     public void beginAttempt(Task task) {
         taskAttemptRepository.save(TaskAttempt.builder()
@@ -44,6 +41,27 @@ public class ObservationRecorder {
                 .status(TaskStatus.IN_PROGRESS)
                 .startedAt(clock.instant())
                 .build());
+    }
+
+    public void ensureAttempt(Task task) {
+        if (currentAttempt(task).isEmpty()) beginAttempt(task);
+    }
+
+    public void recordHttpResponse(Task task, HttpExchange exchange, Long inputId) {
+        ensureAttempt(task);
+        currentAttempt(task).ifPresent(attempt -> {
+            if (exchange != null) {
+                attempt.setHttpResponse(exchange.body());
+                attempt.setHttpOperation(exchange.operation());
+                attempt.setHttpStatusCode(exchange.statusCode());
+                attempt.setResponseContentType(exchange.contentType());
+                attempt.setResponseReceivedAt(exchange.receivedAt());
+                attempt.setResponseTruncated(exchange.truncated());
+            }
+            if (inputId != null) attempt.setConfirmationInputId(inputId);
+            else confirmationInputs.findByTaskId(task.getId()).ifPresent(input -> attempt.setConfirmationInputId(input.getId()));
+            taskAttemptRepository.save(attempt);
+        });
     }
 
     public void recordResponse(Task task, String response) {

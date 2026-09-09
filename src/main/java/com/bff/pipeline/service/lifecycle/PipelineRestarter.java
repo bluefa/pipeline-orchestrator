@@ -7,22 +7,31 @@ import com.bff.pipeline.dto.pipeline.RestartPreview.SkippedTask;
 import com.bff.pipeline.dto.pipeline.RestartPreview.TaskToRun;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
+import com.bff.pipeline.entity.TaskConfirmationInput;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.TaskDefinition;
 import com.bff.pipeline.enums.TaskStatus;
+import com.bff.pipeline.enums.TaskOperation;
+import com.bff.pipeline.enums.PipelineType;
 import com.bff.pipeline.exception.InvalidResumeSequenceException;
 import com.bff.pipeline.exception.PipelineNotFoundException;
 import com.bff.pipeline.exception.PipelineNotLatestException;
 import com.bff.pipeline.exception.PipelineNotRestartableException;
 import com.bff.pipeline.exception.UnknownTaskException;
+import com.bff.pipeline.exception.InstallationDataNotFoundException;
+import com.bff.pipeline.exception.InstallationRequestException;
+import com.bff.pipeline.exception.OrchestrationErrorCode;
 import com.bff.pipeline.model.PipelinePlan;
 import com.bff.pipeline.model.PipelinePlan.PlannedStep;
 import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.TaskRepository;
+import com.bff.pipeline.repository.TaskConfirmationInputRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.stream.IntStream;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -40,6 +49,9 @@ import org.springframework.stereotype.Service;
  * 끝내고 삽입만 inserter의 트랜잭션이며, 유니크 위반의 도메인 번역은 {@link PipelineCreator#insert}를 공유한다.
  * preview와 restart는 검증·suffix 계산({@link #compute})을 공유하므로, 미리보기가 성공하면 실행도
  * (경합이 없는 한) 성공한다.
+ *
+ * 신규 공통 Task는 현재 capability를 재검증한다. 원본 provider를 우선하고 값이 유실되면 대상 provider를
+ * 다시 조회한다. 추천 입력은 NLB 옵션만 승계하며 원문·승인 맥락은 새 GET으로 얻는다. 새로운 요청 키는 새 Task 생성 시 설정하므로 원본의 진행 중 외부 호출과 중복될 가능성은 미리보기에 알린다.
  */
 @Service
 @RequiredArgsConstructor
@@ -52,11 +64,16 @@ public class PipelineRestarter {
     private static final String IN_FLIGHT_JOB_WARNING =
             "원본 실행이 최근에 종료되었습니다. 이전에 dispatch된 Terraform job이 아직 실행 중일 수 있습니다(멱등이므로 무해).";
 
+    private static final String NEW_INSTALLATION_EXECUTION_WARNING =
+            "새 Task와 요청 키로 다시 실행합니다. 이전 외부 호출은 계속 실행 중일 수 있습니다. 추천 입력이 포함되면 새로 생성합니다.";
+
     private final PipelineRepository pipelines;
     private final TaskRepository tasks;
     private final PipelineCreator pipelineCreator;
     private final PipelineSettings pipelineSettings;
     private final Clock clock;
+    private final TaskConfirmationInputRepository confirmationInputs;
+    private final InstallationOperationAvailability availability;
 
     /** 재시작 실행 — 검증·suffix 계산 후 새 파이프라인을 삽입한다. fromSequence는 선택적 오버라이드(더 앞으로만). */
     public Pipeline restart(String target, Long pipelineId, Integer fromSequence) {
@@ -79,12 +96,23 @@ public class PipelineRestarter {
         List<Task> suffix = originChain.stream()
                 .filter(task -> task.getSequence() >= resumeFromSequence)
                 .toList();
-        List<PlannedStep> steps = suffix.stream().map(PipelineRestarter::toStep).toList();
-        // provider는 원본 저장값 재사용 — task들이 그 provider로 이미 검증된 상태다. 열화(null)면 create와 동일 폴백.
+        List<PlannedStep> steps = suffix.stream().map(this::toStep).toList();
         CloudProvider provider = origin.getCloudProvider() != null
                 ? origin.getCloudProvider()
                 : pipelineCreator.resolveProvider(target);
+        requireRestartAvailable(origin, provider, steps);
         return new RestartComputation(origin, originChain, resumeFromSequence, provider, suffix, steps);
+    }
+
+    private void requireRestartAvailable(Pipeline origin, CloudProvider provider, List<PlannedStep> steps) {
+        steps.forEach(step -> pipelineCreator.validateStep(step, provider));
+        if (reconfirmationIsUnavailable(origin, provider)) {
+            throw InstallationRequestException.unavailable(origin.getRecipeDefinition());
+        }
+    }
+
+    private boolean reconfirmationIsUnavailable(Pipeline origin, CloudProvider provider) {
+        return origin.getType() == PipelineType.RECONFIRM && !availability.supportsReconfirmation(provider);
     }
 
     /** 원본 로드(404) + 결정 5 허용표(409) + 최신 실행 검증(409). */
@@ -124,10 +152,15 @@ public class PipelineRestarter {
     }
 
     /** 원본 task 행의 task_definition(진실원)을 재해석해 step으로 만든다 — 사라진 이름은 조용한 열화 대신 400. */
-    private static PlannedStep toStep(Task task) {
+    private PlannedStep toStep(Task task) {
         TaskDefinition definition = TaskDefinition.find(task.getTaskDefinition())
                 .orElseThrow(() -> new UnknownTaskException(task.getTaskDefinition()));
-        return new PlannedStep(definition, task.getDescription(), task.getId());
+        boolean applyNlbSecurityGroup = definition.operation() == TaskOperation.CONFIRM_RESOURCES_FROM_RECOMMENDATION
+                && confirmationInputs.findByTaskId(task.getId()).map(TaskConfirmationInput::isApplyNlbSecurityGroup)
+                        .orElseThrow(() -> new InstallationDataNotFoundException(
+                                OrchestrationErrorCode.CONFIRMATION_INPUT_NOT_FOUND, task.getId()));
+        return PlannedStep.builder().definition(definition).description(task.getDescription())
+                .originTaskId(task.getId()).applyNlbSecurityGroup(applyNlbSecurityGroup).build();
     }
 
     private RestartPreview toPreview(RestartComputation computation) {
@@ -143,12 +176,13 @@ public class PipelineRestarter {
                 .skippedTasks(computation.skipped().stream()
                         .map(task -> new SkippedTask(task.getSequence(), task.getTaskDefinition(), task.getStatus()))
                         .toList())
-                .tasksToRun(computation.suffix().stream().map(PipelineRestarter::toTaskToRun).toList())
-                .warnings(warnings(origin))
+                .tasksToRun(IntStream.range(0, computation.suffix().size())
+                        .mapToObj(index -> toTaskToRun(computation.suffix().get(index), computation.steps().get(index))).toList())
+                .warnings(warnings(computation))
                 .build();
     }
 
-    private static TaskToRun toTaskToRun(Task task) {
+    private static TaskToRun toTaskToRun(Task task, PlannedStep step) {
         return TaskToRun.builder()
                 .sequence(task.getSequence())
                 .taskDefinition(task.getTaskDefinition())
@@ -159,17 +193,28 @@ public class PipelineRestarter {
                 .originStatus(task.getStatus())
                 .originErrorCode(task.getErrorCode())
                 .originFailCount(task.getFailCount())
+                .applyNlbSecurityGroup(step.applyNlbSecurityGroup())
                 .build();
     }
 
     /**
-     * 차단이 아닌 안내(설계 §3.1). 원본이 executionTimeout 창 안에서 끝났으면 이전에 dispatch된 Terraform job이
-     * 아직 InfraManager에서 돌고 있을 수 있다 — 멱등이라 무해하지만 운영자에게 알린다. 끝난 행은 갱신되지
-     * 않으므로 lastActivityAt이 곧 끝난 시각이다.
+     * 신규 공통 Task는 새 요청 키로 실행하므로 원본 호출과의 중복 제거를 주장하지 않고 별도 실행임을 알린다.
+     * 기존 Terraform 실행은 종결 후 executionTimeout 창 안에 남아 있을 수 있다는 기존 안내를 유지한다.
+     * 끝난 행은 갱신되지 않으므로 lastActivityAt이 곧 끝난 시각이다.
      */
-    private List<String> warnings(Pipeline origin) {
+    private List<String> warnings(RestartComputation computation) {
+        List<String> warnings = new ArrayList<>();
+        if (computation.steps().stream().anyMatch(step -> step.definition().operation().usesInstallationClient())) {
+            warnings.add(NEW_INSTALLATION_EXECUTION_WARNING);
+        }
+        if (hasRecentTerraformExecution(computation)) warnings.add(IN_FLIGHT_JOB_WARNING);
+        return List.copyOf(warnings);
+    }
+
+    private boolean hasRecentTerraformExecution(RestartComputation computation) {
         Instant inFlightHorizon = clock.instant().minus(pipelineSettings.executionTimeout());
-        return origin.getLastActivityAt().isAfter(inFlightHorizon) ? List.of(IN_FLIGHT_JOB_WARNING) : List.of();
+        return computation.origin().getLastActivityAt().isAfter(inFlightHorizon)
+                && computation.originChain().stream().anyMatch(task -> Boolean.TRUE.equals(task.getConsumesTerraformSlot()));
     }
 
     private static long countDone(List<Task> chain) {
