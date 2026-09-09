@@ -1,6 +1,8 @@
 package com.bff.pipeline.controller;
 
 import com.bff.pipeline.dto.pipeline.LivePipelineStatistics;
+import com.bff.pipeline.dto.pipeline.HttpResponseDetail;
+import com.bff.pipeline.dto.pipeline.ConfirmationInputDetail;
 import com.bff.pipeline.dto.pipeline.PipelineDetail;
 import com.bff.pipeline.dto.pipeline.PipelineStatistics;
 import com.bff.pipeline.dto.pipeline.PipelineSummary;
@@ -9,6 +11,8 @@ import com.bff.pipeline.dto.pipeline.TerraformJobStateDetail;
 import com.bff.pipeline.dto.pipeline.TerraformResultDetail;
 import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
+import com.bff.pipeline.enums.PipelineType;
+import com.bff.pipeline.model.PipelineQueryFilter;
 import com.bff.pipeline.enums.StatisticsPeriod;
 import com.bff.pipeline.service.lifecycle.PipelineControl;
 import com.bff.pipeline.service.query.PipelineQueryService;
@@ -57,9 +61,13 @@ public class PipelineController {
             @RequestParam(required = false) PipelineStatus status,
             @RequestParam(required = false) CloudProvider provider,
             @RequestParam(required = false) String period,
+            @RequestParam(required = false) PipelineType type,
+            @RequestParam(required = false) String recipeDefinition,
             @PageableDefault(size = 20, sort = {"createdAt", "id"}, direction = Sort.Direction.DESC) Pageable pageable) {
         StatisticsPeriod parsedPeriod = period == null ? null : StatisticsPeriod.fromToken(period);
-        return queryService.list(status, provider, parsedPeriod, pageable);
+        PipelineQueryFilter filter = PipelineQueryFilter.builder().status(status).provider(provider)
+                .type(type).recipeDefinition(recipeDefinition).build();
+        return queryService.list(filter, parsedPeriod, pageable);
     }
 
     @GetMapping("/{pipelineId}")
@@ -85,6 +93,18 @@ public class PipelineController {
             @PathVariable int attemptNumber, @PathVariable String jobId) {
         return queryService.terraformJobState(pipelineId, taskId, attemptNumber, jobId);
     }
+
+    @GetMapping("/{pipelineId}/tasks/{taskId}/attempts/{attemptNumber}/http-response")
+    public HttpResponseDetail httpResponse(@PathVariable Long pipelineId, @PathVariable Long taskId,
+            @PathVariable int attemptNumber) {
+        return queryService.httpResponse(pipelineId, taskId, attemptNumber);
+    }
+
+    @GetMapping("/{pipelineId}/tasks/{taskId}/confirmation-input")
+    public ConfirmationInputDetail confirmationInput(@PathVariable Long pipelineId, @PathVariable Long taskId) {
+        return queryService.confirmationInput(pipelineId, taskId);
+    }
+
 
     @PostMapping("/{pipelineId}/cancel")
     public PipelineDetail cancel(@PathVariable Long pipelineId) {

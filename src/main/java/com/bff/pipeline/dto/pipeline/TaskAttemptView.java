@@ -1,6 +1,6 @@
 package com.bff.pipeline.dto.pipeline;
 
-import com.bff.pipeline.entity.TaskAttempt;
+import com.bff.pipeline.repository.TaskAttemptMetadata;
 import com.bff.pipeline.entity.TaskCheck;
 import com.bff.pipeline.enums.ErrorCode;
 import com.bff.pipeline.enums.TaskStatus;
@@ -29,9 +29,10 @@ public record TaskAttemptView(
         @JsonProperty("finished_at") Instant finishedAt,
         @JsonProperty("check") TaskCheckView check,
         @JsonProperty("terraform_results") List<TerraformResultSummary> terraformResults,
-        @JsonProperty("job_states") List<TerraformJobStateSummary> jobStates) {
+        @JsonProperty("job_states") List<TerraformJobStateSummary> jobStates,
+        @JsonProperty("http") HttpResponseDetail.Metadata http) {
 
-    public static TaskAttemptView from(TaskAttempt attempt, TaskCheck check,
+    public static TaskAttemptView from(TaskAttemptMetadata attempt, TaskCheck check,
             List<TerraformResultSummary> terraformResults, List<TerraformJobStateSummary> jobStates) {
         return TaskAttemptView.builder()
                 .attemptNumber(attempt.getAttemptNumber())
@@ -44,6 +45,7 @@ public record TaskAttemptView(
                 .check(check == null ? null : TaskCheckView.from(check))
                 .terraformResults(terraformResults)
                 .jobStates(jobStates)
+                .http(attempt.getHttpOperation() == null ? null : HttpResponseDetail.Metadata.from(attempt))
                 .build();
     }
 }

@@ -9,6 +9,6 @@ package com.bff.pipeline.exception;
  */
 public final class CallTimeoutException extends RuntimeException {
     public CallTimeoutException() {
-        super("InfraManager call exceeded the per-call timeout");
+        super("External call exceeded the per-call timeout");
     }
 }

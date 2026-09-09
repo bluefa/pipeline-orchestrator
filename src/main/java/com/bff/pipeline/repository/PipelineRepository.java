@@ -1,8 +1,9 @@
 package com.bff.pipeline.repository;
 
 import com.bff.pipeline.entity.Pipeline;
-import com.bff.pipeline.enums.CloudProvider;
 import com.bff.pipeline.enums.PipelineStatus;
+import com.bff.pipeline.enums.PipelineType;
+import com.bff.pipeline.model.PipelineQueryFilter;
 import jakarta.persistence.LockModeType;
 import jakarta.persistence.QueryHint;
 import java.time.Instant;
@@ -89,25 +90,29 @@ public interface PipelineRepository extends JpaRepository<Pipeline, Long> {
             + "where p.createdAt >= :since group by p.status")
     List<PipelineStatusCount> countByStatusSince(@Param("since") Instant since);
 
-    /** 대시보드 목록(P3): status/provider/기간(createdAt) 선택 필터 + 페이지네이션. null 인자는 해당 필터를 건너뛴다. */
-    @Query(value = "select p from Pipeline p where "
-            + "(:status is null or p.status = :status) and "
-            + "(:provider is null or p.cloudProvider = :provider) and "
-            + "(:since is null or p.createdAt >= :since)",
-            countQuery = "select count(p) from Pipeline p where "
-            + "(:status is null or p.status = :status) and "
-            + "(:provider is null or p.cloudProvider = :provider) and "
+    /** 선택 조건을 DB에서 적용한 뒤 페이지를 선택한다. 본문과 count 질의에 같은 조건을 사용한다. */
+    @Query("select p from Pipeline p where "
+            + "(:#{#filter.status} is null or p.status = :#{#filter.status}) and "
+            + "(:#{#filter.provider} is null or p.cloudProvider = :#{#filter.provider}) and "
+            + "(:#{#filter.type} is null or p.type = :#{#filter.type}) and "
+            + "(:#{#filter.recipeDefinition} is null or p.recipeDefinition = :#{#filter.recipeDefinition}) and "
             + "(:since is null or p.createdAt >= :since)")
-    Page<Pipeline> search(@Param("status") PipelineStatus status,
-            @Param("provider") CloudProvider provider,
-            @Param("since") Instant since,
-            Pageable pageable);
+    Page<Pipeline> search(@Param("filter") PipelineQueryFilter filter,
+            @Param("since") Instant since, Pageable pageable);
 
-    /** 대상 이력 목록(P7): 특정 target의 실행. 정렬은 호출측 Pageable(기본 created_at desc, id desc 결정적 순서)이 정한다. */
-    Page<Pipeline> findByTarget(String target, Pageable pageable);
+    /** 대상과 선택 유형을 먼저 거른 이력이다. 정렬과 페이지 경계는 호출측 Pageable이 정한다. */
+    @Query("select p from Pipeline p where p.target = :target and (:type is null or p.type = :type)")
+    Page<Pipeline> findHistoryByTarget(@Param("target") String target,
+            @Param("type") PipelineType type, Pageable pageable);
 
-    /** 최근 파이프라인 카드(P8): 특정 target의 가장 최근 실행 1건(상태 무관). id를 tiebreaker로 결정적 선택. */
-    Optional<Pipeline> findFirstByTargetOrderByCreatedAtDescIdDesc(String target);
+    /** 대상과 선택 유형에 맞는 최신 실행이다. 종단 실행도 포함하고 같은 생성 시각은 id로 구분한다. */
+    default Optional<Pipeline> findLatestByTarget(String target, PipelineType type) {
+        return findRecentByTarget(target, type, Limit.of(1)).stream().findFirst();
+    }
+
+    @Query("select p from Pipeline p where p.target = :target and (:type is null or p.type = :type) "
+            + "order by p.createdAt desc, p.id desc")
+    List<Pipeline> findRecentByTarget(@Param("target") String target, @Param("type") PipelineType type, Limit limit);
 
     /** 재시작 역링크: 이 파이프라인을 재시작한 최신 실행. idx_pipeline_origin이 지원한다. */
     Optional<Pipeline> findFirstByOriginPipelineIdOrderByIdDesc(Long originPipelineId);

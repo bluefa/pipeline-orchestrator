@@ -40,6 +40,9 @@ import lombok.Setter;
                 // Admin 조회 API(P2/P3/P7) 지원: 상태별 기간 집계·목록, target 이력 최신순.
                 @Index(name = "idx_pipeline_status_created", columnList = "status, created_at"),
                 @Index(name = "idx_pipeline_target_created", columnList = "target, created_at"),
+                @Index(name = "idx_pipeline_target_type_created", columnList = "target, type, created_at, id"),
+                @Index(name = "idx_pipeline_type_created", columnList = "type, created_at, id"),
+                @Index(name = "idx_pipeline_recipe_created", columnList = "recipe_definition, created_at, id"),
                 // ponytail: ~2,000행 규모엔 (notified_at, notify_next_at) 복합이면 충분. MySQL8은 부분(filtered)
                 // 인덱스가 없으므로 status 필터는 옵티마이저에 맡긴다. 대규모로 커지면 재검토.
                 @Index(name = "idx_pipeline_notify", columnList = "notified_at, notify_next_at"),

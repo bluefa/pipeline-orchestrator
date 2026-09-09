@@ -2,9 +2,15 @@ package com.bff.pipeline.service.query;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.bff.pipeline.config.ExecutionSettings;
 import com.bff.pipeline.config.PipelineSettings;
+import com.bff.pipeline.controller.GlobalAdvice;
+import com.bff.pipeline.controller.PipelineController;
+import com.bff.pipeline.controller.TargetSourcePipelineController;
 import com.bff.pipeline.dto.pipeline.LivePipelineStatistics;
 import com.bff.pipeline.dto.pipeline.PipelineDetail;
 import com.bff.pipeline.dto.pipeline.PipelineStatistics;
@@ -23,6 +29,7 @@ import com.bff.pipeline.enums.TaskStatus;
 import com.bff.pipeline.exception.PipelineNotFoundException;
 import com.bff.pipeline.exception.TaskNotFoundException;
 import com.bff.pipeline.repository.PipelineRepository;
+import com.bff.pipeline.model.PipelineQueryFilter;
 import com.bff.pipeline.repository.TaskAttemptRepository;
 import com.bff.pipeline.repository.TaskCheckRepository;
 import com.bff.pipeline.repository.TaskRepository;
@@ -32,6 +39,8 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
@@ -40,6 +49,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableHandlerMethodArgumentResolver;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -112,7 +125,8 @@ class PipelineQueryServiceTest {
         save(task(running.getId(), 0, TaskStatus.DONE, true));
         save(task(running.getId(), 1, TaskStatus.IN_PROGRESS, false));
 
-        Page<PipelineSummary> page = service.list(PipelineStatus.RUNNING, null, null, PageRequest.of(0, 10));
+        Page<PipelineSummary> page = service.list(PipelineQueryFilter.builder().status(PipelineStatus.RUNNING).build(),
+                null, PageRequest.of(0, 10));
 
         assertThat(page.getTotalElements()).isEqualTo(1);
         PipelineSummary summary = page.getContent().getFirst();
@@ -231,8 +245,122 @@ class PipelineQueryServiceTest {
         save(pipeline(PipelineStatus.DONE, "t-1", NOW.minus(Duration.ofDays(2))));
         Pipeline newer = save(pipeline(PipelineStatus.RUNNING, "t-1", NOW.minus(Duration.ofHours(1))));
 
-        assertThat(service.latestByTarget("t-1")).map(PipelineSummary::pipelineId).contains(newer.getId());
-        assertThat(service.latestByTarget("absent")).isEmpty();
+        assertThat(service.latestByTarget("t-1", null)).map(PipelineSummary::pipelineId).contains(newer.getId());
+        assertThat(service.latestByTarget("absent", null)).isEmpty();
+    }
+
+    @Test
+    void latestTypeFilterSelectsMatchingTerminalRunBeforeChoosingTheNewest() {
+        saveClassified(PipelineType.RECONFIRM, "AWS_RECONFIRM_V1", "filtered", NOW);
+        Pipeline matching = saveClassified(PipelineType.RECONFIRM, "AWS_RECONFIRM_V1", "filtered", NOW);
+        Pipeline newest = saveClassified(PipelineType.CUSTOM, "CUSTOM_EXAMPLE",
+                "filtered", NOW.plusSeconds(1));
+
+        assertThat(service.latestByTarget("filtered", PipelineType.RECONFIRM))
+                .map(PipelineSummary::pipelineId).contains(matching.getId());
+        assertThat(service.latestByTarget("filtered", null))
+                .map(PipelineSummary::pipelineId).contains(newest.getId());
+        assertThat(service.latestByTarget("filtered", PipelineType.DELETE)).isEmpty();
+    }
+
+    @Test
+    void targetHistoryFiltersBeforePagingAndCountsOnlyMatchingRows() {
+        Pipeline older = saveClassified(PipelineType.RECONFIRM, "AWS_RECONFIRM_V1", "history", NOW);
+        Pipeline newer = saveClassified(PipelineType.RECONFIRM, "AWS_RECONFIRM_V1", "history", NOW);
+        saveClassified(PipelineType.CUSTOM, "CUSTOM_EXAMPLE", "history", NOW.plusSeconds(1));
+        saveClassified(PipelineType.RECONFIRM, "AWS_RECONFIRM_V1", "other", NOW.plusSeconds(2));
+
+        Page<PipelineSummary> first = service.historyByTarget("history", PipelineType.RECONFIRM, newestPage(0));
+        Page<PipelineSummary> second = service.historyByTarget("history", PipelineType.RECONFIRM, newestPage(1));
+
+        assertThat(first.getTotalElements()).isEqualTo(2);
+        assertThat(first.getTotalPages()).isEqualTo(2);
+        assertThat(first.getContent()).extracting(PipelineSummary::pipelineId).containsExactly(newer.getId());
+        assertThat(second.getContent()).extracting(PipelineSummary::pipelineId).containsExactly(older.getId());
+        assertThat(service.historyByTarget("history", null, newestPage(0)).getTotalElements()).isEqualTo(3);
+    }
+
+    @Test
+    void globalTypeAndExactLegacyRecipeFiltersApplyTogetherBeforePaging() {
+        Pipeline older = saveClassified(PipelineType.RECONFIRM, "RETIRED_RECIPE_V0", "first", NOW);
+        Pipeline newer = saveClassified(PipelineType.RECONFIRM, "RETIRED_RECIPE_V0", "second", NOW);
+        saveClassified(PipelineType.CUSTOM, "RETIRED_RECIPE_V0", "wrong-type", NOW.plusSeconds(1));
+        saveClassified(PipelineType.RECONFIRM, "RETIRED_RECIPE_V0_EXTRA", "wrong-recipe", NOW.plusSeconds(2));
+        PipelineQueryFilter filter = PipelineQueryFilter.builder()
+                .type(PipelineType.RECONFIRM).recipeDefinition("RETIRED_RECIPE_V0").build();
+
+        Page<PipelineSummary> first = service.list(filter, null, newestPage(0));
+        Page<PipelineSummary> second = service.list(filter, null, newestPage(1));
+
+        assertThat(first.getTotalElements()).isEqualTo(2);
+        assertThat(first.getContent()).extracting(PipelineSummary::pipelineId).containsExactly(newer.getId());
+        assertThat(second.getContent()).extracting(PipelineSummary::pipelineId).containsExactly(older.getId());
+        assertThat(service.list(PipelineQueryFilter.builder().build(), null, newestPage(0)).getTotalElements())
+                .isEqualTo(4);
+    }
+
+    @Test
+    void globalFiltersKeepProviderStatusAndPeriodRestrictions() {
+        saveClassified(PipelineType.RECONFIRM, "AWS_RECONFIRM_V1", "matching", NOW);
+        saveClassified(PipelineType.RECONFIRM, "AWS_RECONFIRM_V1", "old", NOW.minus(Duration.ofDays(2)));
+        Pipeline otherProvider = pipeline(PipelineStatus.DONE, "gcp", NOW);
+        otherProvider.setType(PipelineType.RECONFIRM);
+        otherProvider.setCloudProvider(CloudProvider.GCP);
+        save(otherProvider);
+        PipelineQueryFilter filter = PipelineQueryFilter.builder().type(PipelineType.RECONFIRM)
+                .provider(CloudProvider.AWS).status(PipelineStatus.DONE).build();
+
+        assertThat(service.list(filter, StatisticsPeriod.ONE_DAY, newestPage(0)).getContent())
+                .extracting(PipelineSummary::targetSourceId).containsExactly("matching");
+    }
+
+    @Test
+    void latestHttpReturnsNoContentWhenTheRequestedTypeHasNoRun() throws Exception {
+        saveClassified(PipelineType.INSTALL, "AWS_INSTALL_V1", "latest-http", NOW);
+
+        queryApi().perform(get("/api/v1/target-sources/latest-http/pipelines/latest")
+                        .param("type", "RECONFIRM"))
+                .andExpect(status().isNoContent());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/api/v1/pipelines", "/api/v1/target-sources/target/pipelines",
+            "/api/v1/target-sources/target/pipelines/latest"})
+    void invalidTypeIsAControlledBadRequestOnEveryQueryEndpoint(String path) throws Exception {
+        queryApi().perform(get(path).param("type", "NOT_A_PIPELINE_TYPE"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("code").value("ORCHESTRATION_INVALID_PARAMETER"));
+    }
+
+    @Test
+    void globalHttpPassesBothFiltersAndUsesDeterministicDefaultOrdering() throws Exception {
+        saveClassified(PipelineType.RECONFIRM, "RETIRED_RECIPE_V0", "older", NOW);
+        Pipeline matching = saveClassified(PipelineType.RECONFIRM, "RETIRED_RECIPE_V0", "newer", NOW);
+        saveClassified(PipelineType.CUSTOM, "RETIRED_RECIPE_V0", "other", NOW.plusSeconds(1));
+
+        queryApi().perform(get("/api/v1/pipelines").param("type", "RECONFIRM")
+                        .param("recipeDefinition", "RETIRED_RECIPE_V0").param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("totalElements").value(2))
+                .andExpect(jsonPath("content[0].pipeline_id").value(matching.getId()));
+    }
+
+    private MockMvc queryApi() {
+        return MockMvcBuilders.standaloneSetup(new PipelineController(service, null),
+                        new TargetSourcePipelineController(service, null, null))
+                .setCustomArgumentResolvers(new PageableHandlerMethodArgumentResolver())
+                .setControllerAdvice(new GlobalAdvice(Clock.fixed(NOW, ZoneOffset.UTC))).build();
+    }
+
+    private Pipeline saveClassified(PipelineType type, String recipeDefinition, String target, Instant createdAt) {
+        Pipeline pipeline = pipeline(PipelineStatus.DONE, target, createdAt);
+        pipeline.setType(type);
+        pipeline.setRecipeDefinition(recipeDefinition);
+        return save(pipeline);
+    }
+
+    private static PageRequest newestPage(int pageNumber) {
+        return PageRequest.of(pageNumber, 1, Sort.by(Sort.Direction.DESC, "createdAt", "id"));
     }
 
     private Pipeline save(Pipeline pipeline) {

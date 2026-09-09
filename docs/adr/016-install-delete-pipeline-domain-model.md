@@ -1,4 +1,4 @@
-# ADR-016: Install/Delete Pipeline — Durable State-Machine Domain Model
+# ADR-016: Pipeline — Durable State-Machine Domain Model
 
 ## Status
 
@@ -10,7 +10,14 @@ observation table `terraform_result`, `PipelineType.CUSTOM`, `ErrorCode.UNKNOWN_
 revised 2026-07-04 (alignment pass 2, codex round 1): completion reads only `task_attempt`
 (never `task_check`); `task_check` is 0..1 per attempt; `fail_count == attempt_number` holds only
 on the retryable path; `terraform_result` written in the run phase outside tx2; constraint names
-and column order matched to entities; `recipe_definition` write-once claim corrected).
+and column order matched to entities; `recipe_definition` write-once claim corrected;
+revised 2026-09-09: ADR-023 adds RECONFIRM, synchronous HTTP completion,
+durable execution inputs, and type-filtered queries).
+
+**2026-09-09 설계 확장:** [ADR-023의 운영 연동 범위](023-reconfirmation-http-tasks-and-execution-input.md)이
+신규 Task·Recipe·실행 입력·HTTP 원문 보존의 상세 계약과 반영 범위를 소유한다. 아래의 설치/삭제
+스키마는 기존 기준선이며 확장 모델은 JPA로 선언한다. 운영 adapter·실제 MySQL 검증·프런트 연동은
+남아 있으며, 신규 유형의 실제 호출은 외부 멱등성·버전 검증·업무 연동 계약 확인 후 활성화한다.
 
 The **domain half** of the install/delete pipeline design: the durable state, data model,
 uniqueness rule, failure semantics, and lifecycle. The **execution model** — how the state
@@ -51,9 +58,15 @@ The pipeline's state lives in database rows; there is no in-memory authority to 
 runs the pipeline (ADR-021) is stateless with respect to progress — it reads the rows and
 resumes. Every decision below depends on this.
 
-### 2. Two domain tables, a small durable state machine
+### 2. Two state tables, a small durable state machine, and explicit execution inputs
 
 `pipeline` and `task` are the **domain state tables** (full schema in the **Schema** section below).
+
+ADR-023 adds separate durable domain data, without adding lifecycle states:
+`task_confirmation_input` holds the immutable recommendation used by the same input task
+when it registers resources. This input is not a disposable observation. Claim and scheduling still use pipeline/task;
+execution may read these additional inputs. The baseline's “two tables” describes state tables,
+not an upper bound on required domain data once a task persists its internal execution input.
 
 ```
 Task:      BLOCKED ──▶ READY ──▶ IN_PROGRESS ──▶ DONE | FAILED | CANCELLED
@@ -105,6 +118,15 @@ operation the domain action within it. A pipeline's recipe (its ordered task lis
 default per `(type, provider)`; a `CUSTOM` pipeline instead takes its task list from the
 operator's request, validated against the `TaskDefinition` catalog (no persisted recipe).
 
+ADR-023 adds business type `RECONFIRM` and executor mechanism `HTTP_REQUEST`.
+The mechanisms remain an open TaskType registry, not
+a new enum. A RECONFIRM recipe contains provider-specific destroy tasks followed by confirmed
+resource deletion and one recommendation-based input task (GET then POST internally). The complete
+chain holds one active_target slot; it does not create a nested DELETE pipeline. Deletion and input
+are ALL_CSP definitions and independently selectable in CUSTOM. Existing
+CSP-specific tasks still require a provider match; supportsProvider governs both composition paths.
+Actual client availability is checked equally for catalog and CUSTOM; scope does not imply deployment readiness.
+
 ### 3. Observation is separate from state
 
 Four **observation tables** — `task_attempt` (per-retry-attempt outcome), `task_check`
@@ -118,7 +140,17 @@ attempt row, and only for that; claim, scheduling, and pipeline transitions neve
 Losing a row never corrupts state: for a `TERRAFORM_JOB` a missing latest result falls through to
 `executionTimeout` and re-dispatches (idempotent); a `CONDITION_CHECK` has no async result to lose —
 a poll lost to a crash is reclaimed on lease expiry (ADR-021 Decision 5) and re-polled — either way the cost is a delay, not correctness
-(the three invariants are in the **Schema** section). They add no domain column and no enum.
+(the three invariants are in the **Schema** section). These baseline observations add no domain
+column or enum. ADR-023 explicitly distinguishes required execution inputs from observations:
+losing a recommendation snapshot is a controlled failure, not
+permission to fabricate an input or blindly issue a new mutation.
+
+For HTTP tasks, a typed HTTP verdict is committed with the raw response by guarded
+write-back. The single input task first commits recommendation data and remains IN_PROGRESS;
+its next check performs the registration POST, rather than reading a prior attempt to infer
+completion. This explicitly extends check from pure observation to advancing an internal task step.
+A delete or resumed POST can complete synchronously in execute. No diagnostic table becomes an
+execution input. See ADR-023 Decisions 3–5.
 
 ### 4. One active pipeline per target
 
@@ -155,7 +187,17 @@ the task does not stall: the per-task
 never depends on retaining the job ids. We never "reclaim" prior jobs; `(task_id, attempt_number)` is
 a logical attempt identity, not an InfraManager key.
 
+The preceding fresh-dispatch contract is the **Terraform baseline**, not proof that a new API
+is idempotent. ADR-023 HTTP mutations require stable request identity and protection against a
+late operation affecting a newer confirmation generation, across all upstream write entry points.
+The orchestrator's claim token fences DB writes, not external effects. Unknown
+upstream guarantees keep the new recipe disabled.
+
 ### 6. Bounded waiting and retry
+
+ADR-023 adds explicit exceptions to the baseline below. HTTP completion uses typed responses and
+uses a short configured retry interval and the existing maximum attempt budget.
+
 
 - `fail_count` per task. A failed dispatch or poll increments it; below `maxFailCount` the task
   re-runs as a **fresh run** (completed work is a no-op — Terraform converges), at or above it
@@ -170,18 +212,36 @@ a logical attempt identity, not an InfraManager key.
   polling_interval`, with total elapsed also including each poll's call/queue time (slow checks or
   call timeouts lengthen it; the not-met/error mix changes only how many not-met samples occur). Size `polling_interval` to the condition's cadence and keep `maxFailCount` modest
   (each poll writes one attempt/observation row; `max_fail_count ≥ 1`, so at least one poll runs).
-- One **per-task** deadline: `executionTimeout`, for `TERRAFORM_JOB` only (a condition has no
+- One **per-task** deadline: `executionTimeout`, for `TERRAFORM_JOB` in the baseline (a condition has no
   long-running job to time out); with the **per-call** timeout, both map to canonical `ErrorCode`
   values, not separate states.
 - No circuit breaker — a systemic failure is delay (timeout + retry + alert), not corruption.
 
 ### 7. Minimal lifecycle
 
-Two task kinds (`TERRAFORM_JOB`, `CONDITION_CHECK`). **Retry is a fresh run.** **Cancel**
+The baseline has two task kinds (`TERRAFORM_JOB`, `CONDITION_CHECK`); ADR-023 adds one mechanism.
+**Terraform retry is a fresh run.** HTTP registration retry uses the same committed input and
+request key. **Cancel**
 converges directly to `CANCELLED` — there is no `CANCELLING` state — and terminalizes every
 non-terminal task (`BLOCKED`/`READY`/`IN_PROGRESS` → `CANCELLED`); a `FAILED` pipeline marks the
 failing task `FAILED` and the rest `CANCELLED`. A terminal state is never resurrected. *How*
 cancel is applied against a live worker is an execution concern (ADR-021).
+
+An HTTP_REQUEST may apply READY → IN_PROGRESS → terminal within one guarded write-back, opening
+and closing one attempt there. Recommendation capture instead stays IN_PROGRESS in the same Task;
+only the following registration completes it. Retryable HTTP failures use the existing retry budget and return
+to READY. Cancel does not undo a completed remote mutation. Existing confirmed
+information is not automatically restored after partial RECONFIRM failure. RECONFIRM DONE does not
+mean infrastructure installed.
+
+### 8. Query business type independently of execution status
+
+ADR-023 adds optional type filters to target history/latest and the global list, plus an exact
+recipeDefinition filter on the global list. Filtering precedes ordering/pagination. Latest means
+the newest matching run including terminal runs, ordered by created_at DESC, id DESC; no match
+retains 204. Omitting filters preserves existing behavior. Per-target uniqueness still spans
+all types. A type's historical success is not proof that the current approval/configuration
+version is complete: the business owner links that version to the specific pipelineId.
 
 ## Considered Options
 
@@ -197,17 +257,22 @@ cancel is applied against a live worker is an execution concern (ADR-021).
 
 - Current state is one rule: the row. Self-heals across crashes and redeploys via idempotent
   re-dispatch — no exactly-once machinery.
-- Small and stable: two domain tables, four core enums, two task kinds. The model is unchanged
-  when the execution strategy (ADR-021) changes.
+- The baseline has two state tables and two task kinds; ADR-023 adds narrowly scoped execution
+  input and test identity data. The domain remains separate from execution strategy (ADR-021).
 
 **Costs we accept**
 
 - No full per-call audit ledger or event outbox. Audit = logs/metrics + the `pipeline`/`task`
-  rows + the three observation tables. Worker-outage and queue-wait alerts are deferred.
+  rows + the four observation tables. Worker-outage and queue-wait alerts are deferred.
 - Per-target uniqueness rejects a concurrent INSTALL and DELETE for the same target by
   construction — intended, not a limitation.
 
 ## Schema
+
+**기준선과 확장 스키마의 구분:** 아래 목록은 기존 설치/삭제 구현 기준선이다. ADR-023 결정 6은
+`task_confirmation_input` 신규 테이블과
+task_attempt HTTP metadata/LONGTEXT·입력 참조, type 조회 인덱스의 확장 모델을 정의한다.
+신규 테이블·컬럼은 JPA로 선언하며, 실제 MySQL에 적용됐는지는 별도 배포·스키마 검증 대상이다.
 
 **Domain state tables**
 
@@ -250,7 +315,7 @@ cancel is applied against a live worker is an execution concern (ADR-021).
 **Observation tables** (per attempt; only the *latest* `task_attempt` row is read — by the
 completion `check` — nothing else; `task_check` and `terraform_result` are write-only)
 
-- `task_attempt(id, task_id, attempt_number, response, status, error_code, started_at, finished_at)`
+- `task_attempt(id, task_id, attempt_number, response, status, error_code, failure_detail, started_at, finished_at)`
   — one row per retry attempt; `attempt_number` is assigned at creation as the pre-attempt
   `fail_count + 1`. On a **retryable** failure the attempt is closed `FAILED` *and* `fail_count`
   is incremented, so a committed retryable-failed attempt has `fail_count == attempt_number` (this
@@ -317,10 +382,12 @@ polled job of that attempt, keyed `(task_id, attempt_number, job_id)`, upserted 
 
 **Observation invariants**
 
-1. The reconciler reads **only the latest `task_attempt` row**, and only to evaluate task
+1. Among baseline observations, the reconciler reads **only the latest `task_attempt` row**, and only to evaluate task
    completion (`check(target, task, attempt)`); it **never reads `task_check`,
    `terraform_result`, or `terraform_job_state`** (all three are write-only diagnostics). Claim,
-   scheduling, and pipeline transitions depend only on `pipeline`/`task`.
+   scheduling, and pipeline status derivation depend only on `pipeline`/`task`. ADR-023's required
+   execution input table may be read to execute tasks, and HTTP completion is judged from
+   the current call outcome inside write-back.
 2. `task_check` is **at most one row per attempt** (0..1): a `TERRAFORM_JOB` attempt UPDATEs it in
    place across polls (and writes none if it completes on its first `check`); a `CONDITION_CHECK`
    inserts one per poll, bounded by `maxFailCount`. `terraform_result` is one row per
@@ -341,11 +408,11 @@ large closed set enumerated in code (`TaskOperation.java`), described rather tha
 |---|---|
 | `TaskStatus` | BLOCKED, READY, IN_PROGRESS, DONE, FAILED, CANCELLED |
 | `PipelineStatus` | PENDING, RUNNING, DONE, FAILED, CANCELLED (`PENDING` and `RUNNING` are the two non-terminal values) |
-| `PipelineType` | INSTALL, DELETE, CUSTOM |
-| `ErrorCode` | JOB_FAILED, EXECUTION_TIMEOUT, CONDITION_NOT_MET, CHECK_ERROR, CALL_TIMEOUT, UNKNOWN_TASK |
-| `TaskOperation` | closed set of 25 — 24 `TERRAFORM_JOB` operations (8 execution units × PLAN/APPLY/DESTROY) + the `NETWORK_READY` condition check; each value owns the mechanism that executes it. Full list in `TaskOperation.java`. |
+| `PipelineType` | INSTALL, DELETE, CUSTOM, RECONFIRM (external activation scope in ADR-023) |
+| `ErrorCode` | JOB_FAILED, EXECUTION_TIMEOUT, CONDITION_NOT_MET, CHECK_ERROR, CALL_TIMEOUT, UNKNOWN_TASK, EXECUTION_INPUT_MISSING, EXECUTION_INPUT_INVALID, RESPONSE_TOO_LARGE, RECOMMENDATION_NOT_FOUND, CONFIRMATION_CONFLICT, OPERATION_UNAVAILABLE |
+| `TaskOperation` | closed set of 27 — 24 `TERRAFORM_JOB` operations (8 execution units × PLAN/APPLY/DESTROY), `NETWORK_READY`, and two HTTP operations; each value owns its mechanism and installation policy. Full list in `TaskOperation.java`. |
 
-The task *kind* (TERRAFORM_JOB, CONDITION_CHECK) is deliberately not an enum: it is the open
+The task *kind* (TERRAFORM_JOB, CONDITION_CHECK, HTTP_REQUEST) is deliberately not an enum: it is the open
 mechanism / `TaskType`-name set, registry-validated at boot and persisted as `task_name` (§2).
 `UNKNOWN_TASK` is the degradation code for a stored task whose definition no longer resolves.
 Catalog enums (`TaskDefinition`, `RecipeDefinition`) persist by constant **name** (string), so a
@@ -355,7 +422,9 @@ removed or renamed value degrades cleanly instead of breaking reads.
 
 - [ADR-021](021-pipeline-execution-model.md) — the execution model that drives this state machine
 - [adr-016-history.md](../../design/pipeline/adr-016-history.md) — design history & rationale (maximal → minimal, revisions)
-- Related: ADR-006 (confirmation model), ADR-009 (process status). A pipeline runs between CONFIRMED and INSTALLED.
+- Related: ADR-006 (confirmation model), ADR-009 (process status). The baseline INSTALL pipeline runs
+  between CONFIRMED and INSTALLED. ADR-023 extends the business scope to reconfirmation,
+  while keeping approval-owner terminal handling separate.
 
 ## Glossary
 

@@ -36,6 +36,10 @@ import lombok.Setter;
  * 실패의 예외 메시지(HTTP status·URL)나 malformed 응답의 파싱 오류처럼, 지금까지 서버 로그에만 남던 진단을
  * attempt 행에 함께 영속한다. 외부 유래 텍스트이므로 기록자({@code ObservationRecorder})가 컬럼 길이로 잘라
  * 저장 실패를 막고, 엔진 로직은 이 값을 결코 읽지 않는다.
+ *
+ * 신규 HTTP 호출은 기존 response와 별도인 httpResponse 및 metadata에 기록한다. 추천 입력은 Task별 입력
+ * 테이블에서 읽으며 성공 GET 증적도 그곳에 고정된다. 같은 attempt의 POST가 현재 HTTP 응답을 교체해도
+ * GET 원문과 등록 입력은 보존된다. 신규 대용량 본문은 Task 상세의 metadata 투영에서 제외한다.
  */
 @Entity
 @Table(
@@ -50,6 +54,8 @@ public class TaskAttempt {
 
     /** failureDetail 컬럼 길이 — 외부 유래 텍스트이므로 기록자가 이 길이로 잘라 저장 실패를 막는다. */
     public static final int FAILURE_DETAIL_LENGTH = 512;
+    public static final int CONTENT_TYPE_LENGTH = 128;
+    public static final int HTTP_OPERATION_LENGTH = 48;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -63,6 +69,21 @@ public class TaskAttempt {
 
     @Column(columnDefinition = "text")
     private String response;
+
+    @Column(name = "http_response", columnDefinition = "LONGTEXT")
+    private String httpResponse;
+    @Column(name = "http_operation", length = HTTP_OPERATION_LENGTH)
+    private String httpOperation;
+    @Column(name = "http_status_code")
+    private Integer httpStatusCode;
+    @Column(name = "response_content_type", length = CONTENT_TYPE_LENGTH)
+    private String responseContentType;
+    @Column(name = "response_received_at")
+    private Instant responseReceivedAt;
+    @Column(name = "response_truncated")
+    private Boolean responseTruncated;
+    @Column(name = "confirmation_input_id")
+    private Long confirmationInputId;
 
     /** 이 attempt의 결과(varchar 저장, {@link TaskStatusConverter}). status는 엔진 완료 판정에 직접 쓰이므로 read는 fail-fast를 유지한다. */
     @Convert(converter = TaskStatusConverter.class)

@@ -17,7 +17,8 @@ import com.bff.pipeline.dto.pipeline.TerraformResultDetail;
 import com.bff.pipeline.dto.pipeline.TerraformResultSummary;
 import com.bff.pipeline.entity.Pipeline;
 import com.bff.pipeline.entity.Task;
-import com.bff.pipeline.enums.CloudProvider;
+import com.bff.pipeline.enums.PipelineType;
+import com.bff.pipeline.model.PipelineQueryFilter;
 import com.bff.pipeline.enums.PipelineStatus;
 import com.bff.pipeline.enums.StatisticsPeriod;
 import com.bff.pipeline.enums.TaskDefinition;
@@ -30,13 +31,18 @@ import com.bff.pipeline.repository.PipelineRepository;
 import com.bff.pipeline.repository.PipelineStatusCount;
 import com.bff.pipeline.repository.PipelineTaskStatusCount;
 import com.bff.pipeline.repository.TaskAttemptRepository;
+import com.bff.pipeline.repository.TaskAttemptMetadata;
+import com.bff.pipeline.repository.TaskConfirmationInputRepository;
+import com.bff.pipeline.dto.pipeline.HttpResponseDetail;
+import com.bff.pipeline.dto.pipeline.ConfirmationInputDetail;
+import com.bff.pipeline.exception.InstallationDataNotFoundException;
+import com.bff.pipeline.exception.OrchestrationErrorCode;
 import com.bff.pipeline.repository.TaskCheckRepository;
 import com.bff.pipeline.repository.TaskRepository;
 import com.bff.pipeline.repository.TerraformJobStateMetadata;
 import com.bff.pipeline.repository.TerraformJobStateRepository;
 import com.bff.pipeline.repository.TerraformResultMetadata;
 import com.bff.pipeline.repository.TerraformResultRepository;
-import com.bff.pipeline.entity.TaskAttempt;
 import com.bff.pipeline.entity.TaskCheck;
 import com.bff.pipeline.utils.TaskSettingsResolver;
 import java.time.Clock;
@@ -81,6 +87,7 @@ public class PipelineQueryService {
     private final PipelineRepository pipelines;
     private final TaskRepository tasks;
     private final TaskAttemptRepository attempts;
+    private final TaskConfirmationInputRepository confirmationInputs;
     private final TaskCheckRepository checks;
     private final TerraformResultRepository terraformResults;
     private final TerraformJobStateRepository terraformJobStates;
@@ -122,18 +129,21 @@ public class PipelineQueryService {
                 .build();
     }
 
-    public Page<PipelineSummary> list(PipelineStatus status, CloudProvider provider,
+    /** 선택 조건을 DB에서 적용한 페이지와 그 페이지에 속한 Task 진행 개수를 함께 반환한다. */
+    public Page<PipelineSummary> list(PipelineQueryFilter filter,
             StatisticsPeriod period, Pageable pageable) {
         Instant since = period == null ? null : clock.instant().minus(period.window());
-        return summarize(pipelines.search(status, provider, since, pageable));
+        return summarize(pipelines.search(filter, since, pageable));
     }
 
-    public Page<PipelineSummary> historyByTarget(String targetSourceId, Pageable pageable) {
-        return summarize(pipelines.findByTarget(targetSourceId, pageable));
+    /** 대상의 이력에 선택적 업무 유형을 적용한다. 유형이 null이면 기존 전체 이력을 유지한다. */
+    public Page<PipelineSummary> historyByTarget(String targetSourceId, PipelineType type, Pageable pageable) {
+        return summarize(pipelines.findHistoryByTarget(targetSourceId, type, pageable));
     }
 
-    public Optional<PipelineSummary> latestByTarget(String targetSourceId) {
-        return pipelines.findFirstByTargetOrderByCreatedAtDescIdDesc(targetSourceId).map(pipeline -> {
+    /** 지정한 유형의 최신 실행을 종단 상태까지 포함해 찾는다. 해당 이력이 없으면 비어 있다. */
+    public Optional<PipelineSummary> latestByTarget(String targetSourceId, PipelineType type) {
+        return pipelines.findLatestByTarget(targetSourceId, type).map(pipeline -> {
             List<Task> chain = tasks.findByPipelineIdOrderBySequenceAsc(pipeline.getId());
             return PipelineSummary.from(pipeline, countDone(chain), chain.size());
         });
@@ -255,7 +265,7 @@ public class PipelineQueryService {
     }
 
     /**
-     * execution timeout은 TERRAFORM_JOB 전용이다(#15). CONDITION_CHECK는 maxFailCount로 경계되므로 null.
+     * execution timeout은 Terraform에 적용한다. HTTP/Condition은 재시도 예산으로 제한하므로 null.
      * 미해석 operation(카탈로그에서 제거된 옛 값 → converter가 null로 열화)도 null로 둔다 — 표시용 파생이라
      * 조회를 터뜨리지 않는 쪽이 계약이다.
      */
@@ -289,6 +299,19 @@ public class PipelineQueryService {
                 .orElseThrow(() -> new TerraformJobStateNotFoundException(taskId, attemptNumber, jobId));
     }
 
+    public HttpResponseDetail httpResponse(Long pipelineId, Long taskId, int attemptNumber) {
+        requireOwnedTask(pipelineId, taskId);
+        return attempts.findByTaskIdAndAttemptNumber(taskId, attemptNumber).map(HttpResponseDetail::from)
+                .orElseThrow(() -> new InstallationDataNotFoundException(OrchestrationErrorCode.HTTP_RESPONSE_NOT_FOUND, taskId));
+    }
+
+    public ConfirmationInputDetail confirmationInput(Long pipelineId, Long taskId) {
+        requireOwnedTask(pipelineId, taskId);
+        return confirmationInputs.findByTaskId(taskId).map(ConfirmationInputDetail::from)
+                .orElseThrow(() -> new InstallationDataNotFoundException(OrchestrationErrorCode.CONFIRMATION_INPUT_NOT_FOUND, taskId));
+    }
+
+
     /** 소유권 체인 검증 — pipeline이 존재하고 task가 그 pipeline 소속인지 확인하고 task를 돌려준다. */
     private Task requireOwnedTask(Long pipelineId, Long taskId) {
         if (!pipelines.existsById(pipelineId)) {
@@ -301,9 +324,9 @@ public class PipelineQueryService {
 
     /** attempt별 폴 요약을 한 번의 in 질의로 배치 로드해 매핑한다(per-poll condition attempt에서 N+1을 피한다). */
     private List<TaskAttemptView> attemptViews(Long taskId) {
-        List<TaskAttempt> attemptList = attempts.findByTaskIdOrderByAttemptNumberAsc(taskId);
+        List<TaskAttemptMetadata> attemptList = attempts.findMetadataByTaskIdOrderByAttemptNumberAsc(taskId);
         Map<Long, TaskCheck> checkByAttemptId = checks
-                .findByTaskAttemptIdIn(attemptList.stream().map(TaskAttempt::getId).toList()).stream()
+                .findByTaskAttemptIdIn(attemptList.stream().map(TaskAttemptMetadata::getId).toList()).stream()
                 .collect(Collectors.toMap(TaskCheck::getTaskAttemptId, Function.identity()));
         Map<Integer, List<TerraformResultSummary>> resultsByAttemptNumber = terraformResultSummaries(taskId);
         Map<Integer, List<TerraformJobStateSummary>> jobStatesByAttemptNumber = terraformJobStateSummaries(taskId);
