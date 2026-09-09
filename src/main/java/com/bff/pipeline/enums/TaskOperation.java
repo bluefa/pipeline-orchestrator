@@ -57,19 +57,35 @@ public enum TaskOperation {
     /** 네트워크가 준비됐는지 확인(condition check)하는 액션. (실제 API 미확정 — 가정 엔드포인트) */
     NETWORK_READY(Mechanism.CONDITION_CHECK);
 
+
     /** mechanism 이름 리터럴 — 값은 각 TaskType.NAME과 일치해야 하며 부팅 시 검증된다. */
     public static final class Mechanism {
         public static final String TERRAFORM_JOB = "TERRAFORM_JOB";
         public static final String CONDITION_CHECK = "CONDITION_CHECK";
+        public static final String HTTP_REQUEST = "HTTP_REQUEST";
 
         private Mechanism() {
         }
     }
 
+    /** 설치 경계 사용 여부와 생성 시 적용할 실행 정책을 operation 자체에 선언한다. */
+    private enum InstallationPolicy {
+        /** 기존 실행 경계를 사용한다. */
+        NONE,
+        /** 설치 HTTP 호출에 재시도 간격과 예산을 적용한다. */
+        HTTP_RETRY
+    }
+
     private final String mechanism;
+    private final InstallationPolicy installationPolicy;
 
     TaskOperation(String mechanism) {
+        this(mechanism, InstallationPolicy.NONE);
+    }
+
+    TaskOperation(String mechanism, InstallationPolicy installationPolicy) {
         this.mechanism = mechanism;
+        this.installationPolicy = installationPolicy;
     }
 
     /** 이 operation을 실행할 TaskType의 이름(=taskName). */
@@ -90,6 +106,17 @@ public enum TaskOperation {
         int marker = name().lastIndexOf("_TF_");
         return marker < 0 ? Optional.empty() : Optional.of(name().substring(marker + "_TF_".length()));
     }
+
+    /** 설치 client의 capability와 operation 활성 설정을 요구하는 작업인지 표시한다. */
+    public boolean usesInstallationClient() {
+        return installationPolicy != InstallationPolicy.NONE;
+    }
+
+    /** 생성 시 HTTP 재시도 간격과 예산을 고정해야 하는 작업인지 표시한다. */
+    public boolean usesHttpRetryPolicy() {
+        return installationPolicy == InstallationPolicy.HTTP_RETRY;
+    }
+
 
     /**
      * terraform slot 소비 여부의 단일 authority다. slot 소비는 operation이 아니라 mechanism의 속성이라, 값을 op마다

@@ -96,7 +96,7 @@ public class PipelineRestarter {
         if (!RESTARTABLE_STATUSES.contains(origin.getStatus()) || origin.getType() == null) {
             throw new PipelineNotRestartableException(pipelineId, origin.getStatus());
         }
-        Pipeline latest = pipelines.findFirstByTargetOrderByCreatedAtDescIdDesc(target)
+        Pipeline latest = pipelines.findLatestByTarget(target, null)
                 .orElseThrow(() -> new PipelineNotFoundException(pipelineId));
         if (!latest.getId().equals(origin.getId())) {
             throw new PipelineNotLatestException(pipelineId, latest.getId());

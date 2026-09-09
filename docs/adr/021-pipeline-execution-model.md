@@ -1,4 +1,4 @@
-# ADR-021: Install/Delete Pipeline — Claim-Pull Execution Model
+# ADR-021: Pipeline — Claim-Pull Execution Model
 
 ## Status
 
@@ -9,7 +9,12 @@ revised 2026-07-03 (alignment pass): index/SQL wording matched to the MySQL 8 im
 revised 2026-07-04 (alignment pass 2, codex round 1): `task_check` is 0..1 per attempt (not one
 per attempt); no distinct 429/503 backpressure in V1; lease bound covers the multi-call Terraform
 step; backoff is ×2 geometric and jitter desynchronizes pods; metrics catalog is not yet
-instrumented; see Revision history).
+instrumented; revised 2026-09-08: ADR-023 execution-input and synchronous HTTP write-back extension;
+see Revision history).
+
+**2026-09-09 설계 확장:** [ADR-023의 운영 연동 범위](023-reconfirmation-http-tasks-and-execution-input.md)은
+재확정의 계약 및 구현 범위를 기록한다. 기본 claim/lease/fencing 모델은 유지하고
+Decision 4.1은 신규 실행 데이터·동기 완료 기록 경계를 정의한다. 운영 adapter·실제 MySQL 검증·프런트 연동은 남아 있다.
 
 This is the **execution half** of the install/delete pipeline design: how the durable state
 machine of [ADR-016](016-install-delete-pipeline-domain-model.md) is actually driven forward.
@@ -19,8 +24,10 @@ ADR means a future change supersedes **only this ADR**, leaving the domain model
 
 ## Context
 
-ADR-016 establishes that the database row **is** the pipeline's state and that every
-dispatch is idempotent (so at-least-once delivery is correct). What it does not decide is
+ADR-016 establishes that the database row **is** the pipeline's state and that baseline Terraform
+dispatch is idempotent (so at-least-once delivery is correct). ADR-023 requires separate proof of
+idempotency and generation fencing before new mutation types are enabled.
+What the domain ADR does not decide is
 the runtime: where the orchestrator runs, how many instances, how it finds due work, and how
 it bounds concurrent external calls.
 
@@ -229,6 +236,60 @@ because `fail_count`/`maxFailCount` count only *committed* attempts, a poll lost
 re-run by reclaim without consuming the budget. The guarded DB write solves a *different* problem:
 stopping a stale straggler from clobbering DB state. The two are **complementary, not
 interchangeable** — idempotency covers the external duplicate, the guard covers the DB write.
+
+### 4.1. ADR-023 extension: common tasks and internal HTTP steps
+
+This subsection defines the backend extension; the preceding examples describe the Terraform/Condition
+baseline. There is no additional pipeline/task lifecycle state or claim predicate.
+
+```text
+create: pipeline + task chain + per-task empty confirmation input and request key
+claim:  lock due pipeline, stamp token, commit
+run:    read immutable task context; one bounded external operation outside transactions
+report: lock pipeline → verify token → cancel first → apply task result and durable data → release
+```
+
+The recommendation-based registration is ONE TaskDefinition, including in CUSTOM. Its first
+execute performs GET and returns DispatchResult.HttpPrepared. Guarded report opens one attempt,
+atomically stores the accepted recommendation and its source response metadata, then leaves the
+same task IN_PROGRESS. Successor tasks stay BLOCKED. The next check sends POST using that saved
+input and returns TaskProgress.HttpCompleted, mapped to a corresponding StepOutcome. This check
+advances an internal task step and is not a pure observation. POST success closes the attempt and
+task and only then promotes the successor. Retry after POST failure resumes with the saved input
+and never repeats GET. A synchronous delete or resumed POST uses DispatchResult.HttpCompleted.
+All DispatchResult and TaskProgress variants are handled exhaustively.
+
+Both variants transport bounded raw HTTP information. The attempt's new http_response LONGTEXT
+holds its current/final call; the successful GET body and metadata remain separately in the
+write-once task_confirmation_input when POST replaces the attempt response. Legacy response TEXT
+is unchanged. Missing observation attempts can be recreated under report before recording a
+resumed HTTP result; missing/corrupt required input is terminal and cannot be reconstructed from
+an observation. A dispatch creates exactly one attempt; check reuses it or recreates only a missing
+one. HTTP validation failures without a call have no HTTP response metadata.
+
+The write order is pipeline → current task → task input → attempt/diagnostic
+records. All new writers use the same transaction and verified pipeline ownership; creation is
+the initial insert exception. Input write failure rolls back the transition. Stale tokens discard
+all candidate writes. Cancel takes precedence and discards the outcome without capturing a new
+input, cancels non-terminal tasks, and releases active_target. Previously committed data remains.
+Discarded external effects are unknown, not evidence that no deletion occurred. No new audit
+transaction is added just to preserve cancelled or stale calls.
+
+Common task executors read the pipeline's fixed provider for routing, rather than a TaskDefinition
+provider (ALL_CSP definitions have none). Composition accepts common definitions in both catalog
+and CUSTOM. Each occurrence owns its own task identity, input and stable request key; a key made
+from pipelineId plus definition name would collide when CUSTOM repeats the same definition.
+
+A null exchange on a validation failure preserves the attempt's previous HTTP evidence; an actual
+call without a response carries an operation-only exchange instead. Runtime provider loss or missing
+client capability becomes a typed terminal result, not an unchecked exception/reclaim loop.
+
+Every installation boundary call is bounded by apiCallTimeout. One turn performs one boundary
+operation within that total bound. Lease sizing covers that
+bounded call and the short context read/report margin. HTTP tasks do not bypass worker/running
+pipeline caps and do not consume a Terraform slot. External idempotency/generation fencing is
+separate from DB ownership. Unknown external contracts disable the affected operation for BOTH
+catalog and CUSTOM creation per ADR-023 Decision 8; they do not change the task's ALL_CSP scope.
 
 ### 5. Crash recovery via lease expiry
 
@@ -550,6 +611,8 @@ likewise a target; see the Worker-count knob for how 429/503 are currently handl
 ## Links
 
 - [ADR-016](016-install-delete-pipeline-domain-model.md) — the durable domain model this drives
+- [ADR-023](023-reconfirmation-http-tasks-and-execution-input.md) — HTTP tasks, durable
+  execution inputs and reconfirmation contracts
 
 ## Glossary
 
@@ -562,6 +625,12 @@ likewise a target; see the Worker-count knob for how 429/503 are currently handl
 - **Two-transaction split** — tx1 (claim) and tx2 (report) are separate committed transactions; the external call runs between them, outside any transaction.
 
 ## Revision history
+
+- 2026-09-09: define the ADR-023 backend extension and synchronize its scope. Production
+  adapters, MySQL schema verification, and frontend/business integration remain separate prerequisites.
+
+- 2026-09-08: add proposed Decision 4.1 for ADR-023. Retain claim/lease/fencing and lifecycle states;
+  explicitly add synchronous dispatch completion, atomic recommendation capture, HTTP response propagation, and upstream activation prerequisites.
 
 - 2026-06-27: created by splitting ADR-016; execution model extracted here so it can be
   superseded independently of the domain model.

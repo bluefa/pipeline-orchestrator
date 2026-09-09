@@ -16,4 +16,6 @@ public interface TaskAttemptRepository extends JpaRepository<TaskAttempt, Long> 
     Optional<TaskAttempt> findByTaskIdAndAttemptNumber(Long taskId, int attemptNumber);
 
     List<TaskAttempt> findByTaskIdOrderByAttemptNumberAsc(Long taskId);
+
+    List<TaskAttemptMetadata> findMetadataByTaskIdOrderByAttemptNumberAsc(Long taskId);
 }
